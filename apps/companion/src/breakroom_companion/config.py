@@ -65,6 +65,10 @@ class TriggerConfig:
     min_tool_events: int = 2
     cooldown_s: int = 900
     suggestion_timeout_s: int = 60
+    # Activity staleness (M2-02): silence after which a session is unknown.
+    stale_after_s: int = 180
+    open_tool_max_s: int = 1800
+    forget_after_s: int = 7200
 
     def __post_init__(self) -> None:
         for field in (
@@ -73,6 +77,9 @@ class TriggerConfig:
             self.min_tool_events,
             self.cooldown_s,
             self.suggestion_timeout_s,
+            self.stale_after_s,
+            self.open_tool_max_s,
+            self.forget_after_s,
         ):
             if field <= 0:
                 raise ValueError("trigger config values must be positive")
@@ -90,4 +97,7 @@ class TriggerConfig:
             suggestion_timeout_s=_positive(
                 "BREAKROOM_SUGGESTION_TIMEOUT_S", d.suggestion_timeout_s
             ),
+            stale_after_s=_positive("BREAKROOM_STALE_AFTER_S", d.stale_after_s),
+            open_tool_max_s=_positive("BREAKROOM_OPEN_TOOL_MAX_S", d.open_tool_max_s),
+            forget_after_s=_positive("BREAKROOM_FORGET_AFTER_S", d.forget_after_s),
         )

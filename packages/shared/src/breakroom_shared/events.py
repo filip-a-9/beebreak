@@ -12,6 +12,7 @@ EventType = Literal[
     "tool_completed",
     "task_created",
     "task_completed",
+    "waiting_input",
     "turn_stopped",
     "session_closed",
     "heartbeat",

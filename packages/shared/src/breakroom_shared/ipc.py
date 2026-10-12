@@ -10,10 +10,14 @@ from typing import Annotated, Literal
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
 from breakroom_shared.events import NormalizedEvent
+from breakroom_shared.presence import RemainingTimeBucket
 
 MAX_FRAME_BYTES = 16 * 1024
 
 InvitationState = Literal["disabled", "idle", "suggested"]
+
+# Aggregate local agent activity (spec §6.1). Never "finished": a stop is idle.
+ActivityState = Literal["unknown", "active", "waiting_input", "idle"]
 
 
 class EventFrame(BaseModel):
@@ -33,9 +37,12 @@ class StatusReply(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: Literal["status"]
-    version: Literal[1]
+    version: Literal[2]
     invitation: InvitationState
     last_event_at: AwareDatetime | None = None
+    activity: ActivityState = "unknown"
+    # Remaining-time bucket of the current suggestion; None unless "suggested".
+    estimate: RemainingTimeBucket | None = None
 
 
 class ClientFrame(

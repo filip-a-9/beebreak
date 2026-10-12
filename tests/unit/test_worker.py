@@ -28,7 +28,7 @@ def make_event() -> NormalizedEvent:
 
 def status(invitation: str) -> StatusReply:
     return StatusReply.model_validate(
-        {"kind": "status", "version": 1, "invitation": invitation}
+        {"kind": "status", "version": 2, "invitation": invitation}
     )
 
 

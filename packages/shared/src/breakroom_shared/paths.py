@@ -48,3 +48,15 @@ def socket_path() -> Path:
 
 def salt_path() -> Path:
     return runtime_dir() / "salt"
+
+
+def state_dir() -> Path:
+    """Private persistent directory ($XDG_STATE_HOME or ~/.local/state)/breakroom.
+
+    Mode 0700; raises UnsafeRuntimeDir like runtime_dir. Implemented by M2-04.
+    """
+    raise NotImplementedError
+
+
+def state_path() -> Path:
+    return state_dir() / "companion-state.json"
