@@ -19,7 +19,7 @@ from breakroom_agent_bridge.config import McpSettings
 from breakroom_agent_bridge.mcp_server import build_server, query_companion
 from breakroom_shared.ipc import StatusReply
 
-STATUS_KEYS = {"companion", "invitation", "last_event_at"}
+STATUS_KEYS = {"companion", "invitation", "last_event_at", "activity", "estimate"}
 
 
 def _call(reply: StatusReply | None) -> dict[str, Any]:
@@ -49,6 +49,8 @@ def test_no_reply_reports_not_running_with_nulls() -> None:
         "companion": "not_running",
         "invitation": None,
         "last_event_at": None,
+        "activity": None,
+        "estimate": None,
     }
 
 
@@ -70,6 +72,34 @@ def test_reply_without_last_event_reports_null_timestamp() -> None:
     assert out["companion"] == "running"
     assert out["invitation"] == "idle"
     assert out["last_event_at"] is None
+
+
+def test_activity_and_estimate_come_from_a_v2_reply() -> None:
+    out = _call(
+        StatusReply(
+            kind="status",
+            version=2,
+            invitation="suggested",
+            activity="active",
+            estimate="10_20m",
+        )
+    )
+    assert out["activity"] == "active"
+    assert out["estimate"] == "10_20m"
+
+
+def test_reply_defaults_report_unknown_activity_and_no_estimate() -> None:
+    out = _call(StatusReply(kind="status", version=2, invitation="idle"))
+    assert out["activity"] == "unknown"
+    assert out["estimate"] is None
+
+
+def test_description_mentions_activity() -> None:
+    async def run() -> str:
+        async with Client(build_server(lambda: None)) as client:
+            return (await client.list_tools()).tools[0].description or ""
+
+    assert "activity" in asyncio.run(run()).lower()
 
 
 def _rpc(id_: int | None, method: str, params: dict[str, Any] | None = None) -> str:

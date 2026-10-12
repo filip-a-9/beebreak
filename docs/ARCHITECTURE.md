@@ -182,15 +182,14 @@ stateDiagram-v2
     [*] --> unknown
     unknown --> active: qualifying hook activity
     active --> waiting_input: confirmed prompt/permission wait
-    active --> idle: turn stopped and quiet window
+    active --> idle: turn stopped (not task completion)
     waiting_input --> active: subsequent tool activity
     idle --> active: renewed activity
     active --> unknown: event loss / stale source
-    idle --> unknown: source stale
-    waiting_input --> unknown: source stale
+    waiting_input --> unknown: silent past waiting cap
 ```
 
-Do **not** assert `waiting_input` based merely on long tool silence. Use only explicit supported signals or display `uncertain`. `TaskCompleted` is a hint for a known tracked task, not a guarantee of whole-session completion.
+M2 (**CONFIRMED** 2026-10-12): `idle` does not go stale; silent sessions are forgotten after a bound instead. Do **not** assert `waiting_input` based merely on long tool silence. Use only explicit supported signals or display `uncertain`. `TaskCompleted` is a hint for a known tracked task, not a guarantee of whole-session completion.
 
 ### 6.2 Break invitation (local)
 

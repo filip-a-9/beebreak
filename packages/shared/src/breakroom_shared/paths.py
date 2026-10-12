@@ -53,9 +53,14 @@ def salt_path() -> Path:
 def state_dir() -> Path:
     """Private persistent directory ($XDG_STATE_HOME or ~/.local/state)/breakroom.
 
-    Mode 0700; raises UnsafeRuntimeDir like runtime_dir. Implemented by M2-04.
+    Mode 0700; raises UnsafeRuntimeDir like runtime_dir.
     """
-    raise NotImplementedError
+    xdg = os.environ.get("XDG_STATE_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "state"
+    path = base / "breakroom"
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _check_private_dir(path)
+    return path
 
 
 def state_path() -> Path:

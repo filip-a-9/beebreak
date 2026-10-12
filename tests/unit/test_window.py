@@ -14,6 +14,13 @@ from breakroom_companion.window import CompanionWindow
 from breakroom_companion.worker import IpcWorker
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import InvitationState
+from breakroom_shared.presence import RemainingTimeBucket
+
+
+@pytest.fixture(autouse=True)
+def _state_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Controllers built here must not touch the real ~/.local/state."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
 
 
 @pytest.fixture
@@ -137,7 +144,6 @@ def test_event_pushes_fresh_status_to_worker(qtbot: QtBot) -> None:
 # Short real thresholds: two tool events one second apart qualify.
 FAST = TriggerConfig(
     activity_threshold_s=1,
-    quiet_gap_s=20,
     min_tool_events=2,
     cooldown_s=900,
     suggestion_timeout_s=1,
@@ -223,3 +229,64 @@ def test_answer_buttons_cannot_take_focus_and_window_is_not_activated(
     for button in (window.accept_button, window.decline_button):
         assert button.focusPolicy() == Qt.FocusPolicy.NoFocus
     assert window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+
+RANGE_LABELS = {
+    "5_10m": "5\N{EN DASH}10",
+    "10_20m": "10\N{EN DASH}20",
+    "20m_plus": "20+",
+}
+
+
+@pytest.mark.parametrize(("bucket", "needle"), list(RANGE_LABELS.items()))
+def test_suggested_shows_the_range_for_each_bucket(
+    window: CompanionWindow, bucket: RemainingTimeBucket, needle: str
+) -> None:
+    window.show()
+    window.set_state("suggested", bucket)
+    assert window.estimate_label.isVisible()
+    assert needle in window.estimate_label.text()
+
+
+def test_range_labels_are_distinct(window: CompanionWindow) -> None:
+    texts = set()
+    for bucket in RANGE_LABELS:
+        window.set_state("suggested", bucket)  # type: ignore[arg-type]
+        texts.add(window.estimate_label.text())
+    assert len(texts) == 3
+
+
+@pytest.mark.parametrize("bucket", [None, "unknown", "under_5m"])
+def test_estimate_label_hidden_without_a_usable_bucket(
+    window: CompanionWindow, bucket: RemainingTimeBucket | None
+) -> None:
+    window.show()
+    window.set_state("suggested", bucket)
+    assert window.estimate_label.isHidden()
+
+
+@pytest.mark.parametrize("state", ["idle", "disabled"])
+def test_estimate_label_hidden_outside_suggested(
+    window: CompanionWindow, state: InvitationState
+) -> None:
+    window.show()
+    window.set_state("suggested", "5_10m")
+    window.set_state(state, "5_10m")
+    assert window.estimate_label.isHidden()
+
+
+def test_estimate_label_is_plain_text(window: CompanionWindow) -> None:
+    assert window.estimate_label.textFormat() == Qt.TextFormat.PlainText
+
+
+def test_status_snapshot_carries_activity_and_estimate(qtbot: QtBot) -> None:
+    controller = Controller(FAST)
+    window, worker, _timer = _wired(qtbot, controller)
+    assert worker._status.activity == "unknown"
+    assert worker._status.estimate is None
+    _emit_qualifying_run(worker, datetime.now(UTC))
+    snap = worker._status
+    assert snap.invitation == "suggested"
+    assert snap.activity == "active"
+    assert snap.estimate == "unknown"  # no task evidence in this run
+    assert window.estimate_label.isHidden()

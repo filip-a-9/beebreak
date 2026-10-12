@@ -14,11 +14,19 @@ from PySide6.QtWidgets import (
 )
 
 from breakroom_shared.ipc import InvitationState
+from breakroom_shared.presence import RemainingTimeBucket
 
 _LABELS: dict[InvitationState, str] = {
     "disabled": "Break suggestions are off",
     "idle": "Idle \N{EM DASH} will suggest a break when appropriate",
     "suggested": "Your agent is busy. Want to take a short break?",
+}
+
+# Fixed strings only (T11). under_5m never appears: it vetoes the invitation.
+_ESTIMATE_LABELS: dict[RemainingTimeBucket, str] = {
+    "5_10m": "~5\N{EN DASH}10 min left",
+    "10_20m": "~10\N{EN DASH}20 min left",
+    "20m_plus": "20+ min left",
 }
 
 
@@ -36,6 +44,8 @@ class CompanionWindow(QWidget):
         self.status_label = QLabel()
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
+        self.estimate_label = QLabel()
+        self.estimate_label.setTextFormat(Qt.TextFormat.PlainText)
         self.accept_button = QPushButton("Accept")
         self.decline_button = QPushButton("Decline")
         # Consent must be a deliberate click: a keypress meant for the terminal
@@ -50,6 +60,7 @@ class CompanionWindow(QWidget):
         buttons.addWidget(self.decline_button)
         layout = QVBoxLayout(self)
         layout.addWidget(self.status_label)
+        layout.addWidget(self.estimate_label)
         layout.addLayout(buttons)
         layout.addStretch()
         layout.addWidget(self.enabled_checkbox)
@@ -61,8 +72,17 @@ class CompanionWindow(QWidget):
 
         self.set_state("idle")
 
-    def set_state(self, state: InvitationState) -> None:
+    def set_state(
+        self, state: InvitationState, estimate: RemainingTimeBucket | None = None
+    ) -> None:
         self.status_label.setText(_LABELS[state])
+        text = (
+            _ESTIMATE_LABELS.get(estimate)
+            if estimate and state == "suggested"
+            else None
+        )
+        self.estimate_label.setText(text or "")
+        self.estimate_label.setVisible(text is not None)
         self.accept_button.setVisible(state == "suggested")
         self.decline_button.setVisible(state == "suggested")
         self.enabled_checkbox.setChecked(state != "disabled")

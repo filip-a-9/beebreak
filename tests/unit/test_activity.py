@@ -9,7 +9,6 @@ from breakroom_shared.events import EventType, NormalizedEvent
 T0 = datetime(2026, 10, 12, 12, 0, 0, tzinfo=UTC)
 CFG = TriggerConfig(
     activity_threshold_s=60,
-    quiet_gap_s=20,
     min_tool_events=2,
     cooldown_s=900,
     suggestion_timeout_s=60,

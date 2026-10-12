@@ -12,14 +12,17 @@ from mcp.server import MCPServer
 
 from breakroom_agent_bridge.config import McpSettings
 from breakroom_agent_bridge.ipc_client import request_status
-from breakroom_shared.ipc import InvitationState, StatusReply
+from breakroom_shared.ipc import ActivityState, InvitationState, StatusReply
 from breakroom_shared.paths import UnsafeRuntimeDir, socket_path
+from breakroom_shared.presence import RemainingTimeBucket
 
 
 class BreakroomStatus(TypedDict):
     companion: Literal["running", "not_running"]
     invitation: InvitationState | None
     last_event_at: str | None
+    activity: ActivityState | None
+    estimate: RemainingTimeBucket | None
 
 
 def build_server(status_provider: Callable[[], StatusReply | None]) -> MCPServer:
@@ -28,8 +31,10 @@ def build_server(status_provider: Callable[[], StatusReply | None]) -> MCPServer
     @server.tool(
         name="breakroom_status",
         description=(
-            "Report local Breakroom status: whether the companion app is running "
-            "and its invitation state. Read-only, no side effects."
+            "Report local Breakroom status: whether the companion app is running, "
+            "its invitation state, the aggregate agent activity state and, while "
+            "an invitation is showing, a coarse remaining-time bucket. "
+            "Read-only, no side effects."
         ),
     )
     def breakroom_status() -> BreakroomStatus:
@@ -39,6 +44,8 @@ def build_server(status_provider: Callable[[], StatusReply | None]) -> MCPServer
                 "companion": "not_running",
                 "invitation": None,
                 "last_event_at": None,
+                "activity": None,
+                "estimate": None,
             }
         return {
             "companion": "running",
@@ -46,6 +53,8 @@ def build_server(status_provider: Callable[[], StatusReply | None]) -> MCPServer
             "last_event_at": (
                 reply.last_event_at.isoformat() if reply.last_event_at else None
             ),
+            "activity": reply.activity,
+            "estimate": reply.estimate,
         }
 
     return server

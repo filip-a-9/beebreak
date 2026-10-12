@@ -45,3 +45,18 @@ def test_bad_values_fall_back_to_default(
 
 def test_trigger_config_lives_in_the_config_module() -> None:
     assert config.TriggerConfig().cooldown_s == 900
+
+
+def test_trigger_config_has_no_quiet_gap(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert not hasattr(config.TriggerConfig(), "quiet_gap_s")
+    monkeypatch.setenv("BREAKROOM_QUIET_GAP_S", "0")  # ignored now
+    assert config.TriggerConfig.from_env().cooldown_s == 900
+
+
+def test_trigger_config_env_and_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BREAKROOM_COOLDOWN_S", "5")
+    assert config.TriggerConfig.from_env().cooldown_s == 5
+    for bad in ("0", "-3", "abc"):
+        monkeypatch.setenv("BREAKROOM_COOLDOWN_S", bad)
+        with pytest.raises(ValueError):
+            config.TriggerConfig.from_env()

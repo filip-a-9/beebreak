@@ -22,8 +22,16 @@ def runtime() -> Iterator[Path]:
         yield Path(d)
 
 
-def _spawn(runtime: Path) -> subprocess.Popen[bytes]:
-    env = {**os.environ, "XDG_RUNTIME_DIR": str(runtime)}
+def _spawn(
+    runtime: Path, extra_env: dict[str, str] | None = None
+) -> subprocess.Popen[bytes]:
+    # Never let the companion touch the real ~/.local/state.
+    env = {
+        **os.environ,
+        "XDG_RUNTIME_DIR": str(runtime),
+        "XDG_STATE_HOME": str(runtime / "state"),
+        **(extra_env or {}),
+    }
     return subprocess.Popen(
         [sys.executable, "-m", "breakroom_companion.app"],
         env=env,
@@ -87,6 +95,14 @@ def test_unsafe_runtime_dir_exits_1_with_one_fixed_stderr_line(
     sub.mkdir(mode=0o700)
     sub.chmod(0o770)
     proc = _spawn(runtime)
+    _, err = proc.communicate(timeout=START_WAIT_S)
+    assert proc.returncode == 1
+    assert len(err.decode().strip().splitlines()) == 1
+    assert "Traceback" not in err.decode()
+
+
+def test_invalid_config_exits_1_with_one_fixed_stderr_line(runtime: Path) -> None:
+    proc = _spawn(runtime, {"BREAKROOM_COOLDOWN_S": "-5"})
     _, err = proc.communicate(timeout=START_WAIT_S)
     assert proc.returncode == 1
     assert len(err.decode().strip().splitlines()) == 1

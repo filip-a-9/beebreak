@@ -28,6 +28,8 @@ def initial_status(controller: Controller) -> StatusReply:
         version=2,
         invitation=controller.state,
         last_event_at=controller.last_event_at,
+        activity=controller.activity(datetime.now(UTC)),
+        estimate=controller.estimate,
     )
 
 
@@ -36,7 +38,7 @@ def wire(controller: Controller, window: CompanionWindow, worker: IpcWorker) -> 
 
     def apply(new: InvitationState | None) -> None:
         if new is not None:
-            window.set_state(new)
+            window.set_state(new, controller.estimate)
         worker.set_status(initial_status(controller))
 
     def on_event(event: object) -> None:
@@ -65,10 +67,14 @@ def main() -> int:
     except (UnsafeRuntimeDir, OSError):
         print("breakroom-companion: unsafe runtime directory", file=sys.stderr)
         return EXIT_START_FAILED
+    try:
+        controller = Controller()
+    except ValueError:  # a BREAKROOM_* setting is invalid
+        print("breakroom-companion: invalid configuration", file=sys.stderr)
+        return EXIT_START_FAILED
     app = QApplication(sys.argv)
-    controller = Controller()
     window = CompanionWindow()
-    window.set_state(controller.state)
+    window.set_state(controller.state, controller.estimate)
     worker = IpcWorker(sock, initial_status(controller))
     wire(controller, window, worker)
     try:
