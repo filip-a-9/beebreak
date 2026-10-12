@@ -5,6 +5,7 @@ description = "Breakroom desktop companion: local IPC server and invitation wind
 authors = [
     { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }
 ]
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "breakroom-shared",

@@ -26,7 +26,7 @@ All twelve product decisions are **CONFIRMED**:
 | 11 | Distribution | Claude Code plugin and separately installed companion application |
 | 12 | Launch | Local verification, then a small closed beta |
 
-**Open-source preference:** Raised after Question 12; **PROPOSED** approach is public source code, restricted hosted beta, Apache-2.0 license pending explicit approval. Open source and access to the hosted network are separate decisions.
+**Open-source preference:** Raised after Question 12; **PROPOSED** approach is public source code, restricted hosted beta. License: Apache-2.0 (**CONFIRMED** 2026-10-12). Open source and access to the hosted network are separate decisions.
 
 ### Problem statement
 
@@ -66,7 +66,7 @@ Some developers will accept unobtrusive invitations, meet an available peer, and
 | Test/tooling | pytest, Ruff, mypy or pyright, property tests, migration tests | Predictable contract and behavior testing |
 | Packaging | `uv` in development; signed/package-verified companion builds per OS later | Stable dependency sets; distribute runnable software rather than requiring source setup |
 | Beta auth | Invite-only email sign-in, private email and public nickname | Simple access control without mandatory GitHub identity; select provider during implementation review |
-| License | Apache-2.0 candidate | Permissive source distribution with explicit patent terms; needs approval and dependency compliance review |
+| License | Apache-2.0 (**CONFIRMED** 2026-10-12) | Permissive source distribution with explicit patent terms; dependency compliance review still applies, e.g. PySide6 is LGPL |
 
 **Platform decision (CONFIRMED 2026-10-12):** M1 targets WSL2 Linux end to end — Claude Code, hooks, MCP server, companion (GUI via WSLg) and local IPC all run inside WSL. This supersedes the Windows-first proposal below for M1; later platforms remain open (ADR #2).
 
@@ -406,7 +406,7 @@ Avoid fabricated benchmarks. Numeric latency/uptime objectives should be set aft
 ```text
 breakroom/
 ├── README.md
-├── LICENSE                       # pending license decision
+├── LICENSE                       # Apache-2.0
 ├── CONTRIBUTING.md
 ├── SECURITY.md
 ├── pyproject.toml
@@ -457,7 +457,7 @@ These are deliberately unresolved until the next *non-interview* architecture re
 6. Auth provider, email invitation workflow, token/device lifecycle.
 7. Message and reports retention policy, deletion/export UX, locale/jurisdiction requirements.
 8. Exact timer defaults, UI presentation when estimated duration changes.
-9. Apache-2.0 versus MIT/AGPL after dependency and open-source strategy review.
+9. ~~Apache-2.0 versus MIT/AGPL~~ — resolved 2026-10-12: Apache-2.0.
 10. Hosting cost ceiling, monitoring, backup/restore, and abuse operational responsibilities.
 
 Each architecture decision should have its own ADR explaining choice, alternatives, consequences, acceptance tests, and rollback path. None requires another interview until a product-level tradeoff genuinely needs the founder's decision.
