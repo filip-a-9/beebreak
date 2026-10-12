@@ -1,0 +1,16 @@
+[project]
+name = "breakroom-shared"
+version = "0.1.0"
+description = "Versioned contracts shared by Breakroom components"
+readme = "README.md"
+authors = [
+    { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic==2.14.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
