@@ -7,8 +7,8 @@ the new InvitationState, or None when the state is unchanged.
 from datetime import datetime, timedelta
 from typing import Literal
 
+from breakroom_companion.config import TriggerConfig
 from breakroom_companion.trigger import ActivityTrigger
-from breakroom_companion.trigger_config import TriggerConfig
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import InvitationState
 

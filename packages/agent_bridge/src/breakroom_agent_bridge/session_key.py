@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import os
+import tempfile
 from pathlib import Path
 
 SALT_BYTES = 32
@@ -15,22 +16,47 @@ def derive_key(session_id: str, salt: bytes) -> str:
 
 
 def load_or_create_salt(path: Path) -> bytes:
-    """Return the salt at `path`, creating it atomically (0600) if absent."""
+    """Return the salt at `path`, creating it atomically (0600) if absent.
+
+    The salt is written to a temp file and hard-linked into place, so a reader
+    never sees a partial file. A leftover file shorter than SALT_BYTES (from an
+    older, non-atomic creator) is replaced once.
+    """
+    for _ in range(2):
+        existing = _read_if_present(path)
+        if existing is not None and len(existing) == SALT_BYTES:
+            return existing
+        if existing is not None:
+            path.unlink(missing_ok=True)
+        salt = _create(path)
+        if salt is not None:
+            return salt
+    existing = _read_if_present(path)
+    if existing is not None and len(existing) == SALT_BYTES:
+        return existing
+    raise OSError("salt file unusable")
+
+
+def _read_if_present(path: Path) -> bytes | None:
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        return _read_full(path)
+        return path.read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def _create(path: Path) -> bytes | None:
+    """Link a fresh salt into place; None if another process got there first."""
     salt = os.urandom(SALT_BYTES)
-    with os.fdopen(fd, "wb") as f:
-        f.write(salt)
-    return salt
-
-
-def _read_full(path: Path) -> bytes:
-    # The creator may not have written yet; wait briefly for the full salt.
-    for _ in range(200):
-        data = path.read_bytes()
-        if len(data) == SALT_BYTES:
-            return data
-        os.sched_yield()
-    raise OSError("salt file incomplete")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".salt-")  # mode 0600
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(salt)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            return None
+        return salt
+    finally:
+        os.unlink(tmp)

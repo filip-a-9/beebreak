@@ -38,6 +38,11 @@ class CompanionWindow(QWidget):
         self.status_label.setWordWrap(True)
         self.accept_button = QPushButton("Accept")
         self.decline_button = QPushButton("Decline")
+        # Consent must be a deliberate click: a keypress meant for the terminal
+        # must never land on these buttons (THREAT_MODEL T10).
+        for button in (self.accept_button, self.decline_button):
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.enabled_checkbox = QCheckBox("Suggest breaks")
 
         buttons = QHBoxLayout()
@@ -64,4 +69,3 @@ class CompanionWindow(QWidget):
         if state == "suggested":
             self.show()
             self.raise_()
-            self.activateWindow()

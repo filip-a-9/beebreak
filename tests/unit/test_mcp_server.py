@@ -2,15 +2,21 @@
 
 import asyncio
 import json
+import socket
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+import pytest
 from mcp import Client
 
-from breakroom_agent_bridge.mcp_server import build_server
+from breakroom_agent_bridge.config import McpSettings
+from breakroom_agent_bridge.mcp_server import build_server, query_companion
 from breakroom_shared.ipc import StatusReply
 
 STATUS_KEYS = {"companion", "invitation", "last_event_at"}
@@ -115,3 +121,46 @@ def test_subprocess_speaks_mcp_over_stdio() -> None:
         proc.wait()
     assert [t["name"] for t in replies[2]["result"]["tools"]] == ["breakroom_status"]
     assert replies[3]["result"]["structuredContent"]["companion"] == "not_running"
+
+
+def _unsafe_xdg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    xdg = tmp_path / "x"
+    (xdg / "breakroom").mkdir(parents=True, mode=0o700)
+    (xdg / "breakroom").chmod(0o770)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
+
+
+def test_status_provider_reports_not_running_for_unsafe_runtime_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _unsafe_xdg(tmp_path, monkeypatch)
+    assert query_companion(0.5) is None
+
+
+def test_status_timeout_setting_defaults_and_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert McpSettings.from_env().status_timeout_s == 0.5
+    monkeypatch.setenv("BREAKROOM_MCP_STATUS_TIMEOUT_S", "0.1")
+    assert McpSettings.from_env().status_timeout_s == 0.1
+    for bad in ("0", "-2", "x"):
+        monkeypatch.setenv("BREAKROOM_MCP_STATUS_TIMEOUT_S", bad)
+        assert McpSettings.from_env().status_timeout_s == 0.5
+
+
+def test_status_provider_honours_the_timeout_it_is_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with tempfile.TemporaryDirectory(dir="/tmp") as d:
+        sock = Path(d) / "breakroom" / "companion.sock"
+        sock.parent.mkdir(mode=0o700)
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(sock))
+        server.listen(1)  # accepts at kernel level, never replies
+        monkeypatch.setenv("XDG_RUNTIME_DIR", d)
+        try:
+            start = time.monotonic()
+            assert query_companion(0.1) is None
+            assert time.monotonic() - start < 0.4
+        finally:
+            server.close()

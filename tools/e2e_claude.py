@@ -40,8 +40,8 @@ BILLING_VARS = (
 )
 # Two 18 s calls qualify whether the model runs them in parallel (Haiku does)
 # or in sequence: each call's own gap stays under the 20 s quiet gap, and the
-# span from the prompt exceeds the 15 s demo threshold. A single call longer
-# than the quiet gap would not qualify (see follow-up F3).
+# span from the prompt exceeds the 15 s demo threshold. Two calls also meet
+# BREAKROOM_MIN_TOOL_EVENTS=2 before the second completes.
 PROMPT = (
     "Run the Bash command `sleep 18` twice, as two separate Bash tool calls. "
     "Do nothing else and reply only 'done'."

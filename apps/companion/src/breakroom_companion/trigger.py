@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from breakroom_companion.trigger_config import TriggerConfig
+from breakroom_companion.config import TriggerConfig
 from breakroom_shared.events import NormalizedEvent
 
 _TOOL_EVENTS = frozenset({"tool_started", "tool_completed"})
@@ -22,6 +22,11 @@ class _Run:
     start: datetime
     last: datetime
     tool_events: int = 0
+    # tool_started minus tool_completed. While above 0 the agent is inside a
+    # tool call, so elapsed time is not a quiet gap. Lost completions are
+    # cleared when turn_submitted replaces the run or turn_stopped and
+    # session_closed drop it.
+    open_tools: int = 0
 
 
 class ActivityTrigger:
@@ -70,9 +75,13 @@ class ActivityTrigger:
             return False
 
         gap = timedelta(seconds=self._config.quiet_gap_s)
-        if run is None or now - run.last >= gap:
+        if run is None or (run.open_tools == 0 and now - run.last >= gap):
             run = self._runs[key] = _Run(start=now, last=now)
         run.last = now
+        if event.type == "tool_started":
+            run.open_tools += 1
+        else:
+            run.open_tools = max(0, run.open_tools - 1)
         run.tool_events += 1
         return (
             key not in self._spent

@@ -1,22 +1,93 @@
 """Typed companion configuration read from environment variables.
 
-IPC section owned by M1-03; M1-05 adds trigger settings in its own module.
-Values are read at call time so tests and launchers can override them.
+Timeouts are read at call time so tests and launchers can override them.
+Invalid or non-positive values fall back to the default. Trigger settings are
+read once into TriggerConfig, which rejects invalid values instead.
 """
 
 import os
+from dataclasses import dataclass
 
 IPC_READ_TIMEOUT_ENV = "BREAKROOM_IPC_READ_TIMEOUT_S"
-_DEFAULT_IPC_READ_TIMEOUT_S = 1.0
+WORKER_START_TIMEOUT_ENV = "BREAKROOM_WORKER_START_TIMEOUT_S"
+WORKER_STOP_TIMEOUT_ENV = "BREAKROOM_WORKER_STOP_TIMEOUT_S"
+PROBE_TIMEOUT_ENV = "BREAKROOM_PROBE_TIMEOUT_S"
+
+
+def _positive_seconds(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def ipc_read_timeout_s() -> float:
     """Seconds a client connection may take to deliver its one frame line."""
-    raw = os.environ.get(IPC_READ_TIMEOUT_ENV)
+    return _positive_seconds(IPC_READ_TIMEOUT_ENV, 1.0)
+
+
+def worker_start_timeout_s() -> float:
+    """Seconds to wait for the IPC worker thread to bind its socket."""
+    return _positive_seconds(WORKER_START_TIMEOUT_ENV, 5.0)
+
+
+def worker_stop_timeout_s() -> float:
+    """Seconds to wait for the IPC worker thread to finish on shutdown."""
+    return _positive_seconds(WORKER_STOP_TIMEOUT_ENV, 5.0)
+
+
+def probe_timeout_s() -> float:
+    """Seconds to wait when probing an existing socket for a live companion."""
+    return _positive_seconds(PROBE_TIMEOUT_ENV, 1.0)
+
+
+def _positive(name: str, default: int) -> int:
+    raw = os.environ.get(name)
     if raw is None:
-        return _DEFAULT_IPC_READ_TIMEOUT_S
+        return default
     try:
-        value = float(raw)
+        value = int(raw)
     except ValueError:
-        return _DEFAULT_IPC_READ_TIMEOUT_S
-    return value if value > 0 else _DEFAULT_IPC_READ_TIMEOUT_S
+        raise ValueError(f"{name} must be an integer") from None
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+@dataclass(frozen=True)
+class TriggerConfig:
+    activity_threshold_s: int = 60
+    quiet_gap_s: int = 20
+    min_tool_events: int = 2
+    cooldown_s: int = 900
+    suggestion_timeout_s: int = 60
+
+    def __post_init__(self) -> None:
+        for field in (
+            self.activity_threshold_s,
+            self.quiet_gap_s,
+            self.min_tool_events,
+            self.cooldown_s,
+            self.suggestion_timeout_s,
+        ):
+            if field <= 0:
+                raise ValueError("trigger config values must be positive")
+
+    @classmethod
+    def from_env(cls) -> "TriggerConfig":
+        d = cls()
+        return cls(
+            activity_threshold_s=_positive(
+                "BREAKROOM_ACTIVITY_THRESHOLD_S", d.activity_threshold_s
+            ),
+            quiet_gap_s=_positive("BREAKROOM_QUIET_GAP_S", d.quiet_gap_s),
+            min_tool_events=_positive("BREAKROOM_MIN_TOOL_EVENTS", d.min_tool_events),
+            cooldown_s=_positive("BREAKROOM_COOLDOWN_S", d.cooldown_s),
+            suggestion_timeout_s=_positive(
+                "BREAKROOM_SUGGESTION_TIMEOUT_S", d.suggestion_timeout_s
+            ),
+        )

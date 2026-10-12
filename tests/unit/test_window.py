@@ -8,8 +8,8 @@ from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from breakroom_companion.app import initial_status, wire
+from breakroom_companion.config import TriggerConfig
 from breakroom_companion.controller import Controller
-from breakroom_companion.trigger_config import TriggerConfig
 from breakroom_companion.window import CompanionWindow
 from breakroom_companion.worker import IpcWorker
 from breakroom_shared.events import NormalizedEvent
@@ -190,3 +190,36 @@ def test_timer_expires_unanswered_invitation(qtbot: QtBot) -> None:
     timer.timeout.emit()
     assert worker._status.invitation == "idle"
     assert window.accept_button.isHidden()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter])
+def test_keys_after_suggestion_do_not_answer_it(
+    window: CompanionWindow, qtbot: QtBot, key: Qt.Key
+) -> None:
+    window.set_state("suggested")
+    with (
+        qtbot.assertNotEmitted(window.accepted),
+        qtbot.assertNotEmitted(window.declined),
+    ):
+        qtbot.keyClick(window, key)  # type: ignore[no-untyped-call]
+        focus = QApplication.focusWidget()
+        if focus is not None:
+            qtbot.keyClick(focus, key)  # type: ignore[no-untyped-call]
+
+
+def test_mouse_click_on_each_button_still_answers(
+    window: CompanionWindow, qtbot: QtBot
+) -> None:
+    window.set_state("suggested")
+    with qtbot.waitSignal(window.accepted, timeout=1000):
+        qtbot.mouseClick(window.accept_button, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+    with qtbot.waitSignal(window.declined, timeout=1000):
+        qtbot.mouseClick(window.decline_button, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+
+
+def test_answer_buttons_cannot_take_focus_and_window_is_not_activated(
+    window: CompanionWindow,
+) -> None:
+    for button in (window.accept_button, window.decline_button):
+        assert button.focusPolicy() == Qt.FocusPolicy.NoFocus
+    assert window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)

@@ -2,6 +2,8 @@ import multiprocessing
 import stat
 from pathlib import Path
 
+import pytest
+
 from breakroom_agent_bridge.session_key import derive_key, load_or_create_salt
 
 
@@ -54,3 +56,26 @@ def test_concurrent_creation_yields_one_salt(tmp_path: Path) -> None:
         p.join()
     assert len(salts) == 1
     assert salts == {Path(path).read_bytes()}
+
+
+@pytest.mark.parametrize("stale", [b"", b"short", b"x" * 31])
+def test_short_existing_salt_is_replaced(tmp_path: Path, stale: bytes) -> None:
+    path = tmp_path / "salt"
+    path.write_bytes(stale)
+    salt = load_or_create_salt(path)
+    assert len(salt) == 32
+    assert path.read_bytes() == salt
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert load_or_create_salt(path) == salt
+
+
+def test_full_size_existing_salt_is_reused_unchanged(tmp_path: Path) -> None:
+    path = tmp_path / "salt"
+    path.write_bytes(b"k" * 32)
+    assert load_or_create_salt(path) == b"k" * 32
+    assert path.read_bytes() == b"k" * 32
+
+
+def test_no_temp_files_left_behind(tmp_path: Path) -> None:
+    load_or_create_salt(tmp_path / "salt")
+    assert [p.name for p in tmp_path.iterdir()] == ["salt"]

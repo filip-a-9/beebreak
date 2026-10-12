@@ -4,8 +4,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from breakroom_companion.config import TriggerConfig
 from breakroom_companion.trigger import ActivityTrigger
-from breakroom_companion.trigger_config import TriggerConfig
 from breakroom_shared.events import EventType, NormalizedEvent
 
 T0 = datetime(2026, 10, 12, 12, 0, 0, tzinfo=UTC)
@@ -146,3 +146,78 @@ def test_sessions_tracked_separately() -> None:
         results_b.append(t.feed(ev(step * 15 + 100, kind, "b")))
     assert results_a == [False, False, False, False, True]
     assert results_b == [False, False, False, False, True]
+
+
+def test_one_long_tool_call_qualifies_at_its_completion() -> None:
+    t = ActivityTrigger(CFG)
+    events = [
+        ev(0, "turn_submitted"),
+        ev(6, "tool_started"),
+        ev(606, "tool_completed"),
+    ]
+    assert feed_all(t, events) == [2]
+
+
+def test_long_open_tool_qualifies_earlier_when_another_event_arrives() -> None:
+    t = ActivityTrigger(CFG)
+    events = [
+        ev(0, "turn_submitted"),
+        ev(6, "tool_started"),
+        ev(300, "tool_started"),
+        ev(606, "tool_completed"),
+    ]
+    assert feed_all(t, events)[0] == 2
+
+
+def test_parallel_long_calls_keep_the_run_alive_until_all_complete() -> None:
+    t = ActivityTrigger(CFG)
+    events = [
+        ev(0, "turn_submitted"),
+        ev(5, "tool_started"),
+        ev(6, "tool_started"),
+        ev(400, "tool_completed"),  # one call still open
+        ev(405, "tool_completed"),
+    ]
+    assert feed_all(t, events) == [3, 4]
+
+
+def test_gap_after_all_tools_completed_still_restarts_run() -> None:
+    t = ActivityTrigger(CFG)
+    events = [
+        ev(0, "turn_submitted"),
+        ev(5, "tool_started"),
+        ev(10, "tool_completed"),
+        ev(100, "tool_started"),  # 90 s with no open tool: quiet
+        ev(105, "tool_completed"),
+    ]
+    assert feed_all(t, events) == []
+
+
+def test_stray_completion_does_not_go_negative() -> None:
+    t = ActivityTrigger(CFG)
+    events = [
+        ev(0, "turn_submitted"),
+        ev(5, "tool_completed"),  # no matching start
+        ev(10, "tool_started"),
+        ev(100, "tool_started"),  # first open tool is still open: alive
+    ]
+    assert feed_all(t, events) == [3]
+
+
+@pytest.mark.parametrize("reset", ["turn_submitted", "turn_stopped", "session_closed"])
+def test_lost_tool_completed_does_not_keep_a_run_alive_across_turns(
+    reset: EventType,
+) -> None:
+    # Headless runs never delivered turn_stopped, and a tool_completed can be
+    # lost: the next boundary event must clear the open-tool count.
+    t = ActivityTrigger(CFG)
+    events = [
+        ev(0, "turn_submitted"),
+        ev(5, "tool_started"),  # never completed
+        ev(6, "tool_started"),  # never completed
+        ev(30, reset),
+        ev(35, "turn_submitted"),
+        ev(40, "tool_completed"),
+        ev(110, "tool_completed"),  # 70 s gap, no open tool: new run
+    ]
+    assert feed_all(t, events) == []

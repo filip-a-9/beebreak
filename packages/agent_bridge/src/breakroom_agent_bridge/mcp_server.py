@@ -10,9 +10,10 @@ from typing import Literal, TypedDict
 
 from mcp.server import MCPServer
 
+from breakroom_agent_bridge.config import McpSettings
 from breakroom_agent_bridge.ipc_client import request_status
 from breakroom_shared.ipc import InvitationState, StatusReply
-from breakroom_shared.paths import socket_path
+from breakroom_shared.paths import UnsafeRuntimeDir, socket_path
 
 
 class BreakroomStatus(TypedDict):
@@ -50,8 +51,18 @@ def build_server(status_provider: Callable[[], StatusReply | None]) -> MCPServer
     return server
 
 
+def query_companion(timeout_s: float) -> StatusReply | None:
+    """Ask the companion for its status; None (not running) on any failure."""
+    try:
+        path = socket_path()
+    except (UnsafeRuntimeDir, OSError):
+        return None
+    return request_status(socket_path=path, timeout=timeout_s)
+
+
 def main() -> None:
-    build_server(lambda: request_status(socket_path=socket_path())).run("stdio")
+    timeout_s = McpSettings.from_env().status_timeout_s
+    build_server(lambda: query_companion(timeout_s)).run("stdio")
 
 
 if __name__ == "__main__":

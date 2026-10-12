@@ -7,12 +7,10 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+from breakroom_companion.config import worker_start_timeout_s, worker_stop_timeout_s
 from breakroom_companion.ipc_server import IpcServer
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import StatusReply
-
-_START_TIMEOUT_S = 5.0
-_STOP_TIMEOUT_S = 5.0
 
 
 class IpcWorker(QObject):
@@ -43,11 +41,11 @@ class IpcWorker(QObject):
             target=self._run, name="breakroom-ipc", daemon=True
         )
         self._thread.start()
-        if not self._ready.wait(_START_TIMEOUT_S):
+        if not self._ready.wait(worker_start_timeout_s()):
             raise RuntimeError("IPC server did not start in time")
         if self._start_error is not None:
             error = self._start_error
-            self._thread.join(_STOP_TIMEOUT_S)
+            self._thread.join(worker_stop_timeout_s())
             self._thread = None
             if isinstance(error, RuntimeError):
                 raise error
@@ -67,7 +65,7 @@ class IpcWorker(QObject):
         if loop is not None and stop_event is not None and not loop.is_closed():
             with contextlib.suppress(RuntimeError):  # loop already finished
                 loop.call_soon_threadsafe(stop_event.set)
-        thread.join(_STOP_TIMEOUT_S)
+        thread.join(worker_stop_timeout_s())
 
     def _get_status(self) -> StatusReply:
         with self._lock:

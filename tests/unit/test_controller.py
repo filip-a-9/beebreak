@@ -2,8 +2,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+from breakroom_companion.config import TriggerConfig
 from breakroom_companion.controller import Controller
-from breakroom_companion.trigger_config import TriggerConfig
 from breakroom_shared.events import EventType, NormalizedEvent
 from breakroom_shared.ipc import InvitationState
 

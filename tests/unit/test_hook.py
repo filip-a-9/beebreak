@@ -84,3 +84,42 @@ def test_valid_payload_creates_salt_with_private_runtime_dir(runtime: str) -> No
     proc, _ = _run(json.dumps(PAYLOADS["Stop"]).encode(), runtime)
     _assert_silent_success(proc)
     assert (Path(runtime) / "breakroom" / "salt").stat().st_size == 32
+
+
+def test_empty_salt_file_is_replaced_and_event_still_delivered(runtime: str) -> None:
+    import socket
+    import threading
+
+    rdir = Path(runtime) / "breakroom"
+    rdir.mkdir(mode=0o700)
+    (rdir / "salt").write_bytes(b"")  # left by a hook killed mid-create
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(rdir / "companion.sock"))
+    server.listen(1)
+    server.settimeout(5)
+    received: list[bytes] = []
+
+    def accept() -> None:
+        conn, _ = server.accept()
+        with conn:
+            conn.settimeout(5)
+            received.append(conn.makefile("rb").readline())
+
+    thread = threading.Thread(target=accept)
+    thread.start()
+    try:
+        proc, _ = _run(json.dumps(PAYLOADS["Stop"]).encode(), runtime)
+        thread.join(10)
+    finally:
+        server.close()
+    _assert_silent_success(proc)
+    assert (rdir / "salt").stat().st_size == 32
+    assert received and received[0].endswith(b"\n")
+
+
+def test_unsafe_runtime_dir_leaves_hook_silent(runtime: str) -> None:
+    sub = Path(runtime) / "breakroom"
+    sub.mkdir(mode=0o700)
+    sub.chmod(0o770)
+    proc, _ = _run(json.dumps(PAYLOADS["Stop"]).encode(), runtime)
+    _assert_silent_success(proc)

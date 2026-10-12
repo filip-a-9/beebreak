@@ -78,3 +78,16 @@ def test_unusable_socket_path_is_not_reported_as_already_running(
     proc = _spawn(runtime)
     code = proc.wait(timeout=START_WAIT_S)
     assert code not in (0, 2)
+
+
+def test_unsafe_runtime_dir_exits_1_with_one_fixed_stderr_line(
+    runtime: Path,
+) -> None:
+    sub = runtime / "breakroom"
+    sub.mkdir(mode=0o700)
+    sub.chmod(0o770)
+    proc = _spawn(runtime)
+    _, err = proc.communicate(timeout=START_WAIT_S)
+    assert proc.returncode == 1
+    assert len(err.decode().strip().splitlines()) == 1
+    assert "Traceback" not in err.decode()

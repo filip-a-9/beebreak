@@ -13,7 +13,7 @@ from breakroom_companion.window import CompanionWindow
 from breakroom_companion.worker import IpcWorker
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import InvitationState, StatusReply
-from breakroom_shared.paths import socket_path
+from breakroom_shared.paths import UnsafeRuntimeDir, socket_path
 
 # Fixed cadence of the controller's clock (not user configuration).
 TICK_INTERVAL_MS = 1000
@@ -60,11 +60,16 @@ def wire(controller: Controller, window: CompanionWindow, worker: IpcWorker) -> 
 
 
 def main() -> int:
+    try:
+        sock = socket_path()
+    except (UnsafeRuntimeDir, OSError):
+        print("breakroom-companion: unsafe runtime directory", file=sys.stderr)
+        return EXIT_START_FAILED
     app = QApplication(sys.argv)
     controller = Controller()
     window = CompanionWindow()
     window.set_state(controller.state)
-    worker = IpcWorker(socket_path(), initial_status(controller))
+    worker = IpcWorker(sock, initial_status(controller))
     wire(controller, window, worker)
     try:
         worker.start()

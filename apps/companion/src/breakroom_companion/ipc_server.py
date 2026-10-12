@@ -9,7 +9,7 @@ import stat
 from collections.abc import Callable
 from pathlib import Path
 
-from breakroom_companion.config import ipc_read_timeout_s
+from breakroom_companion.config import ipc_read_timeout_s, probe_timeout_s
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import (
     MAX_FRAME_BYTES,
@@ -20,8 +20,6 @@ from breakroom_shared.ipc import (
 
 # Logs record only the failure kind or exception type name, never frame content.
 log = logging.getLogger("breakroom.ipc")
-
-_PROBE_TIMEOUT_S = 1.0
 
 
 class CompanionAlreadyRunning(RuntimeError):
@@ -36,7 +34,7 @@ def _claim_path(path: Path) -> None:
         return
     if stat.S_ISSOCK(mode):
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        probe.settimeout(_PROBE_TIMEOUT_S)
+        probe.settimeout(probe_timeout_s())
         try:
             probe.connect(str(path))
         except (ConnectionRefusedError, FileNotFoundError):
