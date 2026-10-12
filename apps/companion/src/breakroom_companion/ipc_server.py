@@ -24,6 +24,10 @@ log = logging.getLogger("breakroom.ipc")
 _PROBE_TIMEOUT_S = 1.0
 
 
+class CompanionAlreadyRunning(RuntimeError):
+    """A live companion already answers on the socket."""
+
+
 def _claim_path(path: Path) -> None:
     """Remove a stale file at path; raise RuntimeError if a companion is live."""
     try:
@@ -40,7 +44,7 @@ def _claim_path(path: Path) -> None:
         except OSError as exc:
             raise RuntimeError("socket is in use or unreachable") from exc
         else:
-            raise RuntimeError("another companion is already running")
+            raise CompanionAlreadyRunning("another companion is already running")
         finally:
             probe.close()
     path.unlink(missing_ok=True)

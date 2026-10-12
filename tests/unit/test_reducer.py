@@ -6,12 +6,13 @@ from uuid import uuid4
 import pytest
 
 from breakroom_agent_bridge.reducer import reduce
-from breakroom_agent_bridge.session_key import derive_key
 from breakroom_shared.events import NormalizedEvent
 from tests.fixtures.hook_payloads import PAYLOADS, RAW_SESSION_ID
 from tests.fixtures.privacy_negative import SENSITIVE_STRINGS
 
 SALT = b"t" * 32
+# Independent vector: printf %s "$RAW_SESSION_ID" | openssl dgst -sha256 -hmac "$SALT"
+EXPECTED_KEY = "7b4542dddbdfec74"
 NOW = datetime(2026, 10, 12, 13, 20, tzinfo=UTC)
 
 
@@ -49,7 +50,7 @@ def test_event_contains_no_sensitive_string_or_raw_session_id(name: str) -> None
 def test_hook_event_maps_to_event_type(name: str, etype: str) -> None:
     event = _must(PAYLOADS[name])
     assert event.type == etype
-    assert event.local_session_key == derive_key(RAW_SESSION_ID, SALT)
+    assert event.local_session_key == EXPECTED_KEY
     assert event.observed_at == NOW
     assert event.agent == "claude_code"
 

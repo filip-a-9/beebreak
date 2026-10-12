@@ -1,5 +1,6 @@
 """Companion entry point: wires Controller, CompanionWindow and IpcWorker. M1-04."""
 
+import signal
 import sys
 from datetime import UTC, datetime
 
@@ -7,6 +8,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from breakroom_companion.controller import Controller
+from breakroom_companion.ipc_server import CompanionAlreadyRunning
 from breakroom_companion.window import CompanionWindow
 from breakroom_companion.worker import IpcWorker
 from breakroom_shared.events import NormalizedEvent
@@ -15,6 +17,7 @@ from breakroom_shared.paths import socket_path
 
 # Fixed cadence of the controller's clock (not user configuration).
 TICK_INTERVAL_MS = 1000
+EXIT_START_FAILED = 1
 EXIT_ALREADY_RUNNING = 2
 
 
@@ -65,10 +68,17 @@ def main() -> int:
     wire(controller, window, worker)
     try:
         worker.start()
-    except RuntimeError:
+    except CompanionAlreadyRunning:
         print("breakroom-companion: already running", file=sys.stderr)
         return EXIT_ALREADY_RUNNING
+    except RuntimeError:
+        print("breakroom-companion: could not open the IPC socket", file=sys.stderr)
+        return EXIT_START_FAILED
     app.aboutToQuit.connect(worker.stop)
+    # Python runs signal handlers only when the interpreter has control; the
+    # 1 s tick timer returns to Python, so Ctrl+C / SIGTERM quit within a tick.
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, lambda *_: app.quit())
     window.show()
     return app.exec()
 

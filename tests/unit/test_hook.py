@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -31,9 +32,9 @@ def _run(
 
 
 @pytest.fixture
-def runtime() -> str:
-    path = tempfile.mkdtemp(dir="/tmp")
-    return path
+def runtime() -> Iterator[str]:
+    with tempfile.TemporaryDirectory(dir="/tmp") as path:
+        yield path
 
 
 def _assert_silent_success(proc: subprocess.CompletedProcess[bytes]) -> None:

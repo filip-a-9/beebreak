@@ -43,7 +43,9 @@ Expect: `companion` is `not_running`, `invitation` and `last_event_at` are
 `null`, and nothing else is in the result.
 
 **M1-C06 — Companion starts.** In a second terminal (with the M1-C03 exports):
-`uv run breakroom-companion`
+`.venv/bin/breakroom-companion`
+(Run the venv script directly, not `uv run`: `uv run` keeps a parent process,
+and the freeze steps below must target the companion itself.)
 Expect: a small always-on-top window titled `Breakroom` appears under WSLg,
 showing the idle text, with the "Suggest breaks" checkbox checked and no
 Accept/Decline buttons.
@@ -53,7 +55,7 @@ Accept/Decline buttons.
 Expect: `companion` is `running`, `invitation` is `idle`.
 
 **M1-C08 — Second companion refused.** In a third terminal:
-`uv run breakroom-companion; echo "exit=$?"`
+`.venv/bin/breakroom-companion; echo "exit=$?"`
 Expect: one short line on stderr, `exit=2`, the first window unaffected.
 
 ## Events reach the window
@@ -88,19 +90,21 @@ reports `invitation` as `disabled`. Re-check the box: window returns to idle.
 
 ## Fail open
 
-**M1-C15 — Companion stopped.** Close the companion (Ctrl+C in its terminal).
+**M1-C15 — Companion stopped.** Close the companion (Ctrl+C in its terminal;
+it quits within about a second and removes its socket file).
 In Claude, run a task with several tool calls.
 Expect: Claude behaves as normal, with no visible delay, hook error, or
 stderr/stdout noise. `breakroom_status` reports `not_running`; no leftover
 socket file prevents the next start (restart the companion: it starts).
 
 **M1-C16 — Companion frozen.** Start the companion, then freeze it:
-`kill -STOP $(pgrep -f breakroom-companion | head -1)` (verify the PID with
-`pgrep -af breakroom`). Run a task with several tool calls in Claude, and call
+`PID=$(pgrep -f '[.]venv/bin/breakroom-companion'); echo $PID; kill -STOP $PID`
+(exactly one PID must print; the brackets stop the pattern matching the shell
+running it). Run a task with several tool calls in Claude, and call
 `breakroom_status`.
 Expect: Claude keeps working without visible delay or errors; the status call
 returns `not_running` within about a second rather than hanging. Afterwards
-`kill -CONT <pid>` (or kill it) to clean up.
+`kill -CONT $PID` (or kill it) to clean up.
 
 ## Privacy
 
@@ -135,6 +139,10 @@ Run each with the same command; `--runs` defaults to 50 and
 `BREAKROOM_LATENCY_TIMEOUT_S`). Output is JSON with `runs`, `p50_ms`,
 `p95_ms`, `max_ms`, `nonzero_exits`, `stdout_bytes`.
 
+For M1-C18 to M1-C20, start the companion **without** the M1-C03 demo
+exports: the tool sends 50 synthetic tool events, which can raise an
+invitation under the short demo thresholds (dismiss it if one appears).
+
 **M1-C18 — Companion absent.** Companion not running:
 `uv run python tools/measure_hook_latency.py`
 Expect: `nonzero_exits` 0 and `stdout_bytes` 0. Record p50/p95/max.
@@ -143,11 +151,11 @@ Expect: `nonzero_exits` 0 and `stdout_bytes` 0. Record p50/p95/max.
 `uv run python tools/measure_hook_latency.py`
 Expect: `nonzero_exits` 0, `stdout_bytes` 0. Record numbers.
 
-**M1-C20 — Companion frozen.** `kill -STOP <companion pid>`, then run the
+**M1-C20 — Companion frozen.** Freeze it as in M1-C16 (`kill -STOP $PID`), then run the
 same command.
 Expect: `nonzero_exits` 0, `stdout_bytes` 0, and `max_ms` close to the hook's
 send timeout (`BREAKROOM_HOOK_SEND_TIMEOUT_S`, default 0.2 s = 200 ms) plus
-interpreter start-up, not seconds. Then `kill -CONT`. No target numbers are
+interpreter start-up, not seconds. Then `kill -CONT $PID`. No target numbers are
 fixed yet (spec §13): these are the first measurements, so record them and
 judge afterwards.
 
