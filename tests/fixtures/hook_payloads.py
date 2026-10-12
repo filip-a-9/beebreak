@@ -25,6 +25,8 @@ def _tool(event: str, tool: str) -> dict[str, Any]:
         "tool_use_id": "toolu_01ABC",
         "tool_input": {"command": _S[5], "file_path": _S[1], "content": _S[6]},
     }
+    if event == "PostToolUseFailure":
+        p["error"] = _S[7]
     if event == "PostToolUse":
         p["tool_response"] = {"stdout": _S[7], "stderr": _S[6], "path": _S[2]}
     return p
@@ -40,5 +42,20 @@ PAYLOADS: dict[str, dict[str, Any]] = {
     "TaskCompleted": _base("TaskCompleted")
     | {"task_id": "1", "task_subject": _S[4], "task_description": _S[9]},
     "Stop": _base("Stop") | {"stop_hook_active": False, "message": _S[7]},
+    "PermissionRequest": _tool("PermissionRequest", "Bash")
+    | {"permission_suggestions": [{"type": "addRules", "rules": [_S[5]]}]},
+    "Notification": _base("Notification")
+    | {
+        "message": _S[4],
+        "title": _S[3],
+        "notification_type": "permission_prompt",
+    },
+    "PostToolUseFailure": _tool("PostToolUseFailure", "Bash"),
+    "StopFailure": _base("StopFailure")
+    | {
+        "error": "rate_limit",
+        "error_details": _S[7],
+        "last_assistant_message": _S[8],
+    },
     "SessionEnd": _base("SessionEnd") | {"reason": _S[8]},
 }

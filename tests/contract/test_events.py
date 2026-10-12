@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from breakroom_shared.events import NormalizedEvent
+from breakroom_shared.ipc import EventFrame
 
 VALID_EVENT_JSON = """{
   "event_version": 1,
@@ -62,3 +63,17 @@ def test_value_outside_contract_is_rejected(field: str, value: object) -> None:
 
     with pytest.raises(ValidationError):
         NormalizedEvent.model_validate(payload)
+
+
+def test_waiting_input_event_round_trips_through_event_frame() -> None:
+    event = NormalizedEvent.model_validate_json(
+        VALID_EVENT_JSON.replace("tool_completed", "waiting_input").replace(
+            '"tool_class": "file_edit"', '"tool_class": null'
+        )
+    )
+    frame = EventFrame(kind="event", event=event)
+
+    parsed = EventFrame.model_validate_json(frame.model_dump_json())
+
+    assert parsed.event.type == "waiting_input"
+    assert parsed == frame

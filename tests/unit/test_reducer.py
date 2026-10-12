@@ -45,6 +45,10 @@ def test_event_contains_no_sensitive_string_or_raw_session_id(name: str) -> None
         ("TaskCompleted", "task_completed"),
         ("Stop", "turn_stopped"),
         ("SessionEnd", "session_closed"),
+        ("PermissionRequest", "waiting_input"),
+        ("Notification", "waiting_input"),
+        ("PostToolUseFailure", "tool_completed"),
+        ("StopFailure", "turn_stopped"),
     ],
 )
 def test_hook_event_maps_to_event_type(name: str, etype: str) -> None:
@@ -72,7 +76,7 @@ def test_hook_event_maps_to_event_type(name: str, etype: str) -> None:
         ("", "other"),
     ],
 )
-@pytest.mark.parametrize("hook", ["PreToolUse", "PostToolUse"])
+@pytest.mark.parametrize("hook", ["PreToolUse", "PostToolUse", "PostToolUseFailure"])
 def test_tool_class_table(hook: str, tool: str, expected: str) -> None:
     event = _must(PAYLOADS[hook] | {"tool_name": tool})
     assert event.tool_class == expected
@@ -85,14 +89,24 @@ def test_missing_or_non_string_tool_name_is_other() -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["SessionStart", "UserPromptSubmit", "TaskCreated", "Stop", "SessionEnd"]
+    "name",
+    [
+        "SessionStart",
+        "UserPromptSubmit",
+        "TaskCreated",
+        "Stop",
+        "SessionEnd",
+        "PermissionRequest",
+        "Notification",
+        "StopFailure",
+    ],
 )
 def test_non_tool_events_have_no_tool_class(name: str) -> None:
     event = _must(PAYLOADS[name] | {"tool_name": "Bash"})
     assert event.tool_class is None
 
 
-@pytest.mark.parametrize("name", ["Notification", "PreCompact", "", "stop"])
+@pytest.mark.parametrize("name", ["PreCompact", "SubagentStop", "", "stop"])
 def test_unknown_event_gives_none(name: str) -> None:
     assert _reduce(PAYLOADS["Stop"] | {"hook_event_name": name}) is None
 
@@ -131,3 +145,49 @@ def test_reducer_reads_only_allowlisted_keys() -> None:
     spy = _SpyDict(PAYLOADS["PostToolUse"])
     assert _reduce(spy) is not None
     assert spy.read <= {"hook_event_name", "session_id", "tool_name"}
+
+
+@pytest.mark.parametrize("name", ["Notification", "PostToolUseFailure"])
+def test_reducer_reads_only_four_keys_on_new_events(name: str) -> None:
+    spy = _SpyDict(PAYLOADS[name])
+    assert _reduce(spy) is not None
+    assert spy.read <= {
+        "hook_event_name",
+        "session_id",
+        "tool_name",
+        "notification_type",
+    }
+
+
+@pytest.mark.parametrize("ntype", ["permission_prompt", "elicitation_dialog"])
+def test_waiting_notification_types_map(ntype: str) -> None:
+    event = _must(PAYLOADS["Notification"] | {"notification_type": ntype})
+    assert event.type == "waiting_input"
+
+
+@pytest.mark.parametrize(
+    "ntype",
+    [
+        "idle_prompt",
+        "auth_success",
+        "elicitation_url_dialog",
+        "",
+        None,
+        7,
+        ["permission_prompt"],
+    ],
+)
+def test_other_notification_types_give_none(ntype: object) -> None:
+    assert _reduce(PAYLOADS["Notification"] | {"notification_type": ntype}) is None
+
+
+def test_notification_without_type_gives_none() -> None:
+    payload = {
+        k: v for k, v in PAYLOADS["Notification"].items() if k != "notification_type"
+    }
+    assert _reduce(payload) is None
+
+
+def test_failed_bash_is_shell_tool_completion() -> None:
+    event = _must(PAYLOADS["PostToolUseFailure"])
+    assert (event.type, event.tool_class) == ("tool_completed", "shell")

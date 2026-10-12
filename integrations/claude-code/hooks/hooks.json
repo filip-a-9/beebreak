@@ -8,6 +8,10 @@
     "TaskCreated": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../../.venv/bin/python -m breakroom_agent_bridge.hook", "async": true, "timeout": 2 }] }],
     "TaskCompleted": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../../.venv/bin/python -m breakroom_agent_bridge.hook", "async": true, "timeout": 2 }] }],
     "Stop": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../../.venv/bin/python -m breakroom_agent_bridge.hook", "async": true, "timeout": 2 }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../../.venv/bin/python -m breakroom_agent_bridge.hook", "async": true, "timeout": 2 }] }]
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../../.venv/bin/python -m breakroom_agent_bridge.hook", "async": true, "timeout": 2 }] }],
+    "PermissionRequest": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../../.venv/bin/python -m breakroom_agent_bridge.hook", "async": true, "timeout": 2 }] }],
+    "Notification": [{ "matcher": "permission_prompt|elicitation_dialog", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../../.venv/bin/python -m breakroom_agent_bridge.hook", "async": true, "timeout": 2 }] }],
+    "PostToolUseFailure": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../../.venv/bin/python -m breakroom_agent_bridge.hook", "async": true, "timeout": 2 }] }],
+    "StopFailure": [{ "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../../.venv/bin/python -m breakroom_agent_bridge.hook", "async": true, "timeout": 2 }] }]
   }
 }

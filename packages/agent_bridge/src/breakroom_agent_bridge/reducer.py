@@ -1,6 +1,7 @@
 """Strict, pure reducer: hook payload -> NormalizedEvent (spec §4 rule 1).
 
-Reads exactly three keys: hook_event_name, session_id, tool_name.
+Reads exactly four keys: hook_event_name, session_id, tool_name and
+notification_type (a fixed enum; Notification.message is never read).
 """
 
 from collections.abc import Mapping
@@ -19,7 +20,15 @@ EVENT_TYPES: dict[str, EventType] = {
     "TaskCompleted": "task_completed",
     "Stop": "turn_stopped",
     "SessionEnd": "session_closed",
+    "PermissionRequest": "waiting_input",
+    "Notification": "waiting_input",
+    "PostToolUseFailure": "tool_completed",
+    "StopFailure": "turn_stopped",
 }
+
+# Notification types meaning the user is needed (defense in depth behind the
+# hooks.json matcher).
+_WAITING_NOTIFICATIONS = frozenset({"permission_prompt", "elicitation_dialog"})
 
 _TOOL_EVENTS = {"tool_started", "tool_completed"}
 
@@ -46,6 +55,10 @@ def reduce(
     event_type = EVENT_TYPES.get(name)
     if event_type is None:
         return None
+    if name == "Notification":
+        ntype = payload.get("notification_type")
+        if not isinstance(ntype, str) or ntype not in _WAITING_NOTIFICATIONS:
+            return None
     tool_class: ToolClass | None = None
     if event_type in _TOOL_EVENTS:
         tool = payload.get("tool_name")
