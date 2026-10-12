@@ -1,0 +1,9 @@
+.claude/
+.claude.json
+.mcp.json
+CLAUDE.md
+CLAUDE.local.md
+.venv/
+__pycache__/
+.env*
+!.env.example
