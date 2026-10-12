@@ -1,10 +1,11 @@
 [tool.uv.workspace]
-members = ["packages/*"]
+members = ["packages/*", "apps/*"]
 
 [dependency-groups]
 dev = [
     "mypy==1.20.2",
     "pytest==9.1.1",
+    "pytest-qt==4.5.0",
     "ruff==0.17.0",
 ]
 
@@ -18,7 +19,12 @@ extend-exclude = ["docs"]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["breakroom_shared", "tests"]
+known-first-party = [
+    "breakroom_agent_bridge",
+    "breakroom_companion",
+    "breakroom_shared",
+    "tests",
+]
 
 [tool.mypy]
 strict = true

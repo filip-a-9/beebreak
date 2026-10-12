@@ -1,0 +1,23 @@
+[project]
+name = "breakroom-companion"
+version = "0.1.0"
+description = "Breakroom desktop companion: local IPC server and invitation window"
+authors = [
+    { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "breakroom-shared",
+    # Essentials only: full PySide6 adds WebEngine/PDF the companion never uses.
+    "pyside6-essentials==6.12.0",
+]
+
+[project.scripts]
+breakroom-companion = "breakroom_companion.app:main"
+
+[tool.uv.sources]
+breakroom-shared = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

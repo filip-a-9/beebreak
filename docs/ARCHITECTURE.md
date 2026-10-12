@@ -70,6 +70,8 @@ Some developers will accept unobtrusive invitations, meet an available peer, and
 
 **Platform decision (CONFIRMED 2026-10-12):** M1 targets WSL2 Linux end to end — Claude Code, hooks, MCP server, companion (GUI via WSLg) and local IPC all run inside WSL. This supersedes the Windows-first proposal below for M1; later platforms remain open (ADR #2).
 
+**Local IPC decision (CONFIRMED 2026-10-12, M1):** a Unix domain socket in a `0700` runtime directory replaces loopback HTTP, because WSL2 forwards `127.0.0.1` listeners to Windows. Other platforms revisit this under ADR #3.
+
 **Original platform proposal:** Test Windows first in the earliest hands-on prototype, then Windows and Linux for a closed beta if support capacity permits, with macOS added after packaging validation. This is **not** a confirmed scope decision. Native Windows, WSL, remote/SSH Claude Code, and macOS differ in where hooks execute; initial behavior must be specified/tested rather than presumed.
 
 **Documentation accuracy note:** The official MCP Python SDK stable v2 uses `from mcp.server import MCPServer`. Older examples using `FastMCP` represent the prior SDK. Exact plugin and hook JSON shall be validated against the installed Claude Code version before release.

@@ -1,0 +1,23 @@
+[project]
+name = "breakroom-agent-bridge"
+version = "0.1.0"
+description = "Claude Code hook reducer, MCP server, and IPC client for Breakroom"
+authors = [
+    { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "breakroom-shared",
+    "mcp==2.3.0",
+]
+
+[project.scripts]
+breakroom-hook = "breakroom_agent_bridge.hook:main"
+breakroom-mcp = "breakroom_agent_bridge.mcp_server:main"
+
+[tool.uv.sources]
+breakroom-shared = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
