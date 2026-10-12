@@ -7,6 +7,15 @@ template at the end. Report blocked platforms as pending, not as passed.
 
 Step IDs are stable; do not renumber.
 
+This checklist now runs on M2 behavior: `BREAKROOM_QUIET_GAP_S` is gone, and
+a session stays active through silence until `BREAKROOM_STALE_AFTER_S`
+(default 180 s). Other M2 variables (`BREAKROOM_STALE_AFTER_S`,
+`BREAKROOM_WAITING_MAX_S`, `BREAKROOM_OPEN_TOOL_MAX_S`,
+`BREAKROOM_FORGET_AFTER_S`) keep their defaults here; see
+`docs/M2_CHECKLIST.md`. Restart the companion after changing any variable.
+Suggestion and cooldown state now persist in
+`~/.local/state/breakroom/companion-state.json`; remove it for a clean run.
+
 ## Setup
 
 **M1-C01 — Install.** `uv sync`
@@ -21,13 +30,12 @@ Expect: all green.
 
 ```
 export BREAKROOM_ACTIVITY_THRESHOLD_S=15
-export BREAKROOM_QUIET_GAP_S=20
 export BREAKROOM_MIN_TOOL_EVENTS=2
 export BREAKROOM_COOLDOWN_S=90
 export BREAKROOM_SUGGESTION_TIMEOUT_S=60
 ```
 
-Defaults are 60 / 20 / 2 / 900 / 60. Values must be positive. Unset them (or
+Defaults are 60 / 2 / 900 / 60. Values must be positive. Unset them (or
 use a new shell) for step M1-C13.
 Expect: nothing visible yet.
 
