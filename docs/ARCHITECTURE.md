@@ -166,7 +166,7 @@ Sample event, with strictly non-sensitive fields:
 }
 ```
 
-Allowed event types for v0: `session_opened`, `turn_submitted`, `tool_started`, `tool_completed`, `task_created`, `task_completed`, `turn_stopped`, `session_closed`, `heartbeat` (internal). Tool classes are broad categories (`file_edit`, `shell`, `read`, `other`) and never reveal commands or file paths. If a hook cannot provide a classification safely, use `other`.
+Allowed event types for v0: `session_opened`, `turn_submitted`, `tool_started`, `tool_completed`, `task_created`, `task_completed`, `waiting_input`, `turn_stopped`, `session_closed`, `heartbeat` (internal). `waiting_input` comes from permission prompts and MCP elicitations; failed tools count as `tool_completed` and API-error turn ends as `turn_stopped` (**CONFIRMED** 2026-10-12, M2). Tool classes are broad categories (`file_edit`, `shell`, `read`, `other`) and never reveal commands or file paths. If a hook cannot provide a classification safely, use `other`.
 
 - Raw Claude session ID may be needed to correlate events **on the developer's machine**. Normalize it to an internal ephemeral key; never send that identifier to the backend.
 - Use `event_id` for de-duplication. Hook events may arrive out of order or not at all; activity handling must tolerate both.
@@ -452,11 +452,11 @@ These are deliberately unresolved until the next *non-interview* architecture re
 1. PySide6 versus a lightweight webview/Tauri companion after comparing app footprint, notification support, and packaging.
 2. Windows + Linux versus one-OS beta; behavior across Windows native/WSL, local terminal/IDE, SSH/cloud sessions.
 3. Local IPC HTTP versus OS socket/pipe, including same-user authentication and permission audit.
-4. Exact availability estimation baseline and calibration; what counts as a reliable task finish.
+4. Exact availability estimation baseline and calibration; what counts as a reliable task finish. M2 baseline (**CONFIRMED** 2026-10-12): heuristic engine only; nothing counts as a whole-task finish, `TaskCompleted` is a hint; with several sessions, invite only if one qualifies and none waits for input. Calibration stays open.
 5. Local model candidates and resource budgets. No default model weight bundled until evaluated.
 6. Auth provider, email invitation workflow, token/device lifecycle.
 7. Message and reports retention policy, deletion/export UX, locale/jurisdiction requirements.
-8. Exact timer defaults, UI presentation when estimated duration changes.
+8. Exact timer defaults, UI presentation when estimated duration changes. M2 (**CONFIRMED** 2026-10-12): the invitation shows the remaining-time bucket as a range, nothing when unknown; no live countdown. Session/grace/extension defaults stay open (M5).
 9. ~~Apache-2.0 versus MIT/AGPL~~ — resolved 2026-10-12: Apache-2.0.
 10. Hosting cost ceiling, monitoring, backup/restore, and abuse operational responsibilities.
 
