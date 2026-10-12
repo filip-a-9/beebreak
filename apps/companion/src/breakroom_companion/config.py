@@ -68,6 +68,8 @@ class TriggerConfig:
     # Activity staleness (M2-02): silence after which a session is unknown.
     stale_after_s: int = 180
     open_tool_max_s: int = 1800
+    # Shorter than open_tool_max_s: an Esc on a prompt fires no hook (M2 README).
+    waiting_max_s: int = 300
     forget_after_s: int = 7200
 
     def __post_init__(self) -> None:
@@ -79,6 +81,7 @@ class TriggerConfig:
             self.suggestion_timeout_s,
             self.stale_after_s,
             self.open_tool_max_s,
+            self.waiting_max_s,
             self.forget_after_s,
         ):
             if field <= 0:
@@ -99,5 +102,6 @@ class TriggerConfig:
             ),
             stale_after_s=_positive("BREAKROOM_STALE_AFTER_S", d.stale_after_s),
             open_tool_max_s=_positive("BREAKROOM_OPEN_TOOL_MAX_S", d.open_tool_max_s),
+            waiting_max_s=_positive("BREAKROOM_WAITING_MAX_S", d.waiting_max_s),
             forget_after_s=_positive("BREAKROOM_FORGET_AFTER_S", d.forget_after_s),
         )
