@@ -131,3 +131,49 @@ def test_failed_replace_leaves_no_temp_file(tmp_path: Path) -> None:
     (target / "keep").write_text("x")
     assert FileStateStore(target).save(PersistedState()) is False
     assert [p.name for p in tmp_path.iterdir()] == ["s.json"]
+
+
+def test_stack_tags_round_trip_in_vocabulary_order(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path / "s.json")
+    state = PersistedState(stack_tags=("python", "docker"))
+    assert store.save(state) is True
+    assert FileStateStore(tmp_path / "s.json").load().stack_tags == (
+        "python",
+        "docker",
+    )
+
+
+def _load_with_tags(tmp_path: Path, tags: object) -> PersistedState:
+    path = tmp_path / "s.json"
+    path.write_text(
+        json.dumps(
+            {"version": 1, "enabled": True, "cooldown_until": None, "stack_tags": tags}
+        )
+    )
+    return FileStateStore(path).load()
+
+
+def test_unknown_duplicate_and_excess_tags_are_dropped_leniently(
+    tmp_path: Path,
+) -> None:
+    loaded = _load_with_tags(
+        tmp_path, ["docker", "nope", 7, {"a": 1}, "python", "python", "go"]
+    )
+    assert loaded.enabled is True  # the rest of the file still counts
+    assert loaded.stack_tags == ("python", "go", "docker")
+    many = _load_with_tags(
+        tmp_path, ["python", "go", "rust", "java", "ruby", "php", "swift"]
+    )
+    assert many.stack_tags == ("python", "go", "rust", "java", "ruby")
+
+
+@pytest.mark.parametrize("bad", ["python", 5, None, {"python": 1}])
+def test_a_malformed_tag_list_means_no_tags(tmp_path: Path, bad: object) -> None:
+    loaded = _load_with_tags(tmp_path, bad)
+    assert loaded.stack_tags == () and loaded.enabled is True
+
+
+def test_a_file_without_tags_loads_with_none(tmp_path: Path) -> None:
+    path = tmp_path / "s.json"
+    path.write_text('{"version": 1, "enabled": false, "cooldown_until": null}')
+    assert FileStateStore(path).load() == PersistedState(enabled=False)

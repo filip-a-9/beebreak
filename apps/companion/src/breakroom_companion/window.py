@@ -5,20 +5,24 @@ The account row (M3-05b) shows fixed strings too; the nickname is the only
 server text, re-validated against the Nickname pattern and shown as plain text.
 """
 
+from collections.abc import Iterable
+
 from pydantic import TypeAdapter, ValidationError
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from breakroom_companion.break_state import BreakState
 from breakroom_shared.api import Me, Nickname
 from breakroom_shared.ipc import InvitationState
-from breakroom_shared.presence import RemainingTimeBucket
+from breakroom_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
 
 _LABELS: dict[InvitationState, str] = {
     "disabled": "Break suggestions are off",
@@ -41,6 +45,63 @@ _ACCOUNT_LABELS: dict[str, str] = {
     "connected": "Connected",
     "offline": "Offline \N{EN DASH} retrying",
 }
+
+# Break area (M4-06). Fixed strings only. Peer text never reaches a label as
+# received: tags and categories go through these maps, unknown values are dropped.
+FIND = "Find a break partner"
+SEARCHING = "Looking for a break partner\N{HORIZONTAL ELLIPSIS}"
+CANCEL = "Cancel"
+MATCHED_WITH = "Matched with"
+IN_COMMON = "In common:"
+END = "End"
+BLOCK = "Block"
+OK = "OK"
+NOBODY = "Nobody is around right now. Try again later."
+BREAK_ENDED = "Break ended."
+BLOCK_TITLE = "Block this person?"
+BLOCK_CONFIRM = "You won't be matched with this person again."
+
+TAG_LABELS: dict[StackTag, str] = {
+    "python": "Python",
+    "javascript": "JavaScript",
+    "typescript": "TypeScript",
+    "go": "Go",
+    "rust": "Rust",
+    "java": "Java",
+    "kotlin": "Kotlin",
+    "csharp": "C#",
+    "cpp": "C++",
+    "ruby": "Ruby",
+    "php": "PHP",
+    "swift": "Swift",
+    "react": "React",
+    "vue": "Vue",
+    "node": "Node.js",
+    "django": "Django",
+    "fastapi": "FastAPI",
+    "postgres": "PostgreSQL",
+    "docker": "Docker",
+    "kubernetes": "Kubernetes",
+}
+# "other" is deliberately absent: it is never shown.
+CATEGORY_LABELS: dict[TaskCategory, str] = {
+    "backend": "Backend",
+    "frontend": "Frontend",
+    "devops": "DevOps",
+    "data": "Data",
+    "testing": "Testing",
+}
+_ACTIVE_PHASES = ("joining", "searching", "matched")
+
+
+def shared_labels(tags: Iterable[object], category: object) -> list[str]:
+    """Display strings for what both people shared; unknown values are dropped."""
+    labels = [TAG_LABELS[t] for t in tags if isinstance(t, str) and t in TAG_LABELS]
+    if isinstance(category, str) and category in CATEGORY_LABELS:
+        labels.insert(0, CATEGORY_LABELS[category])
+    return labels
+
+
 CONNECTED_AS = "Connected as"
 UNKNOWN_NICKNAME = "?"
 SERVER_REFUSED = "Server address not allowed"
@@ -63,6 +124,11 @@ class CompanionWindow(QWidget):
     sign_in_requested = Signal()
     settings_requested = Signal()
     sign_out_requested = Signal()
+    find_requested = Signal()
+    cancel_requested = Signal()
+    end_requested = Signal()
+    block_requested = Signal()
+    dismiss_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -101,6 +167,29 @@ class CompanionWindow(QWidget):
         )
         for button in self._account_buttons:
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.break_label = QLabel()
+        self.break_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.break_label.setWordWrap(True)
+        self.shared_label = QLabel()
+        self.shared_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.shared_label.setWordWrap(True)
+        self.find_button = QPushButton(FIND)
+        self.cancel_button = QPushButton(CANCEL)
+        self.end_button = QPushButton(END)
+        self.block_button = QPushButton(BLOCK)
+        self.ok_button = QPushButton(OK)
+        self._break_buttons = (
+            self.find_button,
+            self.cancel_button,
+            self.end_button,
+            self.block_button,
+            self.ok_button,
+        )
+        for button in self._break_buttons:
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._break = BreakState()
+        self._ready = False
+        self._invitation: InvitationState = "idle"
         self._remote_state = "signed_out"
         self._me: Me | None = None
         self._store_encrypted = True
@@ -113,6 +202,12 @@ class CompanionWindow(QWidget):
         layout.addWidget(self.status_label)
         layout.addWidget(self.estimate_label)
         layout.addLayout(buttons)
+        layout.addWidget(self.break_label)
+        layout.addWidget(self.shared_label)
+        break_buttons = QHBoxLayout()
+        for button in self._break_buttons:
+            break_buttons.addWidget(button)
+        layout.addLayout(break_buttons)
         layout.addStretch()
         layout.addWidget(self.enabled_checkbox)
         layout.addWidget(self.account_label)
@@ -127,12 +222,19 @@ class CompanionWindow(QWidget):
         # Only user clicks emit; set_state uses setChecked, which doesn't.
         self.enabled_checkbox.clicked.connect(self.enabled_changed)
 
+        self.find_button.clicked.connect(self.find_requested)
+        self.cancel_button.clicked.connect(self.cancel_requested)
+        self.end_button.clicked.connect(self.end_requested)
+        self.block_button.clicked.connect(self._on_block_clicked)
+        self.ok_button.clicked.connect(self.dismiss_requested)
+
         self.sign_in_button.clicked.connect(self.sign_in_requested)
         self.finish_setup_button.clicked.connect(self.settings_requested)
         self.settings_button.clicked.connect(self.settings_requested)
         self.sign_out_button.clicked.connect(self.sign_out_requested)
 
         self.set_state("idle")
+        self._render_break()
         self._render_account()
 
     def set_state(
@@ -146,12 +248,75 @@ class CompanionWindow(QWidget):
         )
         self.estimate_label.setText(text or "")
         self.estimate_label.setVisible(text is not None)
-        self.accept_button.setVisible(state == "suggested")
-        self.decline_button.setVisible(state == "suggested")
+        self._invitation = state
+        offered = state == "suggested" and not self._break_active
+        self.accept_button.setVisible(offered)
+        self.decline_button.setVisible(offered)
         self.enabled_checkbox.setChecked(state != "disabled")
         if state == "suggested":
             self.show()
             self.raise_()
+
+    # --- break area (M4-06) ---
+
+    @property
+    def _break_active(self) -> bool:
+        return self._break.phase in _ACTIVE_PHASES
+
+    def set_ready(self, ready: bool) -> None:
+        """Connected with nickname and consent saved: Find may be offered."""
+        self._ready = ready
+        self._render_break()
+
+    def set_break(self, state: BreakState) -> None:
+        self._break = state
+        self._render_break()
+        offered = self._invitation == "suggested" and not self._break_active
+        self.accept_button.setVisible(offered)
+        self.decline_button.setVisible(offered)
+        if state.phase in ("matched", "nobody_available"):
+            self.show()
+            self.raise_()
+
+    def _render_break(self) -> None:
+        phase = self._break.phase
+        text = ""
+        shared = ""
+        if phase in ("joining", "searching"):
+            text = SEARCHING
+        elif phase == "matched":
+            match = self._break.match
+            peer = safe_nickname(match.peer_nickname if match else None)
+            text = f"{MATCHED_WITH} {peer}"
+            if match is not None:
+                labels = shared_labels(match.shared_tags, match.shared_category)
+                if labels:
+                    shared = f"{IN_COMMON} {', '.join(labels)}"
+        elif phase == "nobody_available":
+            text = NOBODY
+        elif phase == "ended":
+            text = BREAK_ENDED
+        self.break_label.setText(text)
+        self.break_label.setVisible(bool(text))
+        self.shared_label.setText(shared)
+        self.shared_label.setVisible(bool(shared))
+        find = self._ready and phase in ("none", "nobody_available")
+        self.find_button.setVisible(find)
+        self.cancel_button.setVisible(phase in ("joining", "searching"))
+        self.end_button.setVisible(phase == "matched")
+        self.block_button.setVisible(phase == "matched")
+        self.ok_button.setVisible(phase in ("nobody_available", "ended"))
+
+    def _on_block_clicked(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            BLOCK_TITLE,
+            BLOCK_CONFIRM,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.block_requested.emit()
 
     # --- account row (M3-05b) ---
 

@@ -13,11 +13,16 @@ from typing import Literal
 from breakroom_companion.activity import ActivityTracker
 from breakroom_companion.config import TriggerConfig
 from breakroom_companion.decision import DecisionEngine, HeuristicEngine
-from breakroom_companion.state_store import FileStateStore, PersistedState, StateStore
+from breakroom_companion.state_store import (
+    FileStateStore,
+    PersistedState,
+    StateStore,
+    normalize_tags,
+)
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import ActivityState, InvitationState
 from breakroom_shared.paths import state_path
-from breakroom_shared.presence import RemainingTimeBucket
+from breakroom_shared.presence import RemainingTimeBucket, StackTag
 
 Outcome = Literal["accepted", "declined"]
 
@@ -58,6 +63,11 @@ class Controller:
         persisted = self._store.load()
         self._enabled = persisted.enabled
         self._cooldown_until: datetime | None = persisted.cooldown_until
+        self._stack_tags: tuple[StackTag, ...] = normalize_tags(persisted.stack_tags)
+        # Suggestions need a connected, set-up account and no break in progress
+        # (M4). The app pushes both; tests of the bare engine keep the default.
+        self._ready = True
+        self._break_active = False
         self.state: InvitationState = "idle" if persisted.enabled else "disabled"
         self.last_event_at: datetime | None = None
         self.estimate: RemainingTimeBucket | None = None
@@ -75,7 +85,11 @@ class Controller:
     def _persist(self) -> None:
         # A failed save is not fatal: the in-memory state keeps working.
         self._store.save(
-            PersistedState(enabled=self._enabled, cooldown_until=self._cooldown_until)
+            PersistedState(
+                enabled=self._enabled,
+                cooldown_until=self._cooldown_until,
+                stack_tags=self._stack_tags,
+            )
         )
 
     def _end_suggestion(self) -> None:
@@ -108,6 +122,8 @@ class Controller:
         if self.state != "idle":
             return
         self._spent = {p for p in self._spent if p[0] in sessions}
+        if not self._ready or self._break_active:
+            return
         if self._cooldown_until is not None and now < self._cooldown_until:
             return
         decision = self._engine.decide(sessions, now, exclude=self._spent)
@@ -146,6 +162,37 @@ class Controller:
         self.estimate = None
         self._suggested_at = None
         return new
+
+    @property
+    def stack_tags(self) -> tuple[StackTag, ...]:
+        return self._stack_tags
+
+    def set_stack_tags(self, tags: tuple[StackTag, ...]) -> None:
+        """Remember the user's stack tags locally (vocabulary only, at most 5)."""
+        self._stack_tags = normalize_tags(tags)
+        self._persist()
+
+    def _withdraw(self) -> InvitationState | None:
+        """Take back an outstanding suggestion without a cooldown."""
+        if self.state != "suggested":
+            return None
+        self._end_suggestion()
+        return "idle"
+
+    def set_ready(self, ready: bool) -> InvitationState | None:
+        """Connected with nickname and consent saved. Not ready: no invitations."""
+        self._ready = ready
+        return None if ready else self._withdraw()
+
+    def set_break_active(self, active: bool, now: datetime) -> InvitationState | None:
+        """A search or match is in progress. Its end starts the cooldown."""
+        was, self._break_active = self._break_active, active
+        if active:
+            return self._withdraw()
+        if was:
+            self._cooldown_until = now + timedelta(seconds=self._config.cooldown_s)
+            self._persist()
+        return None
 
     def tick(self, now: datetime) -> InvitationState | None:
         """Called about once a second: timeout, withdrawal, silent-tool invites."""

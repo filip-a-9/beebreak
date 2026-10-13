@@ -1,21 +1,24 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, get_args
 from uuid import uuid4
 
 import pytest
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QSignalSpy
+from PySide6.QtWidgets import QApplication, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from breakroom_companion.app import initial_status, setup_remote, wire
+from breakroom_companion.break_state import BreakPhase, BreakState
 from breakroom_companion.config import TriggerConfig
 from breakroom_companion.controller import Controller
-from breakroom_companion.window import CompanionWindow
+from breakroom_companion.window import CATEGORY_LABELS, TAG_LABELS, CompanionWindow
 from breakroom_companion.worker import IpcWorker
-from breakroom_shared.api import Consent, Me
+from breakroom_shared.api import Consent, MatchView, Me, QueueEntryView
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import InvitationState
-from breakroom_shared.presence import RemainingTimeBucket
+from breakroom_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
 
 
 @pytest.fixture(autouse=True)
@@ -458,3 +461,271 @@ def test_allowed_server_url_builds_a_worker_and_wires_the_row(
     assert window.account_label.text() == "Connected as ada_l"
     assert worker.state == "signed_out"  # nothing started, no network
     worker.stop()
+
+
+# --- M4-06: break area ---
+
+LATER = datetime(2026, 10, 13, 13, 0, tzinfo=UTC)
+
+
+def _match(
+    nickname: str = "bob_b",
+    tags: tuple[Any, ...] = (),
+    category: Any = None,
+) -> MatchView:
+    return MatchView.model_construct(
+        match_id=uuid4(),
+        peer_nickname=nickname,
+        shared_tags=tags,
+        shared_category=category,
+        ends_at=LATER,
+    )
+
+
+def _entry() -> QueueEntryView:
+    return QueueEntryView(entry_id=uuid4(), status="queued", expires_at=LATER)
+
+
+def _break_visible(window: CompanionWindow) -> set[str]:
+    named = {
+        "find": window.find_button,
+        "cancel": window.cancel_button,
+        "end": window.end_button,
+        "block": window.block_button,
+        "ok": window.ok_button,
+        "text": window.break_label,
+        "shared": window.shared_label,
+    }
+    return {name for name, w in named.items() if w.isVisibleTo(window)}
+
+
+def test_nothing_in_the_break_area_until_ready(window: CompanionWindow) -> None:
+    window.show()
+    assert _break_visible(window) == set()
+    window.set_ready(True)
+    assert _break_visible(window) == {"find"}
+    assert window.find_button.text() == "Find a break partner"
+    window.set_ready(False)
+    assert _break_visible(window) == set()
+
+
+@pytest.mark.parametrize("phase", ["joining", "searching"])
+def test_searching_shows_text_and_cancel_only(
+    window: CompanionWindow, phase: BreakPhase
+) -> None:
+    window.show()
+    window.set_ready(True)
+    window.set_break(BreakState(phase=phase, entry=_entry()))
+    assert _break_visible(window) == {"text", "cancel"}
+    assert window.break_label.text().startswith("Looking for a break partner")
+
+
+def test_matched_shows_nickname_shared_labels_end_and_block(
+    window: CompanionWindow,
+) -> None:
+    window.show()
+    window.set_ready(True)
+    window.set_break(
+        BreakState(
+            phase="matched",
+            match=_match(tags=("python", "csharp"), category="backend"),
+        )
+    )
+    assert _break_visible(window) == {"text", "shared", "end", "block"}
+    assert window.break_label.text() == "Matched with bob_b"
+    assert "Python" in window.shared_label.text()
+    assert "C#" in window.shared_label.text()
+    assert "Backend" in window.shared_label.text()
+
+
+def test_matched_without_shared_values_hides_the_shared_line(
+    window: CompanionWindow,
+) -> None:
+    window.show()
+    window.set_break(BreakState(phase="matched", match=_match()))
+    assert _break_visible(window) == {"text", "end", "block"}
+
+
+@pytest.mark.parametrize(
+    "nickname", ["<b>x</b>", "a b", "x" * 40, "ab\n", "\N{CYRILLIC SMALL LETTER A}bc"]
+)
+def test_a_peer_nickname_failing_the_pattern_shows_a_question_mark(
+    window: CompanionWindow, nickname: str
+) -> None:
+    window.set_break(BreakState(phase="matched", match=_match(nickname)))
+    assert window.break_label.text() == "Matched with ?"
+    assert nickname not in window.break_label.text()
+
+
+def test_unknown_tags_and_categories_never_render(window: CompanionWindow) -> None:
+    window.show()
+    window.set_break(
+        BreakState(
+            phase="matched",
+            match=_match(tags=("<b>evil</b>", "python", 7), category="other"),
+        )
+    )
+    assert window.shared_label.text().endswith("Python")
+    assert "evil" not in window.shared_label.text()
+    assert "Other" not in window.shared_label.text()
+    window.set_break(
+        BreakState(phase="matched", match=_match(tags=("zzz",), category="nope"))
+    )
+    assert window.shared_label.isHidden()
+
+
+def test_labels_cover_the_whole_vocabulary() -> None:
+    assert set(TAG_LABELS) == set(get_args(StackTag))
+    assert "other" not in CATEGORY_LABELS
+    assert set(CATEGORY_LABELS) | {"other"} == set(get_args(TaskCategory))
+
+
+def test_break_labels_are_plain_text(window: CompanionWindow) -> None:
+    for label in (window.break_label, window.shared_label):
+        assert label.textFormat() == Qt.TextFormat.PlainText
+
+
+def test_nobody_available_offers_ok_and_find(window: CompanionWindow) -> None:
+    window.show()
+    window.set_ready(True)
+    window.set_break(BreakState(phase="nobody_available"))
+    assert _break_visible(window) == {"text", "ok", "find"}
+    assert window.break_label.text() == "Nobody is around right now. Try again later."
+
+
+def test_ended_shows_text_and_ok_only(window: CompanionWindow) -> None:
+    window.show()
+    window.set_ready(True)
+    window.set_break(BreakState(phase="ended"))
+    assert _break_visible(window) == {"text", "ok"}
+    assert window.break_label.text() == "Break ended."
+
+
+def test_find_is_hidden_during_a_break_even_when_ready(
+    window: CompanionWindow,
+) -> None:
+    window.show()
+    window.set_ready(True)
+    window.set_break(BreakState(phase="matched", match=_match()))
+    assert not window.find_button.isVisibleTo(window)
+
+
+def test_buttons_emit_their_signals(window: CompanionWindow, qtbot: QtBot) -> None:
+    window.show()
+    window.set_ready(True)
+    with qtbot.waitSignal(window.find_requested, timeout=1000):
+        window.find_button.click()
+    window.set_break(BreakState(phase="searching", entry=_entry()))
+    with qtbot.waitSignal(window.cancel_requested, timeout=1000):
+        window.cancel_button.click()
+    window.set_break(BreakState(phase="matched", match=_match()))
+    with qtbot.waitSignal(window.end_requested, timeout=1000):
+        window.end_button.click()
+    window.set_break(BreakState(phase="ended"))
+    with qtbot.waitSignal(window.dismiss_requested, timeout=1000):
+        window.ok_button.click()
+
+
+def _answer(
+    monkeypatch: pytest.MonkeyPatch, button: QMessageBox.StandardButton
+) -> list[str]:
+    asked: list[str] = []
+
+    def question(parent: object, title: str, text: str, *args: object) -> object:
+        asked.append(text)
+        return button
+
+    monkeypatch.setattr(QMessageBox, "question", question)
+    return asked
+
+
+def test_block_emits_only_after_confirmation(
+    window: CompanionWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window.show()
+    window.set_break(BreakState(phase="matched", match=_match()))
+    asked = _answer(monkeypatch, QMessageBox.StandardButton.No)
+    with qtbot.assertNotEmitted(window.block_requested):
+        window.block_button.click()
+    assert asked == ["You won't be matched with this person again."]
+    _answer(monkeypatch, QMessageBox.StandardButton.Yes)
+    with qtbot.waitSignal(window.block_requested, timeout=1000):
+        window.block_button.click()
+
+
+def test_every_break_button_refuses_keyboard_focus(window: CompanionWindow) -> None:
+    for button in (
+        window.find_button,
+        window.cancel_button,
+        window.end_button,
+        window.block_button,
+        window.ok_button,
+    ):
+        assert button.focusPolicy() == Qt.FocusPolicy.NoFocus
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        BreakState(phase="searching", entry=_entry()),
+        BreakState(phase="matched", match=_match()),
+        BreakState(phase="nobody_available"),
+        BreakState(phase="ended"),
+    ],
+)
+def test_space_and_enter_after_a_state_change_emit_nothing(
+    window: CompanionWindow, qtbot: QtBot, state: BreakState
+) -> None:
+    window.show()
+    window.set_ready(True)
+    window.set_break(state)
+    signals = [
+        window.find_requested,
+        window.cancel_requested,
+        window.end_requested,
+        window.block_requested,
+        window.dismiss_requested,
+        window.accepted,
+        window.declined,
+    ]
+    spy = [QSignalSpy(s) for s in signals]
+    for key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        qtbot.keyClick(window, key)  # type: ignore[no-untyped-call]
+    assert [s.count() for s in spy] == [0] * len(signals)
+
+
+def test_accept_is_hidden_while_a_break_is_active(window: CompanionWindow) -> None:
+    window.show()
+    window.set_state("suggested", "5_10m")
+    assert window.accept_button.isVisible()
+    window.set_break(BreakState(phase="searching", entry=_entry()))
+    assert not window.accept_button.isVisibleTo(window)
+    assert not window.decline_button.isVisibleTo(window)
+    window.set_state("suggested", "5_10m")
+    assert not window.accept_button.isVisibleTo(window)
+    window.set_break(BreakState())
+    assert window.accept_button.isVisibleTo(window)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        BreakState(phase="matched", match=_match()),
+        BreakState(phase="nobody_available"),
+    ],
+)
+def test_matched_and_nobody_available_show_and_raise_the_window(
+    window: CompanionWindow, state: BreakState
+) -> None:
+    assert not window.isVisible()
+    window.set_break(state)
+    assert window.isVisible()
+    assert window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+
+@pytest.mark.parametrize("phase", ["searching", "ended"])
+def test_other_phases_do_not_pop_the_window_up(
+    window: CompanionWindow, phase: BreakPhase
+) -> None:
+    window.set_break(BreakState(phase=phase))
+    assert not window.isVisible()

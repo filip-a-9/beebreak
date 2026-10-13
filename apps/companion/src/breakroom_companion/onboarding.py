@@ -12,6 +12,8 @@ signed in with setup incomplete; the account row offers "Finish setup".
 
 import contextlib
 import re
+from collections.abc import Callable
+from typing import get_args
 
 from pydantic import TypeAdapter, ValidationError
 from PySide6.QtCore import Qt, Slot
@@ -21,6 +23,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -29,7 +33,10 @@ from PySide6.QtWidgets import (
 
 from breakroom_companion.privacy_preview import PrivacyPreviewDialog
 from breakroom_companion.remote import RemoteWorker
+from breakroom_companion.state_store import MAX_STACK_TAGS, normalize_tags
+from breakroom_companion.window import TAG_LABELS
 from breakroom_shared.api import Consent, Me, Nickname
+from breakroom_shared.presence import StackTag
 
 PAGE_EMAIL, PAGE_CODE, PAGE_NICKNAME, PAGE_PRIVACY, PAGE_DONE = range(5)
 
@@ -48,9 +55,10 @@ PRIVACY_INTRO = (
 CATEGORY_LABEL = "Share the kind of task (for example backend)"
 STACK_LABEL = "Share stack tags (for example python)"
 TIME_LABEL = "Share roughly how much time is left"
-NOTHING_SHARED = (
-    "In this version nothing is shared; these settings apply once matching arrives."
+SENT_ONLY = (
+    "These fields are sent only when you start a break, and only the ones you turn on."
 )
+TAGS_INTRO = "Pick up to 5 tags. They stay on this computer until you start a break."
 SHOW_SHARED_LABEL = "Show what is shared"
 DONE_TEXT = "You are all set."
 BACK, NEXT, SAVE, CLOSE, CANCEL = "Back", "Next", "Save", "Close", "Cancel"
@@ -131,9 +139,13 @@ class OnboardingDialog(QDialog):
         worker: RemoteWorker,
         me: Me | None = None,
         parent: QWidget | None = None,
+        *,
+        stack_tags: tuple[StackTag, ...] = (),
+        save_tags: Callable[[tuple[StackTag, ...]], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.worker = worker
+        self._save_tags = save_tags
         self.setWindowTitle(TITLE)
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self._state: str = worker.state
@@ -163,6 +175,20 @@ class OnboardingDialog(QDialog):
         self.stack_box = QCheckBox(STACK_LABEL)
         self.time_box = QCheckBox(TIME_LABEL)
         self.show_shared_button = QPushButton(SHOW_SHARED_LABEL)
+        self.tags_intro = _label(TAGS_INTRO)
+        self.tag_list = QListWidget()
+        self.tag_items: dict[StackTag, QListWidgetItem] = {}
+        self._syncing_tags = False
+        chosen = set(normalize_tags(stack_tags))
+        for tag in get_args(StackTag):
+            item = QListWidgetItem(TAG_LABELS[tag])
+            item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            item.setCheckState(
+                Qt.CheckState.Checked if tag in chosen else Qt.CheckState.Unchecked
+            )
+            self.tag_list.addItem(item)
+            self.tag_items[tag] = item
+        self._sync_tag_limit()
         self.privacy_error = _error_label()
         self.done_label = _label(DONE_TEXT)
 
@@ -200,8 +226,10 @@ class OnboardingDialog(QDialog):
                 _label(PRIVACY_INTRO),
                 self.category_box,
                 self.stack_box,
+                self.tags_intro,
+                self.tag_list,
                 self.time_box,
-                _label(NOTHING_SHARED),
+                _label(SENT_ONLY),
                 self.show_shared_button,
                 self.privacy_error,
             )
@@ -226,6 +254,8 @@ class OnboardingDialog(QDialog):
         self.nickname_edit.textChanged.connect(self._refresh)
         for box in (self.category_box, self.stack_box, self.time_box):
             box.toggled.connect(self._consent_toggled)
+        self.stack_box.toggled.connect(self._sync_tag_list)
+        self.tag_list.itemChanged.connect(self._tag_changed)
         self.show_shared_button.clicked.connect(self.show_preview)
         self.next_button.clicked.connect(self._next)
         self.back_button.clicked.connect(self._back)
@@ -240,6 +270,7 @@ class OnboardingDialog(QDialog):
         else:
             self._load_consent(me.consent)
             self._go(PAGE_NICKNAME if me.nickname is None else PAGE_PRIVACY)
+        self._sync_tag_list()
 
     # --- state ---
 
@@ -254,6 +285,36 @@ class OnboardingDialog(QDialog):
             share_stack_tags=self.stack_box.isChecked(),
             share_time_bucket=self.time_box.isChecked(),
         )
+
+    def selected_tags(self) -> tuple[StackTag, ...]:
+        return tuple(
+            tag
+            for tag, item in self.tag_items.items()
+            if item.checkState() == Qt.CheckState.Checked
+        )
+
+    def _sync_tag_list(self) -> None:
+        self.tags_intro.setVisible(self.stack_box.isChecked())
+        self.tag_list.setVisible(self.stack_box.isChecked())
+
+    def _sync_tag_limit(self) -> None:
+        """At the limit, the unchecked boxes are disabled."""
+        full = len(self.selected_tags()) >= MAX_STACK_TAGS
+        for item in self.tag_items.values():
+            checked = item.checkState() == Qt.CheckState.Checked
+            flags = Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled
+            item.setFlags(flags if checked or not full else Qt.ItemFlag.NoItemFlags)
+
+    @Slot(QListWidgetItem)
+    def _tag_changed(self, _item: QListWidgetItem) -> None:
+        if self._syncing_tags:
+            return  # our own flag change below
+        self._syncing_tags = True
+        try:
+            self._sync_tag_limit()
+        finally:
+            self._syncing_tags = False
+        self._consent_toggled()
 
     def _load_consent(self, consent: Consent | None) -> None:
         for box, value in (
@@ -330,6 +391,9 @@ class OnboardingDialog(QDialog):
             self.worker.set_nickname(self.nickname_edit.text())
         elif page == PAGE_PRIVACY:
             self._busy = True
+            # Tags are local: saved whatever the server answers.
+            if self._save_tags is not None:
+                self._save_tags(self.selected_tags())
             self.worker.set_consent(self.consent())  # even with every box off
         self._refresh()
 
@@ -342,15 +406,17 @@ class OnboardingDialog(QDialog):
     @Slot()
     def _consent_toggled(self) -> None:
         if self.preview is not None and self.preview.isVisible():
-            self.preview.set_consent(self.consent())
+            self.preview.set_consent(self.consent(), self.selected_tags())
 
     @Slot()
     def show_preview(self) -> None:
         if self.preview is None:
-            self.preview = PrivacyPreviewDialog(self.consent(), self)
+            self.preview = PrivacyPreviewDialog(
+                self.consent(), self, self.selected_tags()
+            )
             self.preview.setModal(False)
         else:
-            self.preview.set_consent(self.consent())
+            self.preview.set_consent(self.consent(), self.selected_tags())
         self.preview.show()
         self.preview.raise_()
 

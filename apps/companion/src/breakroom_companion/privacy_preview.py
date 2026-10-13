@@ -6,6 +6,8 @@ the fixed list of content that never leaves. Nothing here touches the network:
 this module imports neither `httpx` nor `websockets` (M3 rule 13).
 """
 
+from collections.abc import Sequence
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
@@ -17,14 +19,18 @@ from PySide6.QtWidgets import (
 )
 
 from breakroom_shared.api import Consent
-from breakroom_shared.presence import build_presence
+from breakroom_shared.presence import StackTag, build_presence
 
 EXAMPLE_HEADING = "Example"
 EXAMPLE_NOTE = (
     "Example values only. Your real values are chosen locally and only the "
     "fields you tick are included."
 )
-NOTHING_SHARED_NOTE = "In this version nothing is shared."
+SENT_ONLY_NOTE = (
+    "These fields are sent only when you start a break, and only the ones you "
+    "have turned on."
+)
+EXAMPLE_TAG: StackTag = "python"
 NEVER_SHARED_HEADING = "Never shared"
 # ARCHITECTURE §4 "Protected local content".
 NEVER_SHARED: tuple[str, ...] = (
@@ -42,12 +48,14 @@ NEVER_SHARED: tuple[str, ...] = (
 )
 
 
-def example_json(consent: Consent) -> str:
-    """Pretty JSON of an example presence for `consent`."""
+def example_json(consent: Consent, tags: Sequence[StackTag] = ()) -> str:
+    """Pretty JSON of an example presence for `consent`.
+
+    Uses the user's own tags, or one example tag when none are picked."""
     return build_presence(
         consent,
         task_category="backend",
-        stack_tags=["python"],
+        stack_tags=list(tags) or [EXAMPLE_TAG],
         remaining_time_bucket="10_20m",
     ).model_dump_json(indent=2)
 
@@ -60,12 +68,18 @@ def _plain(text: str) -> QLabel:
 
 
 class PrivacyPreviewDialog(QDialog):
-    def __init__(self, consent: Consent, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        consent: Consent,
+        parent: QWidget | None = None,
+        tags: Sequence[StackTag] = (),
+    ) -> None:
         super().__init__(parent)
+        self._tags: tuple[StackTag, ...] = tuple(tags)
         self.setWindowTitle("What this app shares")
         self.example_label = _plain(EXAMPLE_HEADING)
         self.note_label = _plain(EXAMPLE_NOTE)
-        self.nothing_shared_label = _plain(NOTHING_SHARED_NOTE)
+        self.sent_only_label = _plain(SENT_ONLY_NOTE)
         self.example_edit = QPlainTextEdit()
         self.example_edit.setReadOnly(True)
         self.never_label = _plain(NEVER_SHARED_HEADING)
@@ -78,7 +92,7 @@ class PrivacyPreviewDialog(QDialog):
         for widget in (
             self.example_label,
             self.note_label,
-            self.nothing_shared_label,
+            self.sent_only_label,
             self.example_edit,
             self.never_label,
             self.never_list_label,
@@ -87,6 +101,10 @@ class PrivacyPreviewDialog(QDialog):
             layout.addWidget(widget)
         self.set_consent(consent)
 
-    def set_consent(self, consent: Consent) -> None:
+    def set_consent(
+        self, consent: Consent, tags: Sequence[StackTag] | None = None
+    ) -> None:
         """Re-render the example for the given (possibly unsaved) choices."""
-        self.example_edit.setPlainText(example_json(consent))
+        if tags is not None:
+            self._tags = tuple(tags)
+        self.example_edit.setPlainText(example_json(consent, self._tags))

@@ -13,7 +13,7 @@ from breakroom_companion.privacy_preview import (
     example_json,
 )
 from breakroom_shared.api import Consent
-from breakroom_shared.presence import build_presence
+from breakroom_shared.presence import StackTag, build_presence
 
 COMBOS = list(itertools.product([False, True], repeat=3))
 
@@ -101,3 +101,51 @@ def test_module_imports_no_network_library() -> None:
         check=False,
     )
     assert result.returncode == 0
+
+
+# --- M4-06: the user's real tags ---
+
+
+def test_preview_uses_the_chosen_tags_when_consented() -> None:
+    consent = _consent((False, True, False))
+    data = json.loads(example_json(consent, ("go", "docker")))
+    assert data["stack_tags"] == ["go", "docker"]
+
+
+def test_preview_falls_back_to_the_example_tag_when_none_are_picked() -> None:
+    consent = _consent((False, True, False))
+    assert json.loads(example_json(consent))["stack_tags"] == ["python"]
+    assert json.loads(example_json(consent, ()))["stack_tags"] == ["python"]
+
+
+def test_preview_never_shows_tags_without_consent() -> None:
+    data = json.loads(example_json(_consent((True, False, True)), ("go",)))
+    assert data["stack_tags"] == []
+
+
+def test_preview_matches_build_presence_for_the_chosen_tags() -> None:
+    consent = _consent((True, True, True))
+    tags: tuple[StackTag, ...] = ("rust", "react")
+    data = json.loads(example_json(consent, tags))
+    reference = json.loads(
+        build_presence(
+            consent,
+            task_category="backend",
+            stack_tags=tags,
+            remaining_time_bucket="10_20m",
+        ).model_dump_json()
+    )
+    data.pop("presence_id")
+    reference.pop("presence_id")
+    assert data == reference
+
+
+def test_dialog_follows_tag_changes(qtbot: QtBot) -> None:
+    consent = _consent((False, True, False))
+    dialog = PrivacyPreviewDialog(consent, None, ("go",))
+    qtbot.addWidget(dialog)
+    assert json.loads(dialog.example_edit.toPlainText())["stack_tags"] == ["go"]
+    dialog.set_consent(consent, ("rust",))
+    assert json.loads(dialog.example_edit.toPlainText())["stack_tags"] == ["rust"]
+    dialog.set_consent(consent)  # keeps the last tags
+    assert json.loads(dialog.example_edit.toPlainText())["stack_tags"] == ["rust"]

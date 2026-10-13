@@ -381,3 +381,106 @@ def test_unsafe_state_dir_is_reported_on_stderr(
     d.chmod(0o770)
     Controller()
     assert capsys.readouterr().err.strip()
+
+
+# --- M4-06: readiness, breaks and stack tags ---
+
+
+def test_no_suggestion_while_not_ready() -> None:
+    c = new()
+    assert c.set_ready(False) is None
+    assert run_long(c, 0, 200) == []
+    assert c.state == "idle"
+
+
+def test_becoming_ready_allows_the_next_run_to_be_suggested() -> None:
+    c = new()
+    c.set_ready(False)
+    run_long(c, 0, 100)
+    c.set_ready(True)
+    assert run_long(c, 200, 300) == ["suggested"]
+
+
+def test_readiness_lost_while_suggested_withdraws_without_cooldown() -> None:
+    store = MemoryStore()
+    c = new(store=store)
+    run_long(c, 0, 100)
+    assert c.state == "suggested"
+    saves = store.saves
+    assert c.set_ready(False) == "idle"
+    state: str = c.state
+    assert state == "idle" and c.estimate is None
+    assert store.saves == saves and store.state.cooldown_until is None
+    c.set_ready(True)
+    assert run_long(c, 200, 300) == ["suggested"]  # no cooldown was started
+
+
+def test_set_ready_while_idle_or_disabled_changes_nothing() -> None:
+    c = new()
+    assert c.set_ready(False) is None
+    assert c.set_ready(True) is None
+    c.set_enabled(False)
+    assert c.set_ready(False) is None
+    assert c.state == "disabled"
+
+
+def test_no_suggestion_while_a_break_is_active() -> None:
+    c = new()
+    assert c.set_break_active(True, at(0)) is None
+    assert run_long(c, 10, 200) == []
+
+
+def test_break_starting_while_suggested_withdraws_without_cooldown() -> None:
+    store = MemoryStore()
+    c = new(store=store)
+    run_long(c, 0, 100)
+    assert c.set_break_active(True, at(105)) == "idle"
+    assert store.state.cooldown_until is None
+
+
+def test_break_ending_starts_a_persisted_cooldown(tmp_path: Path) -> None:
+    path = tmp_path / "s.json"
+    c = Controller(CFG, store=FileStateStore(path))
+    c.set_break_active(True, at(100))
+    assert c.set_break_active(False, at(400)) is None
+    assert FileStateStore(path).load().cooldown_until == at(400 + CFG.cooldown_s)
+    assert run_long(c, 500, 700) == []  # inside the cooldown
+    assert run_long(c, 1400, 1500) == ["suggested"]
+    c2 = Controller(CFG, store=FileStateStore(path))
+    assert c2._cooldown_until == at(400 + CFG.cooldown_s)
+
+
+def test_break_ending_does_not_enable_a_disabled_controller() -> None:
+    c = new()
+    c.set_enabled(False)
+    c.set_break_active(True, at(0))
+    c.set_break_active(False, at(5))
+    assert c.state == "disabled"
+
+
+def test_inactive_to_inactive_starts_no_cooldown() -> None:
+    store = MemoryStore()
+    c = new(store=store)
+    c.set_break_active(False, at(5))
+    assert store.state.cooldown_until is None
+
+
+def test_stack_tags_persist_and_survive_the_controllers_own_saves(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "s.json"
+    c = Controller(CFG, store=FileStateStore(path))
+    c.set_stack_tags(("docker", "python", "python"))
+    assert c.stack_tags == ("python", "docker")
+    c.set_enabled(False)  # a later save must keep the tags
+    assert FileStateStore(path).load().stack_tags == ("python", "docker")
+    assert Controller(CFG, store=FileStateStore(path)).stack_tags == (
+        "python",
+        "docker",
+    )
+
+
+def test_stack_tags_are_capped_at_five() -> None:
+    c = new()
+    c.set_stack_tags(("python", "go", "rust", "java", "ruby", "php"))
+    assert len(c.stack_tags) == 5

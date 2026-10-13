@@ -10,7 +10,7 @@ import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, get_args
 
 from breakroom_shared.presence import StackTag
 
@@ -33,6 +33,7 @@ class StateStore(Protocol):
 
 
 _VERSION = 1
+MAX_STACK_TAGS = 5
 
 
 class FileStateStore:
@@ -64,6 +65,7 @@ class FileStateStore:
             "cooldown_until": (
                 state.cooldown_until.isoformat() if state.cooldown_until else None
             ),
+            "stack_tags": list(state.stack_tags),
         }
         tmp = self._path.with_name(f"{self._path.name}.{os.getpid()}.tmp")
         try:
@@ -90,12 +92,28 @@ def _parse(data: object) -> PersistedState:
     enabled = data.get("enabled")
     if not isinstance(enabled, bool):
         raise ValueError("bad enabled flag")
+    tags = _parse_tags(data.get("stack_tags"))
     raw = data.get("cooldown_until")
     if raw is None:
-        return PersistedState(enabled=enabled)
+        return PersistedState(enabled=enabled, stack_tags=tags)
     if not isinstance(raw, str):
         raise ValueError("bad cooldown")
     when = datetime.fromisoformat(raw)
     if when.tzinfo is None or when.utcoffset() is None:
         raise ValueError("naive cooldown")
-    return PersistedState(enabled=enabled, cooldown_until=when.astimezone(UTC))
+    return PersistedState(
+        enabled=enabled, cooldown_until=when.astimezone(UTC), stack_tags=tags
+    )
+
+
+def normalize_tags(raw: object) -> tuple[StackTag, ...]:
+    """Vocabulary tags only, deduplicated, vocabulary order, at most 5."""
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    wanted = {item for item in raw if isinstance(item, str)}
+    return tuple(t for t in get_args(StackTag) if t in wanted)[:MAX_STACK_TAGS]
+
+
+def _parse_tags(raw: object) -> tuple[StackTag, ...]:
+    """Lenient: a bad or missing list is just no tags."""
+    return normalize_tags(raw)

@@ -36,6 +36,7 @@ class Calls:
     leaves: int = 0
     ends: int = 0
     blocks: int = 0
+    dismisses: int = 0
     nicknames: list[str] = field(default_factory=list)
     consents: list[Consent] = field(default_factory=list)
     sign_ins: list[tuple[str, str | None]] = field(default_factory=list)
@@ -86,6 +87,9 @@ class FakeRemoteWorker(RemoteWorker):
 
     def block_peer(self) -> None:
         self.calls.blocks += 1
+
+    def dismiss_break(self) -> None:
+        self.calls.dismisses += 1
 
     # --- drive the signals as the real worker would ---
 

@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
 import pytest
 from PySide6.QtCore import QObject, Qt, Slot
+from PySide6.QtWidgets import QLabel
 from pytestqt.qtbot import QtBot
 from sqlalchemy import update
 
@@ -30,6 +32,8 @@ from breakroom_companion.remote import RemoteWorker
 from breakroom_companion.remote_config import RemoteConfig
 from breakroom_server.models import AuthChallenge
 from breakroom_shared.api import Consent, Me
+from breakroom_shared.presence import StackTag
+from tests.fakes.remote_worker import FakeRemoteWorker
 
 if TYPE_CHECKING:
     from tests.e2e_support.server import LiveServer
@@ -531,3 +535,105 @@ def test_show_what_is_shared_follows_the_boxes(qtbot: QtBot, rig: Rig) -> None:
     assert '"task_category": "backend"' in dialog.preview.example_edit.toPlainText()
     dialog.reject()
     assert not dialog.preview.isVisible()
+
+
+# --- M4-06: stack tag picker (no server needed) ---
+
+_ME = Me(
+    nickname="ada_l",
+    consent=Consent(version=1, share_stack_tags=True),
+    consented_at=datetime(2026, 10, 13, tzinfo=UTC),
+)
+
+
+def _picker(
+    qtbot: QtBot,
+    saved: list[tuple[StackTag, ...]],
+    tags: tuple[StackTag, ...] = (),
+) -> tuple[OnboardingDialog, FakeRemoteWorker]:
+    worker = FakeRemoteWorker()
+    dialog = OnboardingDialog(
+        worker, _ME, None, stack_tags=tags, save_tags=saved.append
+    )
+    qtbot.addWidget(dialog)
+    dialog.show()
+    return dialog, worker
+
+
+def _check(dialog: OnboardingDialog, *tags: StackTag) -> None:
+    for tag in tags:
+        dialog.tag_items[tag].setCheckState(Qt.CheckState.Checked)
+
+
+def test_tag_list_has_every_vocabulary_tag_and_follows_the_share_box(
+    qtbot: QtBot,
+) -> None:
+    dialog, _ = _picker(qtbot, [])
+    assert list(dialog.tag_items) == list(get_args(StackTag))
+    assert dialog.tag_list.isVisible()  # _ME shares stack tags
+    dialog.stack_box.setChecked(False)
+    assert not dialog.tag_list.isVisible()
+    dialog.stack_box.setChecked(True)
+    assert dialog.tag_list.isVisible()
+
+
+def test_the_sixth_tag_cannot_be_checked(qtbot: QtBot) -> None:
+    dialog, _ = _picker(qtbot, [])
+    _check(dialog, "python", "go", "rust", "java", "ruby")
+    assert len(dialog.selected_tags()) == 5
+    sixth = dialog.tag_items["php"]
+    assert not sixth.flags() & Qt.ItemFlag.ItemIsEnabled
+    assert not sixth.flags() & Qt.ItemFlag.ItemIsUserCheckable
+    for tag in ("python", "go", "rust", "java", "ruby"):
+        assert dialog.tag_items[tag].flags() & Qt.ItemFlag.ItemIsEnabled
+    dialog.tag_items["python"].setCheckState(Qt.CheckState.Unchecked)
+    assert dialog.tag_items["php"].flags() & Qt.ItemFlag.ItemIsEnabled
+    assert len(dialog.selected_tags()) == 4
+
+
+def test_save_stores_tags_locally_and_still_sends_consent(qtbot: QtBot) -> None:
+    saved: list[tuple[StackTag, ...]] = []
+    dialog, worker = _picker(qtbot, saved)
+    _check(dialog, "docker", "python")
+    dialog.next_button.click()
+    assert saved == [("python", "docker")]  # vocabulary order
+    assert len(worker.calls.consents) == 1
+
+
+def test_tags_are_saved_before_and_without_the_server_answer(qtbot: QtBot) -> None:
+    saved: list[tuple[StackTag, ...]] = []
+    dialog, worker = _picker(qtbot, saved, ("go",))
+    worker.push_error("network")
+    dialog.next_button.click()
+    assert saved == [("go",)]
+
+
+def test_reopening_shows_the_saved_tags(qtbot: QtBot) -> None:
+    dialog, _ = _picker(qtbot, [], ("rust", "vue"))
+    assert dialog.selected_tags() == ("rust", "vue")
+
+
+def test_unknown_saved_tags_are_ignored(qtbot: QtBot) -> None:
+    dialog, _ = _picker(qtbot, [], ("nope", "go"))  # type: ignore[arg-type]
+    assert dialog.selected_tags() == ("go",)
+
+
+def test_the_privacy_page_says_fields_are_sent_only_when_a_break_starts(
+    qtbot: QtBot,
+) -> None:
+    dialog, _ = _picker(qtbot, [])
+    assert "In this version nothing is shared" not in " ".join(
+        label.text() for label in dialog.findChildren(QLabel)
+    )
+
+
+def test_preview_uses_the_picked_tags(qtbot: QtBot) -> None:
+    dialog, _ = _picker(qtbot, [], ("go",))
+    dialog.show_preview()
+    assert dialog.preview is not None
+    assert json.loads(dialog.preview.example_edit.toPlainText())["stack_tags"] == ["go"]
+    _check(dialog, "rust")
+    assert json.loads(dialog.preview.example_edit.toPlainText())["stack_tags"] == [
+        "go",
+        "rust",
+    ]
