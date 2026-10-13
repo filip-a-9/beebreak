@@ -124,6 +124,7 @@ class RemoteWorker(QObject):
         self._refresh_after_s = MIN_REFRESH_DELAY_S
         self._challenge_id: UUID | None = None
         self._break = BreakState()
+        self._join_in_flight = False
 
     # --- public, thread-safe ---
 
@@ -271,7 +272,7 @@ class RemoteWorker(QObject):
 
     def _on_frame(self, frame: ServerFrame) -> None:
         if isinstance(frame, WsSync):
-            self._apply(Sync(frame.queue, frame.match))
+            self._apply(Sync(frame.queue, frame.match, self._join_in_flight))
         elif isinstance(
             frame, WsQueueJoined | WsQueueEnded | WsMatchCreated | WsMatchEnded
         ):
@@ -290,14 +291,30 @@ class RemoteWorker(QObject):
         # One key per call: the retry after a token refresh reuses this request.
         request = QueueJoinRequest(idempotency_key=uuid4(), presence=presence)
         self._apply(Joining())
+        self._join_in_flight = True
         try:
             entry = await self._authed(lambda token: api.join_queue(token, request))
         except ApiError as exc:
+            self._join_in_flight = False
             self._apply(JoinFailed(exc.code))
             if exc.code in ("already_queued", "already_matched"):
-                return  # the existing search or match is announced to us anyway
+                await self._show_existing(api)
+                return
             raise
+        except BaseException:
+            self._join_in_flight = False
+            raise
+        self._join_in_flight = False
         self._apply(Joined(entry))
+
+    async def _show_existing(self, api: ApiClient) -> None:
+        """After a 409: show the search or match another device started. If the
+        fetch fails the state stays idle and the next frame or sync shows it."""
+        try:
+            snapshot = await self._authed(lambda token: api.current_queue(token))
+        except ApiError:
+            return
+        self._apply(Sync(snapshot.queue, snapshot.match))
 
     async def _leave_queue(self) -> None:
         api = self._api
@@ -320,11 +337,18 @@ class RemoteWorker(QObject):
     async def _end_match(self, *, block: bool) -> None:
         api = self._api
         match = self._break.match
-        if api is None or not self._signed_in or self._break.phase != "matched":
+        phase = self._break.phase
+        # Block is also allowed after the match ended (the peer ended it while the
+        # confirmation was open); the server records it and the state stays ended.
+        if api is None or not self._signed_in or phase not in ("matched", "ended"):
+            return
+        if phase == "ended" and not block:
             return
         assert match is not None
         if block:
             await self._authed(lambda token: api.block_match(token, match.match_id))
+            if phase == "ended":
+                return
         else:
             await self._authed(lambda token: api.end_match(token, match.match_id))
         self._apply(

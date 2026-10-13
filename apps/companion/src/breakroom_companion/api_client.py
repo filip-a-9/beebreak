@@ -22,6 +22,7 @@ from breakroom_shared.api import (
     NicknameUpdate,
     QueueEntryView,
     QueueJoinRequest,
+    QueueSnapshot,
     RefreshRequest,
     SessionResponse,
     TokenPair,
@@ -200,3 +201,10 @@ class ApiClient:
             model=None,
             access_token=access_token,
         )
+
+    async def current_queue(self, access_token: str) -> QueueSnapshot:
+        reply = await self._call(
+            "GET", "/v1/queue/current", model=QueueSnapshot, access_token=access_token
+        )
+        assert reply is not None
+        return reply

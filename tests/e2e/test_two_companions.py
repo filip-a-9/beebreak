@@ -189,39 +189,64 @@ def test_two_workers_match_once(
         ).all()
 
 
+@pytest.fixture
+def trio(
+    server: LiveServer, make_peer: Callable[[str], Peer]
+) -> tuple[LiveServer, list[Peer]]:
+    return server, [make_peer("ada_l"), make_peer("bob_k"), make_peer("cyd_m")]
+
+
 def test_twenty_simultaneous_rounds_make_exactly_one_match_each(
-    qtbot: QtBot, pair: tuple[LiveServer, Peer, Peer]
+    qtbot: QtBot, trio: tuple[LiveServer, list[Peer]]
 ) -> None:
-    server, ada, bob = pair
+    """Three users join at once each round: one match, never two, and the
+    odd one out keeps searching (an odd count makes a double-booking possible)."""
+    server, peers = trio
     for round_no in range(1, ROUNDS + 1):
-        ada.worker.join_queue(ada.presence("python"))
-        bob.worker.join_queue(bob.presence("python"))
-        qtbot.waitUntil(
-            lambda: ada.rec.phase == "matched" and bob.rec.phase == "matched",
-            timeout=WAIT_MS,
-        )
+        for peer in peers:
+            peer.worker.join_queue(peer.presence("python"))
+
+        def settled() -> bool:
+            phases = Counter(p.rec.phase for p in peers)
+            return phases["matched"] == 2 and phases["searching"] == 1
+
+        qtbot.waitUntil(settled, timeout=WAIT_MS)
+        matched = [p for p in peers if p.rec.phase == "matched"]
+        (left_over,) = (p for p in peers if p.rec.phase == "searching")
         _db_invariants(server, matches=round_no)
         with server.session_factory() as s:
             active = s.scalars(
                 select(MatchParticipant).where(MatchParticipant.active.is_(True))
             ).all()
-            assert {p.user_id for p in active} == {ada.user_id, bob.user_id}
+            assert {p.user_id for p in active} == {m.user_id for m in matched}
             assert len({p.match_id for p in active}) == 1
+            queued = s.scalars(
+                select(QueueEntry).where(QueueEntry.status == "queued")
+            ).all()
+            assert [e.user_id for e in queued] == [left_over.user_id]
 
-        ada.worker.end_match()
+        left_over.worker.leave_queue()
+        matched[0].worker.end_match()
+
+        def finished(
+            left_over: Peer = left_over, matched: list[Peer] = matched
+        ) -> bool:
+            return left_over.rec.phase == "none" and all(
+                m.rec.phase == "ended" for m in matched
+            )
+
+        qtbot.waitUntil(finished, timeout=WAIT_MS)
+        for peer in matched:
+            peer.worker.dismiss_break()
         qtbot.waitUntil(
-            lambda: ada.rec.phase == "ended" and bob.rec.phase == "ended",
-            timeout=WAIT_MS,
-        )
-        ada.worker.dismiss_break()
-        bob.worker.dismiss_break()
-        qtbot.waitUntil(
-            lambda: ada.rec.phase == "none" and bob.rec.phase == "none",
-            timeout=WAIT_MS,
+            lambda: all(p.rec.phase == "none" for p in peers), timeout=WAIT_MS
         )
         with server.session_factory() as s:
             assert not s.scalars(
                 select(MatchParticipant).where(MatchParticipant.active.is_(True))
+            ).all()
+            assert not s.scalars(
+                select(QueueEntry).where(QueueEntry.status == "queued")
             ).all()
 
 

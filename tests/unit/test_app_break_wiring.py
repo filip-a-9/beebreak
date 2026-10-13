@@ -379,3 +379,46 @@ def test_the_status_reply_carries_only_the_fixed_queue_value(rig: Rig) -> None:
     dumped = rig.ipc._status.model_dump_json()
     assert "bob_b" not in dumped
     assert rig.ipc._status.version == 3
+
+
+# --- review fixes ---
+
+
+def test_block_after_the_peer_ended_reaches_the_worker(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig.ready()
+    rig.remote.push_break(BreakState(phase="matched", match=_match()))
+    rig.remote.push_break(BreakState(phase="ended", match=_match()))
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *a: QMessageBox.StandardButton.Yes
+    )
+    rig.window.block_button.click()
+    assert rig.remote.calls.blocks == 1
+
+
+def test_a_failed_join_starts_no_cooldown(rig: Rig) -> None:
+    rig.ready()
+    rig.remote.push_break(BreakState(phase="joining"))
+    assert rig.controller._break_active is True
+    rig.remote.push_break(BreakState(phase="none"))  # network error, 429, ...
+    assert rig.controller._break_active is False
+    assert rig.controller._cooldown_until is None
+
+
+def test_a_search_that_ran_starts_the_cooldown_when_it_ends(rig: Rig) -> None:
+    rig.ready()
+    rig.remote.push_break(BreakState(phase="joining"))
+    rig.remote.push_break(BreakState(phase="searching", entry=_entry()))
+    rig.remote.push_break(BreakState(phase="none"))  # cancelled
+    assert rig.controller._cooldown_until is not None
+
+
+def test_a_failed_join_after_an_earlier_break_is_still_free(rig: Rig) -> None:
+    rig.ready()
+    rig.remote.push_break(BreakState(phase="searching", entry=_entry()))
+    rig.remote.push_break(BreakState(phase="nobody_available"))
+    rig.controller._cooldown_until = None
+    rig.remote.push_break(BreakState(phase="joining"))
+    rig.remote.push_break(BreakState(phase="none"))
+    assert rig.controller._cooldown_until is None

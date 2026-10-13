@@ -184,12 +184,15 @@ class Controller:
         self._ready = ready
         return None if ready else self._withdraw()
 
-    def set_break_active(self, active: bool, now: datetime) -> InvitationState | None:
-        """A search or match is in progress. Its end starts the cooldown."""
+    def set_break_active(
+        self, active: bool, now: datetime, *, cooldown: bool = True
+    ) -> InvitationState | None:
+        """A search or match is in progress. Its end starts the cooldown, unless
+        `cooldown` is False (no break happened, e.g. the join failed)."""
         was, self._break_active = self._break_active, active
         if active:
             return self._withdraw()
-        if was:
+        if was and cooldown:
             self._cooldown_until = now + timedelta(seconds=self._config.cooldown_s)
             self._persist()
         return None

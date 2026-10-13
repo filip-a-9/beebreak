@@ -152,6 +152,7 @@ def wire_break(
 
     ready_inputs: dict[str, object] = {"connected": False, "me": None}
     phase: dict[str, BreakPhase] = {"value": "none"}
+    reached = {"value": False}  # the break got past joining
 
     def apply(new: InvitationState | None) -> None:
         if new is not None:
@@ -191,7 +192,16 @@ def wire_break(
         tracker.set_phase(state.phase)
         window.set_break(state)
         active = state.phase in ("joining", "searching", "matched")
-        apply(controller.set_break_active(active, datetime.now(UTC)))
+        if state.phase in ("searching", "matched"):
+            reached["value"] = True
+        # A join that failed (joining -> none) is not a break: no cooldown.
+        apply(
+            controller.set_break_active(
+                active, datetime.now(UTC), cooldown=reached["value"]
+            )
+        )
+        if not active:
+            reached["value"] = False
 
     def send(bucket: RemainingTimeBucket | None) -> None:
         me = me_ready()

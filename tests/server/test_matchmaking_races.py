@@ -6,17 +6,24 @@ deterministic tests replay the same interleavings by hand and run on SQLite too.
 """
 
 import threading
+import uuid
 from collections import Counter
+from collections.abc import Callable
 from contextlib import nullcontext
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import event, select, update
+from sqlalchemy.orm import ORMExecuteState, Session
 
+from breakroom_server import queue
+from breakroom_server.auth import ApiError
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
 from breakroom_server.matchmaking import Matchmaker, _Candidate
 from breakroom_server.models import Match, MatchParticipant, QueueEntry
+from breakroom_shared.api import QueueJoinRequest
+from breakroom_shared.presence import OutboundPresence
 from tests.server.conftest import (
     START_TIME,
     FixedClock,
@@ -33,7 +40,7 @@ NAMES = ["Ada", "Bob", "Cyd", "Dia", "Eve", "Fay", "Gus", "Hal", "Ivy", "Jon"]
 def _matchmaker(
     factory: SessionFactory,
     config: ServerConfig,
-    clock: FixedClock,
+    clock: Callable[[], datetime],
     notifier: RecordingNotifier,
     *,
     lock: bool,
@@ -153,12 +160,40 @@ def test_concurrent_passes_repeated(
         _assert_consistent(session_factory)
 
 
+def _body() -> QueueJoinRequest:
+    return QueueJoinRequest(
+        idempotency_key=uuid.uuid4(),
+        presence=OutboundPresence(
+            schema_version=1, presence_id=uuid.uuid4(), status="available"
+        ),
+    )
+
+
+def _assert_never_queued_while_matched(factory: SessionFactory) -> None:
+    with factory() as s:
+        in_match = {
+            p.user_id
+            for p in s.scalars(
+                select(MatchParticipant).where(MatchParticipant.active.is_(True))
+            )
+        }
+        queued = [
+            e.user_id
+            for e in s.scalars(select(QueueEntry).where(QueueEntry.status == "queued"))
+        ]
+        assert not in_match.intersection(queued)
+        assert len(queued) == len(set(queued))
+        for e in s.scalars(select(QueueEntry).where(QueueEntry.status == "cancelled")):
+            assert e.match_id is None
+
+
 @requires_postgres
 def test_cancel_racing_a_pass(
     session_factory: SessionFactory,
     server_config: ServerConfig,
     clock: FixedClock,
 ) -> None:
+    """The real queue.leave_queue against a pass with the lock bypassed."""
     notifier = RecordingNotifier()
     for round_no in range(8):
         a, b, c = (
@@ -171,18 +206,16 @@ def test_cancel_racing_a_pass(
         seed_queued(session_factory, c, now=clock.now, ttl_s=10_000)
         mm = _matchmaker(session_factory, server_config, clock, notifier, lock=False)
         barrier = threading.Barrier(2)
+        reported: list[object] = []
 
         def cancel(
-            entry_id: object = victim, barrier: threading.Barrier = barrier
+            user_id: uuid.UUID = b.user_id,
+            barrier: threading.Barrier = barrier,
+            reported: list[object] = reported,
         ) -> None:
             barrier.wait(timeout=10)
             with session_factory() as s:
-                s.execute(
-                    update(QueueEntry)
-                    .where(QueueEntry.id == entry_id, QueueEntry.status == "queued")
-                    .values(status="cancelled", ended_at=clock.now)
-                )
-                s.commit()
+                reported.append(queue.leave_queue(s, clock.now, user_id))
 
         thread = threading.Thread(target=cancel)
         thread.start()
@@ -193,7 +226,60 @@ def test_cancel_racing_a_pass(
             entry = s.get_one(QueueEntry, victim)
             assert entry.status in ("cancelled", "matched")
             assert (entry.status == "matched") == (entry.match_id is not None)
+            # leave_queue only reports a cancel that really happened.
+            assert (reported == [victim]) == (entry.status == "cancelled")
         _assert_consistent(session_factory)
+        _assert_never_queued_while_matched(session_factory)
+
+
+@requires_postgres
+def test_join_racing_a_pass(
+    session_factory: SessionFactory,
+    server_config: ServerConfig,
+    clock: FixedClock,
+) -> None:
+    """The real queue.join_queue (a second search) against a pass."""
+    notifier = RecordingNotifier()
+    for round_no in range(8):
+        a, b = (
+            add_ready_user(session_factory, f"{name}{round_no}")
+            for name in ("Aa", "Bb")
+        )
+        notifier.connected.update({a.user_id, b.user_id})
+        seed_queued(session_factory, a, now=clock.now, ttl_s=10_000)
+        seed_queued(session_factory, b, now=clock.now, ttl_s=10_000)
+        mm = _matchmaker(session_factory, server_config, clock, notifier, lock=False)
+        barrier = threading.Barrier(2)
+        outcomes: list[str] = []
+
+        def join(
+            user: SeededUser = a,
+            barrier: threading.Barrier = barrier,
+            outcomes: list[str] = outcomes,
+        ) -> None:
+            barrier.wait(timeout=10)
+            with session_factory() as s:
+                try:
+                    queue.join_queue(
+                        s,
+                        server_config,
+                        clock.now,
+                        user.user_id,
+                        user.device_id,
+                        _body(),
+                    )
+                    outcomes.append("created")
+                except ApiError as exc:
+                    outcomes.append(exc.code)
+
+        thread = threading.Thread(target=join)
+        thread.start()
+        barrier.wait(timeout=10)
+        mm.run_once()
+        thread.join(timeout=30)
+        assert outcomes and outcomes[0] in ("already_queued", "already_matched")
+        _assert_consistent(session_factory)
+        _assert_never_queued_while_matched(session_factory)
 
 
 # --- deterministic interleavings (SQLite and PostgreSQL) ------------------------
@@ -342,3 +428,78 @@ def test_sequential_unlocked_passes_are_consistent(
     _assert_consistent(session_factory)
     with session_factory() as s:
         assert len(s.scalars(select(Match)).all()) == 3
+
+
+# --- a pass interleaved between a queue operation's read and write --------------
+
+
+def _run_pass_before_first_update(session: Session, mm: Matchmaker) -> None:
+    """Run one matchmaker pass right before the session's first UPDATE statement
+    (after the caller has read, before it writes)."""
+    fired = {"done": False}
+
+    @event.listens_for(session, "do_orm_execute")
+    def _interleave(state: ORMExecuteState) -> None:
+        if state.is_update and not fired["done"]:
+            fired["done"] = True
+            mm.run_once()
+
+
+def test_cancel_after_the_pass_claimed_the_entry_does_not_overwrite_it(
+    session_factory: SessionFactory,
+    server_config: ServerConfig,
+    clock: FixedClock,
+) -> None:
+    notifier = RecordingNotifier()
+    ada, bob = _users(session_factory, notifier, 2)
+    seed_queued(session_factory, ada, now=clock.now)
+    victim = seed_queued(session_factory, bob, now=clock.now)
+    mm = _matchmaker(session_factory, server_config, clock, notifier, lock=False)
+
+    with session_factory() as s:
+        _run_pass_before_first_update(s, mm)
+        cancelled = queue.leave_queue(s, clock.now, bob.user_id)
+
+    with session_factory() as s:
+        entry = s.get_one(QueueEntry, victim)
+    assert entry.status == "matched" and entry.match_id is not None
+    assert cancelled is None  # nothing was cancelled, so nothing is reported
+    _assert_consistent(session_factory)
+    _assert_never_queued_while_matched(session_factory)
+
+
+def test_join_after_the_pass_claimed_the_entry_is_refused(
+    session_factory: SessionFactory,
+    server_config: ServerConfig,
+    clock: FixedClock,
+) -> None:
+    """The pass starts just before the TTL; the join sees the TTL as passed."""
+    notifier = RecordingNotifier()
+    ada, bob = _users(session_factory, notifier, 2)
+    old = seed_queued(session_factory, ada, now=clock.now, ttl_s=90)
+    seed_queued(session_factory, bob, now=clock.now, ttl_s=90)
+    pass_time = clock.now + timedelta(seconds=89)
+    join_time = clock.now + timedelta(seconds=90)
+    mm = _matchmaker(
+        session_factory,
+        server_config,
+        lambda: pass_time,
+        notifier,
+        lock=False,
+    )
+
+    with session_factory() as s:
+        _run_pass_before_first_update(s, mm)
+        try:
+            queue.join_queue(
+                s, server_config, join_time, ada.user_id, ada.device_id, _body()
+            )
+            outcome = "created"
+        except ApiError as exc:
+            outcome = exc.code
+
+    with session_factory() as s:
+        assert s.get_one(QueueEntry, old).status == "matched"
+    assert outcome == "already_matched"
+    _assert_consistent(session_factory)
+    _assert_never_queued_while_matched(session_factory)

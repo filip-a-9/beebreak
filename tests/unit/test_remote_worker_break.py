@@ -86,6 +86,8 @@ class FakeServer:
         self.entries: dict[str, dict[str, Any]] = {}  # idempotency key -> entry
         self.queue_error: tuple[int, str] | None = None
         self.sync: dict[str, Any] = {"queue": None, "match": None}
+        self.snapshot: dict[str, Any] = {"queue": None, "match": None}
+        self.snapshot_error: tuple[int, str] | None = None
         self.ws_connects = 0
         self._outbox: list[asyncio.Queue[str | None]] = []
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -178,6 +180,15 @@ class FakeServer:
         self.entries[key] = entry
         return JSONResponse(entry, status_code=201)
 
+    async def _current(self, request: Request) -> Response:
+        await self._record(request)
+        if not self._auth_ok(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if self.snapshot_error is not None:
+            status, code = self.snapshot_error
+            return JSONResponse({"error": code}, status_code=status)
+        return JSONResponse(self.snapshot)
+
     async def _no_content(self, request: Request) -> Response:
         await self._record(request)
         if not self._auth_ok(request):
@@ -226,6 +237,7 @@ class FakeServer:
                 Route("/v1/me", self._me, methods=["GET"]),
                 Route("/v1/queue", self._join, methods=post),
                 Route("/v1/queue/current", self._no_content, methods=delete),
+                Route("/v1/queue/current", self._current, methods=["GET"]),
                 Route("/v1/matches/{match_id}/end", self._no_content, methods=post),
                 Route("/v1/matches/{match_id}/block", self._no_content, methods=post),
                 WebSocketRoute("/v1/realtime", self._realtime),
@@ -457,7 +469,7 @@ def test_join_while_searching_or_matched_is_ignored(
 
 
 @pytest.mark.parametrize("code", ["already_queued", "already_matched"])
-def test_join_conflict_keeps_the_phase_and_waits_for_the_announcement(
+def test_join_conflict_goes_idle_and_shows_the_existing_search_when_announced(
     qtbot: QtBot, make_rig: Callable[..., Rig], server: FakeServer, code: str
 ) -> None:
     rig = make_rig()
@@ -467,7 +479,8 @@ def test_join_conflict_keeps_the_phase_and_waits_for_the_announcement(
     wait(qtbot, lambda: len(server.calls("POST", "/v1/queue")) == 1)
     settle(qtbot, rig)
 
-    assert rig.rec.phases == ["joining"]
+    # Never stuck in joining: the announcement may already have been dropped.
+    assert rig.rec.phases == ["joining", "none"]
     assert rig.rec.errors == []
 
     entry = {
@@ -770,3 +783,115 @@ def test_no_log_line_carries_presence_nickname_or_tags(
         "bra_",
     ):
         assert secret not in text
+
+
+def test_block_confirmed_after_the_peer_ended_is_still_sent_and_stays_ended(
+    qtbot: QtBot, make_rig: Callable[..., Rig]
+) -> None:
+    rig = make_rig()
+    match_id = UUID(int=905)
+    match_up(qtbot, rig, match_id)
+    rig.server.push(frame("match.ended", match_id=str(match_id), reason="ended"))
+    wait_phase(qtbot, rig, "ended")
+    count = len(rig.rec.states)
+
+    rig.worker.block_peer()
+    path = f"/v1/matches/{match_id}/block"
+    wait(qtbot, lambda: len(rig.server.calls("POST", path)) == 1)
+    settle(qtbot, rig)
+
+    assert rig.rec.last.phase == "ended" and rig.rec.last.match is not None
+    assert len(rig.rec.states) == count
+
+
+def test_end_match_does_nothing_once_ended(
+    qtbot: QtBot, make_rig: Callable[..., Rig]
+) -> None:
+    rig = make_rig()
+    match_id = UUID(int=906)
+    match_up(qtbot, rig, match_id)
+    rig.server.push(frame("match.ended", match_id=str(match_id), reason="ended"))
+    wait_phase(qtbot, rig, "ended")
+
+    rig.worker.end_match()
+    settle(qtbot, rig)
+
+    assert rig.server.calls("POST", f"/v1/matches/{match_id}/end") == []
+
+
+def test_second_device_that_missed_queue_joined_does_not_stick_in_joining(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: FakeServer
+) -> None:
+    # This device shows "ended"; the other device's search was announced and
+    # dropped here.
+    rig = make_rig()
+    match_id = UUID(int=907)
+    match_up(qtbot, rig, match_id)
+    server.push(frame("match.ended", match_id=str(match_id), reason="ended"))
+    wait_phase(qtbot, rig, "ended")
+    entry = {
+        "entry_id": str(UUID(int=56)),
+        "status": "queued",
+        "expires_at": (_now() + timedelta(seconds=90)).isoformat(),
+    }
+    server.push(frame("queue.joined", entry=entry))  # ignored in "ended"
+    settle(qtbot, rig)
+    server.queue_error = (409, "already_queued")
+
+    rig.worker.join_queue(PRESENCE)
+    wait(qtbot, lambda: rig.rec.phases[-1:] == ["none"])
+
+    server.push(frame("queue.ended", entry_id=entry["entry_id"], reason="expired"))
+    settle(qtbot, rig)
+    assert rig.rec.last.phase == "none"
+
+
+def test_conflict_already_queued_shows_the_other_devices_search(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: FakeServer
+) -> None:
+    rig = make_rig()
+    entry = {
+        "entry_id": str(UUID(int=57)),
+        "status": "queued",
+        "expires_at": (_now() + timedelta(seconds=90)).isoformat(),
+    }
+    server.snapshot = {"queue": entry, "match": None}
+    server.queue_error = (409, "already_queued")
+
+    rig.worker.join_queue(PRESENCE)
+    wait_phase(qtbot, rig, "searching")
+
+    assert rig.rec.last.entry is not None
+    assert rig.rec.last.entry.entry_id == UUID(int=57)
+    assert len(server.calls("GET", "/v1/queue/current")) == 1
+    assert rig.rec.errors == []
+
+
+def test_conflict_already_matched_shows_the_existing_match(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: FakeServer
+) -> None:
+    rig = make_rig()
+    server.snapshot = {"queue": None, "match": match_json(UUID(int=58))}
+    server.queue_error = (409, "already_matched")
+
+    rig.worker.join_queue(PRESENCE)
+    wait_phase(qtbot, rig, "matched")
+
+    assert rig.rec.last.match is not None
+    assert rig.rec.last.match.match_id == UUID(int=58)
+    assert rig.rec.errors == []
+
+
+def test_conflict_with_a_failing_snapshot_falls_back_to_idle(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: FakeServer
+) -> None:
+    rig = make_rig()
+    server.snapshot_error = (429, "rate_limited")
+    server.queue_error = (409, "already_queued")
+
+    rig.worker.join_queue(PRESENCE)
+    wait(qtbot, lambda: len(server.calls("GET", "/v1/queue/current")) == 1)
+    settle(qtbot, rig)
+
+    assert rig.rec.phases == ["joining", "none"]
+    assert rig.rec.errors == []

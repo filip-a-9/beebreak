@@ -86,6 +86,7 @@ EVENTS: dict[str, BreakEvent] = {
     "join_failed_already_queued": JoinFailed("already_queued"),
     "join_failed_already_matched": JoinFailed("already_matched"),
     "sync_nothing": Sync(None, None),
+    "sync_nothing_in_flight": Sync(None, None, join_in_flight=True),
     "sync_queue": Sync(ENTRY, None),
     "sync_match": Sync(None, MATCH),
     "queue_joined_current": queue_joined(ENTRY),
@@ -111,11 +112,16 @@ CHANGES: dict[tuple[BreakPhase, str], BreakState] = {
     ("ended", "joining"): BreakState(phase="joining"),
     ("joining", "joined"): SEARCHING,
     ("joining", "join_failed_other"): NONE,
+    ("joining", "join_failed_already_queued"): NONE,
+    ("joining", "join_failed_already_matched"): NONE,
+    ("joining", "sync_nothing"): NONE,
     ("none", "sync_queue"): SEARCHING,
     ("none", "sync_match"): MATCHED,
     ("joining", "sync_queue"): SEARCHING,
     ("joining", "sync_match"): MATCHED,
     ("searching", "sync_nothing"): NONE,
+    ("searching", "sync_nothing_in_flight"): NONE,
+    ("matched", "sync_nothing_in_flight"): NONE,
     ("searching", "sync_match"): MATCHED,
     ("matched", "sync_nothing"): NONE,
     ("matched", "sync_queue"): SEARCHING,
@@ -185,3 +191,25 @@ def test_reducing_does_not_mutate_the_input() -> None:
     reduce(state, EVENTS["queue_ended_expired"], NOW)
 
     assert state == BreakState(phase="searching", entry=ENTRY)
+
+
+def test_second_device_never_sticks_in_joining_after_already_queued() -> None:
+    # This device shows the end of a previous break; the other device's search
+    # was announced by queue.joined, which "ended" ignores.
+    state = BreakState(phase="ended", match=MATCH)
+    state = reduce(state, queue_joined(ENTRY), NOW)
+    state = reduce(state, Dismiss(), NOW)
+    state = reduce(state, Joining(), NOW)
+
+    state = reduce(state, JoinFailed("already_queued"), NOW)
+
+    assert state.phase == "none"
+    # A reconnect's sync shows the real search.
+    assert reduce(state, Sync(ENTRY, None), NOW).phase == "searching"
+
+
+def test_an_empty_sync_replaces_joining_only_when_no_request_is_outstanding() -> None:
+    joining = BreakState(phase="joining")
+
+    assert reduce(joining, Sync(None, None, join_in_flight=True), NOW) == joining
+    assert reduce(joining, Sync(None, None), NOW) == BreakState()

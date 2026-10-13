@@ -52,6 +52,9 @@ class JoinFailed:
 class Sync:
     queue: QueueEntryView | None
     match: MatchView | None
+    # True while this worker's own join request is outstanding: an empty sync
+    # may predate it, so `joining` is kept until the reply arrives.
+    join_in_flight: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,12 +96,14 @@ def reduce(state: BreakState, event: BreakEvent, now: datetime) -> BreakState:
             return BreakState(phase="joining") if state.phase in _IDLE else state
         case Joined(entry=entry):
             return _joined(state, entry)
-        case JoinFailed(code=code):
-            if code in ("already_queued", "already_matched"):
-                return state  # the existing entry or match is announced anyway
+        case JoinFailed():
+            # For "already_queued"/"already_matched" the existing entry or match
+            # may have been announced (and dropped) before this join began, so
+            # waiting in `joining` could last forever. Go idle: the next frame
+            # or sync, both accepted from `none`, shows it.
             return _NONE if state.phase == "joining" else state
-        case Sync(queue=queue, match=match_view):
-            return _sync(state, queue, match_view)
+        case Sync(queue=queue, match=match_view, join_in_flight=in_flight):
+            return _sync(state, queue, match_view, in_flight)
         case Frame(frame=frame):
             return _frame(state, frame)
     return state  # pragma: no cover
@@ -119,7 +124,10 @@ def _joined(state: BreakState, entry: QueueEntryView) -> BreakState:
 
 
 def _sync(
-    state: BreakState, queue: QueueEntryView | None, match: MatchView | None
+    state: BreakState,
+    queue: QueueEntryView | None,
+    match: MatchView | None,
+    in_flight: bool,
 ) -> BreakState:
     if state.phase in ("nobody_available", "ended"):
         return state  # stays until dismissed
@@ -127,8 +135,8 @@ def _sync(
         return BreakState(phase="matched", match=match)
     if queue is not None:
         return BreakState(phase="searching", entry=queue)
-    if state.phase == "joining":
-        return state  # our own request is still in flight
+    if state.phase == "joining" and in_flight:
+        return state  # our own request is still outstanding
     return _NONE
 
 

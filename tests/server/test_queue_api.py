@@ -8,13 +8,25 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.orm import Session
 
+from breakroom_server import queue
+from breakroom_server.auth import ApiError
+from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
 from breakroom_server.mailer import RecordingMailer
+from breakroom_server.matchmaking import Matchmaker
 from breakroom_server.models import Block, Match, MatchParticipant, QueueEntry
 from breakroom_server.queue import current_state
-from breakroom_shared.api import Consent, WsMatchEnded, WsQueueEnded, WsQueueJoined
+from breakroom_shared.api import (
+    Consent,
+    QueueJoinRequest,
+    WsMatchEnded,
+    WsQueueEnded,
+    WsQueueJoined,
+)
+from breakroom_shared.presence import OutboundPresence
 from tests.server.conftest import (
     ALL_CONSENT,
     START_TIME,
@@ -434,7 +446,9 @@ def test_end_ends_for_both_without_a_block(
     session_factory: SessionFactory,
     notifier: RecordingNotifier,
 ) -> None:
-    match_id = seed_match(session_factory, ada, bob, shared_tags=["python"])
+    match_id = seed_match(
+        session_factory, ada, bob, shared_tags=["python"], shared_category="backend"
+    )
     clock.advance(30)
     r = client.post(f"/v1/matches/{match_id}/end", headers=bob.headers)
     assert r.status_code == 204
@@ -443,6 +457,7 @@ def test_end_ends_for_both_without_a_block(
         assert match is not None
         assert match.status == "ended" and match.end_reason == "ended"
         assert match.ended_at == START_TIME + timedelta(seconds=30)
+        assert (match.shared_tags, match.shared_category) == (None, None)
         assert [p.active for p in s.scalars(select(MatchParticipant))] == [False] * 2
     assert block_rows(session_factory) == []
     for user in (ada, bob):
@@ -463,7 +478,9 @@ def test_block_records_block_and_tells_both_users_ended(
     session_factory: SessionFactory,
     notifier: RecordingNotifier,
 ) -> None:
-    match_id = seed_match(session_factory, ada, bob)
+    match_id = seed_match(
+        session_factory, ada, bob, shared_tags=["python"], shared_category="backend"
+    )
     r = client.post(f"/v1/matches/{match_id}/block", headers=ada.headers)
     assert r.status_code == 204
     (block,) = block_rows(session_factory)
@@ -471,6 +488,7 @@ def test_block_records_block_and_tells_both_users_ended(
     with session_factory() as s:
         match = s.get(Match, match_id)
         assert match is not None and match.end_reason == "blocked"
+        assert (match.shared_tags, match.shared_category) == (None, None)
         assert not any(p.active for p in s.scalars(select(MatchParticipant)))
     for user in (ada, bob):
         (frame,) = notifier.frames_for(user.user_id)
@@ -546,10 +564,11 @@ def test_every_route_requires_authentication(client: TestClient) -> None:
             json={"idempotency_key": str(uuid.uuid4()), "presence": presence()},
         ),
         client.delete("/v1/queue/current"),
+        client.get("/v1/queue/current"),
         client.post(f"/v1/matches/{mid}/end"),
         client.post(f"/v1/matches/{mid}/block"),
     ]
-    assert [c.status_code for c in calls] == [401] * 4
+    assert [c.status_code for c in calls] == [401] * 5
     bad = client.delete("/v1/queue/current", headers={"Authorization": "Bearer bra_x"})
     assert bad.status_code == 401
 
@@ -576,3 +595,161 @@ def test_logs_hold_no_presence_nickname_or_bucket(
     secrets = ("rust", "django", "backend", "10_20m", "Ada", "Bob")
     for secret in (*secrets, body["presence_id"]):
         assert secret not in caplog.text
+
+
+# --- races with the matcher (review findings R1, R3, R4, N2) ----------------------
+
+
+def _pass_before_first_update(session: Session, action: Any) -> None:
+    """Run `action` once, right before the session's first UPDATE statement."""
+    fired = {"done": False}
+
+    @event.listens_for(session, "do_orm_execute")
+    def _interleave(state: Any) -> None:
+        if state.is_update and not fired["done"]:
+            fired["done"] = True
+            action()
+
+
+def _two_queued(
+    factory: SessionFactory, now: Any, ttl_s: int = 90
+) -> tuple[Any, Any, uuid.UUID, uuid.UUID]:
+    ada = add_ready_user(factory, "Ada")
+    bob = add_ready_user(factory, "Bob")
+    a = seed_queued(factory, ada, now=now, ttl_s=ttl_s)
+    b = seed_queued(factory, bob, now=now, ttl_s=ttl_s)
+    return ada, bob, a, b
+
+
+def test_cancel_racing_a_matcher_pass_keeps_the_match(
+    session_factory: SessionFactory, server_config: ServerConfig, clock: FixedClock
+) -> None:
+    ada, bob, _a, victim = _two_queued(session_factory, clock.now)
+    notifier = RecordingNotifier({ada.user_id, bob.user_id})
+    mm = Matchmaker(session_factory, server_config, clock, notifier)
+    with session_factory() as s:
+        _pass_before_first_update(s, mm.run_once)
+        cancelled = queue.leave_queue(s, clock.now, bob.user_id)
+    with session_factory() as s:
+        entry = s.get_one(QueueEntry, victim)
+        active = s.scalars(select(Match).where(Match.status == "active")).all()
+    assert len(active) == 1
+    assert cancelled is None
+    assert entry.status == "matched" and entry.match_id == active[0].id
+
+
+def test_join_inline_expiry_racing_a_matcher_pass_answers_already_matched(
+    session_factory: SessionFactory, server_config: ServerConfig, clock: FixedClock
+) -> None:
+    ada, bob, old, _b = _two_queued(session_factory, clock.now)
+    notifier = RecordingNotifier({ada.user_id, bob.user_id})
+    pass_time = clock.now + timedelta(seconds=89)  # the pass began before the TTL
+    mm = Matchmaker(session_factory, server_config, lambda: pass_time, notifier)
+    body = QueueJoinRequest(
+        idempotency_key=uuid.uuid4(),
+        presence=OutboundPresence(
+            schema_version=1, presence_id=uuid.uuid4(), status="available"
+        ),
+    )
+    with session_factory() as s:
+        _pass_before_first_update(s, mm.run_once)
+        with pytest.raises(ApiError) as raised:
+            queue.join_queue(
+                s,
+                server_config,
+                clock.now + timedelta(seconds=90),
+                ada.user_id,
+                ada.device_id,
+                body,
+            )
+    assert raised.value.code == "already_matched"
+    with session_factory() as s:
+        rows = list(
+            s.scalars(select(QueueEntry).where(QueueEntry.user_id == ada.user_id))
+        )
+        in_match = s.scalars(
+            select(MatchParticipant).where(
+                MatchParticipant.user_id == ada.user_id,
+                MatchParticipant.active.is_(True),
+            )
+        ).all()
+    assert len(in_match) == 1
+    assert [(r.id, r.status) for r in rows] == [(old, "matched")]
+
+
+def test_end_racing_a_matcher_expiry_keeps_the_first_end(
+    session_factory: SessionFactory, clock: FixedClock
+) -> None:
+    ada = add_ready_user(session_factory, "Ada")
+    bob = add_ready_user(session_factory, "Bob")
+    match_id = seed_match(session_factory, ada, bob, shared_tags=["python"])
+
+    def other_end() -> None:
+        with session_factory() as other:
+            assert queue.end_match(
+                other, clock.now, bob.user_id, match_id, block=False
+            ) == (ada.user_id)
+
+    with session_factory() as s:
+        _pass_before_first_update(s, other_end)
+        peer = queue.end_match(
+            s, clock.now + timedelta(seconds=5), ada.user_id, match_id, block=True
+        )
+    assert peer is None  # the other end won: no second match.ended
+    with session_factory() as s:
+        match = s.get_one(Match, match_id)
+        assert match.end_reason == "ended" and match.ended_at == clock.now
+    # The block is still recorded for a participant of an ended match.
+    assert [(b.blocker_id, b.blocked_id) for b in block_rows(session_factory)] == [
+        (ada.user_id, bob.user_id)
+    ]
+
+
+# --- GET /v1/queue/current --------------------------------------------------------
+
+
+def test_snapshot_is_empty_then_shows_the_entry_then_the_match(
+    client: TestClient,
+    ada: ApiUser,
+    bob: ApiUser,
+    session_factory: SessionFactory,
+    notifier: RecordingNotifier,
+    matchmaker: RecordingMatchmaker,
+) -> None:
+    empty = client.get("/v1/queue/current", headers=ada.headers)
+    assert empty.status_code == 200
+    assert empty.json() == {"queue": None, "match": None}
+
+    entry_id = join(client, ada).json()["entry_id"]
+    queued = client.get("/v1/queue/current", headers=ada.headers).json()
+    assert queued["match"] is None
+    assert queued["queue"]["entry_id"] == entry_id
+    assert queued["queue"]["status"] == "queued"
+    assert client.get("/v1/queue/current", headers=bob.headers).json() == {
+        "queue": None,
+        "match": None,
+    }
+
+    client.delete("/v1/queue/current", headers=ada.headers)
+    match_id = seed_match(session_factory, ada, bob, shared_tags=["python", "fastapi"])
+    for me, peer_name in ((ada, "Bob"), (bob, "Ada")):
+        snap = client.get("/v1/queue/current", headers=me.headers).json()
+        assert snap["queue"] is None
+        assert snap["match"]["match_id"] == str(match_id)
+        assert snap["match"]["peer_nickname"] == peer_name
+        assert snap["match"]["shared_tags"] == ["python", "fastapi"]
+
+
+def test_snapshot_never_shows_another_users_state(
+    client: TestClient,
+    ada: ApiUser,
+    bob: ApiUser,
+    session_factory: SessionFactory,
+    notifier: RecordingNotifier,
+) -> None:
+    cy = add_ready_user(session_factory, "Cyrus")
+    dee = add_ready_user(session_factory, "Dee")
+    seed_queued(session_factory, bob)
+    seed_match(session_factory, cy, dee)
+    snap = client.get("/v1/queue/current", headers=ada.headers)
+    assert snap.json() == {"queue": None, "match": None}

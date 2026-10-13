@@ -729,3 +729,45 @@ def test_other_phases_do_not_pop_the_window_up(
 ) -> None:
     window.set_break(BreakState(phase=phase))
     assert not window.isVisible()
+
+
+# --- review fixes: Block after the peer ended (R5) ---
+
+
+def test_ended_with_a_known_match_still_offers_block(window: CompanionWindow) -> None:
+    window.show()
+    window.set_break(BreakState(phase="ended", match=_match()))
+    assert _break_visible(window) == {"text", "ok", "block"}
+    assert window.block_button.focusPolicy() == Qt.FocusPolicy.NoFocus
+    window.set_break(BreakState(phase="ended"))
+    assert _break_visible(window) == {"text", "ok"}
+
+
+def test_block_on_the_ended_screen_needs_confirmation_too(
+    window: CompanionWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window.show()
+    window.set_break(BreakState(phase="ended", match=_match()))
+    asked = _answer(monkeypatch, QMessageBox.StandardButton.No)
+    with qtbot.assertNotEmitted(window.block_requested):
+        window.block_button.click()
+    assert asked == ["You won't be matched with this person again."]
+    _answer(monkeypatch, QMessageBox.StandardButton.Yes)
+    with qtbot.waitSignal(window.block_requested, timeout=1000):
+        window.block_button.click()
+
+
+def test_confirmed_block_emits_even_if_the_peer_ended_while_asking(
+    window: CompanionWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    window.show()
+    match = _match()
+    window.set_break(BreakState(phase="matched", match=match))
+
+    def question(*args: object) -> object:
+        window.set_break(BreakState(phase="ended", match=match))  # peer ended
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", question)
+    with qtbot.waitSignal(window.block_requested, timeout=1000):
+        window.block_button.click()

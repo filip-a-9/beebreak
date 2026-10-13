@@ -304,7 +304,11 @@ class CompanionWindow(QWidget):
         self.find_button.setVisible(find)
         self.cancel_button.setVisible(phase in ("joining", "searching"))
         self.end_button.setVisible(phase == "matched")
-        self.block_button.setVisible(phase == "matched")
+        # After the peer ended it, Block is still offered while the match is known.
+        can_block = phase == "matched" or (
+            phase == "ended" and self._break.match is not None
+        )
+        self.block_button.setVisible(can_block)
         self.ok_button.setVisible(phase in ("nobody_available", "ended"))
 
     def _on_block_clicked(self) -> None:

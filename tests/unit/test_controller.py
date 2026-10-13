@@ -484,3 +484,12 @@ def test_stack_tags_are_capped_at_five() -> None:
     c = new()
     c.set_stack_tags(("python", "go", "rust", "java", "ruby", "php"))
     assert len(c.stack_tags) == 5
+
+
+def test_break_ending_without_cooldown_flag_starts_none() -> None:
+    store = MemoryStore()
+    c = new(store=store)
+    c.set_break_active(True, at(0))
+    c.set_break_active(False, at(5), cooldown=False)
+    assert store.state.cooldown_until is None
+    assert run_long(c, 10, 200) == ["suggested"]

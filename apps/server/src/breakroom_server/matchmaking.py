@@ -325,6 +325,8 @@ class Matchmaker:
     def _load_candidates(
         self, now: datetime
     ) -> tuple[list[_Candidate], set[frozenset[UUID]], set[frozenset[UUID]]]:
+        # A plain read: it is only a plan. The locked re-check and conditional
+        # claim in `_create_match` are what keep a pair from forming twice.
         with self._factory() as session:
             entries = session.scalars(
                 select(QueueEntry)
@@ -335,7 +337,6 @@ class Matchmaker:
                     User.status == "active",
                 )
                 .order_by(QueueEntry.admitted_at, QueueEntry.id)
-                .with_for_update(skip_locked=True, of=QueueEntry)
             ).all()
             candidates = [
                 _Candidate(

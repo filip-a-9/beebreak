@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,6 +35,7 @@ from breakroom_shared.api import (
     MatchView,
     QueueEntryView,
     QueueJoinRequest,
+    QueueSnapshot,
     QueueStatus,
     WsMatchEnded,
     WsQueueEnded,
@@ -125,18 +126,24 @@ def _replay(session: Session, user_id: UUID, key: UUID) -> QueueEntry | None:
     ).first()
 
 
+def _in_active_match(session: Session, user_id: UUID) -> bool:
+    return (
+        session.scalars(
+            select(MatchParticipant.match_id)
+            .join(Match, Match.id == MatchParticipant.match_id)
+            .where(
+                MatchParticipant.user_id == user_id,
+                MatchParticipant.active.is_(True),
+                Match.status == "active",
+            )
+        ).first()
+        is not None
+    )
+
+
 def _check_not_busy(session: Session, now: datetime, user_id: UUID) -> None:
     """409 when the user has an active match or a live queued entry."""
-    in_match = session.scalars(
-        select(MatchParticipant.match_id)
-        .join(Match, Match.id == MatchParticipant.match_id)
-        .where(
-            MatchParticipant.user_id == user_id,
-            MatchParticipant.active.is_(True),
-            Match.status == "active",
-        )
-    ).first()
-    if in_match is not None:
+    if _in_active_match(session, user_id):
         raise ApiError("already_matched")
     queued = session.scalars(
         select(QueueEntry).where(
@@ -147,11 +154,32 @@ def _check_not_busy(session: Session, now: datetime, user_id: UUID) -> None:
         return
     if queued.expires_at > now:
         raise ApiError("already_queued")
-    # Past its TTL but not yet swept: close it so the unique index is free.
-    queued.status = "expired"
-    queued.ended_at = now
-    clear_presence(queued)
-    session.flush()
+    # Past its TTL but not yet swept: close it so the unique index is free. The
+    # update is conditional: a matcher pass may have claimed the entry since we
+    # read it, and its outcome wins.
+    closed = session.execute(
+        update(QueueEntry)
+        .where(QueueEntry.id == queued.id, QueueEntry.status == "queued")
+        .values(
+            status="expired",
+            ended_at=now,
+            presence_id=None,
+            task_category=None,
+            stack_tags=None,
+            remaining_time_bucket=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if closed.rowcount == 0:  # type: ignore[attr-defined]
+        session.rollback()
+        if _in_active_match(session, user_id):
+            raise ApiError("already_matched")
+        raise ApiError("already_queued")
+    # Still inside the insert transaction: no queued entry is left for the
+    # matcher to claim, but check the match once more before admitting.
+    if _in_active_match(session, user_id):
+        session.rollback()
+        raise ApiError("already_matched")
 
 
 def join_queue(
@@ -211,19 +239,27 @@ def join_queue(
 
 
 def leave_queue(session: Session, now: datetime, user_id: UUID) -> UUID | None:
-    """Cancel the user's queued entry; its id, or None if none."""
-    entry = session.scalars(
-        select(QueueEntry).where(
-            QueueEntry.user_id == user_id, QueueEntry.status == "queued"
+    """Cancel the user's queued entry; its id, or None if none.
+
+    The cancel is one conditional UPDATE, so an entry a matcher pass claimed in
+    the meantime stays `matched` and nothing is reported cancelled.
+    """
+    entry_id = session.execute(
+        update(QueueEntry)
+        .where(QueueEntry.user_id == user_id, QueueEntry.status == "queued")
+        .values(
+            status="cancelled",
+            ended_at=now,
+            presence_id=None,
+            task_category=None,
+            stack_tags=None,
+            remaining_time_bucket=None,
         )
-    ).first()
-    if entry is None:
-        return None
-    entry.status = "cancelled"
-    entry.ended_at = now
-    clear_presence(entry)
+        .returning(QueueEntry.id)
+        .execution_options(synchronize_session=False)
+    ).scalar_one_or_none()
     session.commit()
-    return entry.id
+    return entry_id
 
 
 def end_match(
@@ -234,26 +270,42 @@ def end_match(
     Raises ApiError("not_found") when the caller is not a participant, the same
     answer as for a match that does not exist.
     """
-    participants = list(
+    user_ids = list(
         session.scalars(
-            select(MatchParticipant).where(MatchParticipant.match_id == match_id)
+            select(MatchParticipant.user_id).where(
+                MatchParticipant.match_id == match_id
+            )
         )
     )
-    if user_id not in {p.user_id for p in participants}:
+    if user_id not in user_ids:
         raise ApiError("not_found")
-    peers = [p.user_id for p in participants if p.user_id != user_id]
+    peers = [u for u in user_ids if u != user_id]
     peer_id = peers[0] if peers else None
-    match = session.get(Match, match_id)
-    if match is None:
-        raise ApiError("not_found")
 
-    ended_now = match.status == "active"
+    # Conditional: a concurrent end (matcher expiry, other participant) wins and
+    # keeps its end_reason; then nothing is reported as ended by us.
+    ended_now = (
+        session.execute(
+            update(Match)
+            .where(Match.id == match_id, Match.status == "active")
+            .values(
+                status="ended",
+                ended_at=now,
+                end_reason="blocked" if block else "ended",
+                shared_tags=None,
+                shared_category=None,
+            )
+            .execution_options(synchronize_session=False)
+        ).rowcount  # type: ignore[attr-defined]
+        > 0
+    )
     if ended_now:
-        match.status = "ended"
-        match.ended_at = now
-        match.end_reason = "blocked" if block else "ended"
-        for p in participants:
-            p.active = False
+        session.execute(
+            update(MatchParticipant)
+            .where(MatchParticipant.match_id == match_id)
+            .values(active=False)
+            .execution_options(synchronize_session=False)
+        )
     if block and peer_id is not None:
         already = session.get(Block, (user_id, peer_id))
         if already is None:
@@ -294,6 +346,15 @@ def post_queue(
     else:
         response.status_code = 200
     return view
+
+
+@router.get("/v1/queue/current")
+def get_queue(request: Request, principal: CurrentPrincipal) -> QueueSnapshot:
+    state = request.app.state
+    now: datetime = state.clock()
+    with state.session_factory() as session:
+        entry, match = current_state(session, now, principal.user_id)
+    return QueueSnapshot(queue=entry, match=match)
 
 
 @router.delete("/v1/queue/current", status_code=204)

@@ -124,6 +124,14 @@ class MatchView(_Model):
     ends_at: AwareDatetime
 
 
+class QueueSnapshot(_Model):
+    """GET /v1/queue/current: the caller's live entry and active match (the
+    same snapshot as the `sync` frame)."""
+
+    queue: QueueEntryView | None
+    match: MatchView | None
+
+
 # "blocked" is never sent: a blocked peer sees a plain end.
 MatchEndReason = Literal["ended", "expired"]
 

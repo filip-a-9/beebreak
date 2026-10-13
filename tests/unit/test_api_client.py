@@ -439,3 +439,54 @@ def test_queue_calls_never_leak_the_token_or_presence_into_errors() -> None:
     text = run(scenario())
 
     assert "bra_secret" not in text and "python" not in text
+
+
+def test_current_queue_gets_the_snapshot_with_a_bearer_token() -> None:
+    body = {"queue": ENTRY_JSON, "match": None}
+
+    async def scenario() -> tuple[Any, list[httpx.Request]]:
+        api, seen = mock_api(lambda _r: httpx.Response(200, json=body))
+        try:
+            return await api.current_queue("bra_tok"), seen
+        finally:
+            await api.aclose()
+
+    snapshot, seen = run(scenario())
+
+    assert snapshot.queue is not None and snapshot.queue.entry_id == ENTRY_ID
+    assert snapshot.match is None
+    (request,) = seen
+    assert (request.method, request.url.path) == ("GET", "/v1/queue/current")
+    assert request.headers["authorization"] == "Bearer bra_tok"
+    assert request.content == b""
+
+
+@pytest.mark.parametrize(
+    ("status", "code"), [(401, "unauthorized"), (429, "rate_limited")]
+)
+def test_current_queue_error_codes_map(status: int, code: str) -> None:
+    async def scenario() -> str:
+        api, _ = mock_api(error_reply(status, code))
+        try:
+            await api.current_queue("bra_tok")
+        except ApiError as exc:
+            return exc.code
+        finally:
+            await api.aclose()
+        return "no error"
+
+    assert run(scenario()) == code
+
+
+def test_current_queue_with_a_bad_body_is_network() -> None:
+    async def scenario() -> str:
+        api, _ = mock_api(lambda _r: httpx.Response(200, json={"queue": 1}))
+        try:
+            await api.current_queue("bra_tok")
+        except ApiError as exc:
+            return exc.code
+        finally:
+            await api.aclose()
+        return "no error"
+
+    assert run(scenario()) == "network"
