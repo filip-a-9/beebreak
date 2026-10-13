@@ -141,7 +141,9 @@ def _in_active_match(session: Session, user_id: UUID) -> bool:
     )
 
 
-def _check_not_busy(session: Session, now: datetime, user_id: UUID) -> None:
+def _check_not_busy(
+    session: Session, now: datetime, user_id: UUID, *, retry: bool = True
+) -> None:
     """409 when the user has an active match or a live queued entry."""
     if _in_active_match(session, user_id):
         raise ApiError("already_matched")
@@ -171,10 +173,13 @@ def _check_not_busy(session: Session, now: datetime, user_id: UUID) -> None:
         .execution_options(synchronize_session=False)
     )
     if closed.rowcount == 0:  # type: ignore[attr-defined]
+        # Someone else changed the entry (claimed, or swept as expired): look
+        # again from the start; the answer may now be "free to join".
         session.rollback()
-        if _in_active_match(session, user_id):
-            raise ApiError("already_matched")
-        raise ApiError("already_queued")
+        if not retry:
+            raise ApiError("already_queued")
+        _check_not_busy(session, now, user_id, retry=False)
+        return
     # Still inside the insert transaction: no queued entry is left for the
     # matcher to claim, but check the match once more before admitting.
     if _in_active_match(session, user_id):

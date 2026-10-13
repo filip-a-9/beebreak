@@ -753,3 +753,35 @@ def test_snapshot_never_shows_another_users_state(
     seed_match(session_factory, cy, dee)
     snap = client.get("/v1/queue/current", headers=ada.headers)
     assert snap.json() == {"queue": None, "match": None}
+
+
+def test_join_racing_the_expiry_sweep_still_succeeds(
+    session_factory: SessionFactory, server_config: ServerConfig, clock: FixedClock
+) -> None:
+    ada = add_ready_user(session_factory, "Ada")
+    notifier = RecordingNotifier({ada.user_id})
+    old = seed_queued(session_factory, ada, now=clock.now, ttl_s=90)
+    join_time = clock.now + timedelta(seconds=90)
+    mm = Matchmaker(session_factory, server_config, lambda: join_time, notifier)
+    body = QueueJoinRequest(
+        idempotency_key=uuid.uuid4(),
+        presence=OutboundPresence(
+            schema_version=1, presence_id=uuid.uuid4(), status="available"
+        ),
+    )
+    with session_factory() as s:
+        # The sweep expires the stale entry between our read and our UPDATE.
+        _pass_before_first_update(s, mm.run_once)
+        view, created = queue.join_queue(
+            s, server_config, join_time, ada.user_id, ada.device_id, body
+        )
+    assert created and view.status == "queued"
+    with session_factory() as s:
+        rows = {
+            r.id: r.status
+            for r in s.scalars(
+                select(QueueEntry).where(QueueEntry.user_id == ada.user_id)
+            )
+        }
+    assert rows[old] == "expired"
+    assert sorted(rows.values()) == ["expired", "queued"]
