@@ -133,8 +133,9 @@ On the privacy page:
 
 - the three boxes (task category, stack tags, time remaining) are all
   **unchecked**;
-- the sentence "In this version nothing is shared; these settings apply once
-  matching arrives." is shown;
+- the sentence "These fields are sent only when you start a break, and only
+  the ones you turn on." is shown (M4 replaced the M3 sentence "In this
+  version nothing is shared…");
 - "Show what is shared" opens a preview that shows only presence fields
   (schema version, presence id, status and the three consent-gated fields,
   empty or null with all boxes off), and a list of what is never shared. No
