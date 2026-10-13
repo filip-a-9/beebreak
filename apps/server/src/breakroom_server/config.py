@@ -33,6 +33,19 @@ def _positive(name: str, default: int) -> int:
     return value
 
 
+def _positive_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a number") from None
+    if not value > 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
 def _flag(name: str) -> bool:
     raw = os.environ.get(name, "0")
     if raw not in ("0", "1"):
@@ -79,6 +92,13 @@ class ServerConfig:
     rate_start_ip: int = 20
     rate_verify_ip: int = 30
     rate_refresh_device: int = 30
+    # Matchmaking (M4).
+    queue_ttl_s: int = 90
+    match_ttl_s: int = 900
+    match_sweep_interval_s: float = 1.0
+    rematch_penalty_s: int = 86_400
+    retention_s: int = 2_592_000
+    rate_queue_user: int = 20
 
     def __post_init__(self) -> None:
         if len(self.secret) < MIN_SECRET_BYTES:
@@ -97,6 +117,12 @@ class ServerConfig:
             "rate_start_ip",
             "rate_verify_ip",
             "rate_refresh_device",
+            "queue_ttl_s",
+            "match_ttl_s",
+            "match_sweep_interval_s",
+            "rematch_penalty_s",
+            "retention_s",
+            "rate_queue_user",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -127,4 +153,12 @@ class ServerConfig:
             rate_start_ip=_positive("BREAKROOM_RATE_START_IP", 20),
             rate_verify_ip=_positive("BREAKROOM_RATE_VERIFY_IP", 30),
             rate_refresh_device=_positive("BREAKROOM_RATE_REFRESH_DEVICE", 30),
+            queue_ttl_s=_positive("BREAKROOM_QUEUE_TTL_S", 90),
+            match_ttl_s=_positive("BREAKROOM_MATCH_TTL_S", 900),
+            match_sweep_interval_s=_positive_float(
+                "BREAKROOM_MATCH_SWEEP_INTERVAL_S", 1.0
+            ),
+            rematch_penalty_s=_positive("BREAKROOM_REMATCH_PENALTY_S", 86_400),
+            retention_s=_positive("BREAKROOM_RETENTION_S", 2_592_000),
+            rate_queue_user=_positive("BREAKROOM_RATE_QUEUE_USER", 20),
         )

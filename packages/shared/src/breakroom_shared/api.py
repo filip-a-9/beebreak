@@ -1,7 +1,7 @@
 """Companion ↔ server wire contract (spec §9): HTTP bodies and WebSocket frames.
 
-Both sides parse with these models only. Nothing here carries task metadata;
-OutboundPresence (presence.py) is the one model for that, and M3 never sends it.
+Both sides parse with these models only. Task metadata travels only inside
+OutboundPresence (presence.py), carried by QueueJoinRequest (spec §4 rule 13).
 """
 
 from typing import Annotated, Literal
@@ -16,9 +16,13 @@ from pydantic import (
     StringConstraints,
 )
 
+# Re-exported: Consent moved to its own module to avoid an import cycle.
+from breakroom_shared.consent import CONSENT_VERSION as CONSENT_VERSION
+from breakroom_shared.consent import Consent as Consent
+from breakroom_shared.presence import OutboundPresence, StackTag, TaskCategory
+
 API_VERSION = 1
 MAX_WS_FRAME_BYTES = 4 * 1024
-CONSENT_VERSION = 1
 
 Nickname = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{3,24}$")]
 # 8 Crockford base32 characters, optionally written with one hyphen.
@@ -34,6 +38,10 @@ ErrorCode = Literal[
     "nickname_taken",
     "nickname_reserved",
     "rate_limited",
+    "already_queued",
+    "already_matched",
+    "setup_incomplete",
+    "not_found",
 ]
 
 
@@ -67,13 +75,6 @@ class RefreshRequest(_Model):
     refresh_token: str
 
 
-class Consent(_Model):
-    version: Literal[1]
-    share_task_category: bool = False
-    share_stack_tags: bool = False
-    share_time_bucket: bool = False
-
-
 class Me(_Model):
     nickname: Nickname | None
     consent: Consent | None
@@ -95,6 +96,36 @@ class ErrorResponse(_Model):
 
 class HealthResponse(_Model):
     status: Literal["ok"]
+
+
+# Queue and matches (M4).
+
+
+class QueueJoinRequest(_Model):
+    idempotency_key: UUID
+    presence: OutboundPresence
+
+
+QueueStatus = Literal["queued", "matched", "cancelled", "expired"]
+
+
+class QueueEntryView(_Model):
+    entry_id: UUID
+    status: QueueStatus
+    expires_at: AwareDatetime
+
+
+class MatchView(_Model):
+    match_id: UUID
+    peer_nickname: Nickname
+    shared_tags: tuple[StackTag, ...] = Field(default=(), max_length=5)
+    # Never "other": a category is shared only when both sent the same real one.
+    shared_category: TaskCategory | None = None
+    ends_at: AwareDatetime
+
+
+# "blocked" is never sent: a blocked peer sees a plain end.
+MatchEndReason = Literal["ended", "expired"]
 
 
 # WebSocket, client → server.
@@ -132,7 +163,62 @@ class WsPong(_Model):
     server_time: AwareDatetime
 
 
-ServerWsFrame = RootModel[Annotated[WsReady | WsPong, Field(discriminator="type")]]
+class WsSync(_Model):
+    type: Literal["sync"]
+    version: Literal[1]
+    event_id: UUID
+    server_time: AwareDatetime
+    queue: QueueEntryView | None
+    match: MatchView | None
+
+
+class WsQueueJoined(_Model):
+    type: Literal["queue.joined"]
+    version: Literal[1]
+    event_id: UUID
+    server_time: AwareDatetime
+    entry: QueueEntryView
+
+
+class WsQueueEnded(_Model):
+    type: Literal["queue.ended"]
+    version: Literal[1]
+    event_id: UUID
+    server_time: AwareDatetime
+    entry_id: UUID
+    reason: Literal["cancelled", "expired"]
+
+
+class WsMatchCreated(_Model):
+    type: Literal["match.created"]
+    version: Literal[1]
+    event_id: UUID
+    server_time: AwareDatetime
+    entry_id: UUID
+    match: MatchView
+
+
+class WsMatchEnded(_Model):
+    type: Literal["match.ended"]
+    version: Literal[1]
+    event_id: UUID
+    server_time: AwareDatetime
+    match_id: UUID
+    reason: MatchEndReason
+
+
+ServerWsFrame = RootModel[
+    Annotated[
+        WsReady
+        | WsPong
+        | WsSync
+        | WsQueueJoined
+        | WsQueueEnded
+        | WsMatchCreated
+        | WsMatchEnded,
+        Field(discriminator="type"),
+    ]
+]
 
 WsCloseReason = Literal[
     "bad_frame", "unauthorized", "auth_timeout", "replaced", "rate_limited"

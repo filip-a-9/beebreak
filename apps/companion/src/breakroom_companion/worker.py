@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
@@ -10,7 +11,7 @@ from PySide6.QtCore import QObject, Signal
 from breakroom_companion.config import worker_start_timeout_s, worker_stop_timeout_s
 from breakroom_companion.ipc_server import IpcServer
 from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import StatusReply
+from breakroom_shared.ipc import LeaveResult, StatusReply
 
 
 class IpcWorker(QObject):
@@ -18,10 +19,18 @@ class IpcWorker(QObject):
 
     event_received = Signal(object)  # NormalizedEvent
 
-    def __init__(self, socket_path: Path, initial_status: StatusReply) -> None:
+    def __init__(
+        self,
+        socket_path: Path,
+        initial_status: StatusReply,
+        leave_queue: Callable[[], LeaveResult] | None = None,
+    ) -> None:
+        """`leave_queue` answers an agent's LeaveQueueRequest (M4-07); it is
+        called on the IPC thread and must be thread-safe. None: "unavailable"."""
         super().__init__()
         self.socket_path = socket_path
         self._status = initial_status
+        self._leave_queue = leave_queue
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None

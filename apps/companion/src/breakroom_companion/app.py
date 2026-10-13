@@ -31,7 +31,7 @@ def initial_status(controller: Controller) -> StatusReply:
     """Snapshot of the controller as a StatusReply."""
     return StatusReply(
         kind="status",
-        version=2,
+        version=3,
         invitation=controller.state,
         last_event_at=controller.last_event_at,
         activity=controller.activity(datetime.now(UTC)),

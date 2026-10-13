@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from breakroom_shared.api import Consent
+from breakroom_shared.consent import Consent
 
 TaskCategory = Literal["backend", "frontend", "devops", "data", "testing", "other"]
 

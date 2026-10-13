@@ -29,6 +29,7 @@ from breakroom_companion.credentials import CredentialStore, StoredCredentials
 from breakroom_companion.realtime_client import RealtimeClient, RealtimeError
 from breakroom_companion.remote_config import RemoteConfig
 from breakroom_shared.api import WS_CLOSE, Consent, Me, TokenPair
+from breakroom_shared.presence import OutboundPresence
 
 ConnectionState = Literal[
     "signed_out", "signing_in", "connecting", "connected", "offline"
@@ -71,6 +72,7 @@ class RemoteWorker(QObject):
     state_changed = Signal(str)  # ConnectionState
     me_changed = Signal(object)  # Me | None
     error = Signal(str)  # ErrorCode, "network" or "replaced"
+    break_changed = Signal(object)  # BreakState (M4-05)
 
     def __init__(self, config: RemoteConfig, store: CredentialStore) -> None:
         super().__init__()
@@ -115,6 +117,24 @@ class RemoteWorker(QObject):
 
     def sign_out(self) -> None:
         self._submit(self._sign_out())
+
+    # --- break (M4-05) ---
+
+    def join_queue(self, presence: OutboundPresence) -> None:
+        """Start a search with `presence` (the only path presence leaves by)."""
+        raise NotImplementedError
+
+    def leave_queue(self) -> None:
+        """Cancel the current search; no-op when not searching."""
+        raise NotImplementedError
+
+    def end_match(self) -> None:
+        """End the current match; no-op when not matched."""
+        raise NotImplementedError
+
+    def block_peer(self) -> None:
+        """End the current match and block the peer; no-op when not matched."""
+        raise NotImplementedError
 
     def stop(self) -> None:
         """Close the socket and client, join the thread (bounded wait)."""

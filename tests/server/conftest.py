@@ -4,6 +4,11 @@
   a temp *file* by default (several threads can share it); PostgreSQL when
   BREAKROOM_TEST_DATABASE_URL is set (its tables are dropped and recreated).
 - `session_factory`, `server_config`, `clock` build on it.
+- `app` is built with the matchmaker loop off (rule 15): tests call
+  `app.state.matchmaker.run_once()` themselves.
+- M4 helpers: `add_ready_user` (database only), `ready_user` (through the API),
+  `seed_queued`, `seed_match`. Fakes for the notifier and matchmaker are in
+  `tests/server/fakes.py`.
 
 BREAKROOM_TEST_DATABASE_URL is read once at import time. tests/conftest.py
 deletes every BREAKROOM_* variable before each test, so a fixture reading the
@@ -12,7 +17,9 @@ variable later would never see it. Import `TEST_DATABASE_URL` instead.
 
 import os
 import re
-from collections.abc import Iterator
+import uuid
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -27,8 +34,21 @@ from breakroom_server.app import create_app
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory, make_engine
 from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import Base, BetaInvite, User
+from breakroom_server.models import (
+    Base,
+    BetaInvite,
+    Device,
+    Match,
+    MatchParticipant,
+    QueueEntry,
+    User,
+    UserPreference,
+    join_tags,
+)
+from breakroom_server.nickname import skeleton
 from breakroom_server.tokens import hmac_code, new_code
+from breakroom_shared.api import Consent
+from breakroom_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
 
 TEST_DATABASE_URL: str | None = os.environ.get("BREAKROOM_TEST_DATABASE_URL") or None
 TEST_SECRET = b"breakroom-test-secret-0123456789"  # 32 bytes, tests only
@@ -118,7 +138,7 @@ def app(
     mailer: RecordingMailer,
     clock: FixedClock,
 ) -> FastAPI:
-    return create_app(server_config, mailer=mailer, clock=clock)
+    return create_app(server_config, mailer=mailer, clock=clock, run_matchmaker=False)
 
 
 @pytest.fixture
@@ -185,6 +205,161 @@ def sign_in(
 
 def bearer(session: dict[str, Any]) -> dict[str, str]:
     return {"Authorization": f"Bearer {session['tokens']['access_token']}"}
+
+
+# --- M4 helpers: ready users, queue entries and matches ------------------------
+
+ALL_CONSENT = Consent(
+    version=1, share_task_category=True, share_stack_tags=True, share_time_bucket=True
+)
+
+
+@dataclass(frozen=True)
+class SeededUser:
+    user_id: uuid.UUID
+    device_id: uuid.UUID
+    nickname: str | None
+
+
+@dataclass(frozen=True)
+class ApiUser:
+    session: dict[str, Any]  # SessionResponse JSON
+    headers: dict[str, str]  # bearer header
+    user_id: uuid.UUID
+    device_id: uuid.UUID
+
+
+def add_ready_user(
+    session_factory: SessionFactory,
+    nickname: str | None,
+    *,
+    consent: Consent | None = ALL_CONSENT,
+    status: str = "active",
+    now: datetime = START_TIME,
+) -> SeededUser:
+    """A user with one device, written straight to the database (no tokens).
+
+    `nickname=None` or `consent=None` leave setup incomplete.
+    """
+    tag = nickname or uuid.uuid4().hex[:12]
+    with session_factory() as s:
+        user = User(
+            email_canonical=f"{tag.lower()}@example.com",
+            nickname=nickname,
+            nickname_skeleton=skeleton(nickname) if nickname else None,
+            status=status,
+            created_at=now,
+        )
+        s.add(user)
+        s.flush()
+        device = Device(user_id=user.id, name="laptop", created_at=now)
+        s.add(device)
+        if consent is not None:
+            s.add(
+                UserPreference(
+                    user_id=user.id,
+                    consent_version=consent.version,
+                    share_task_category=consent.share_task_category,
+                    share_stack_tags=consent.share_stack_tags,
+                    share_time_bucket=consent.share_time_bucket,
+                    consented_at=now,
+                )
+            )
+        s.commit()
+        return SeededUser(user.id, device.id, nickname)
+
+
+def ready_user(
+    client: TestClient,
+    session_factory: SessionFactory,
+    mailer: RecordingMailer,
+    email: str = "ada@example.com",
+    nickname: str | None = "Ada",
+    *,
+    consent: Consent | None = ALL_CONSENT,
+    device_name: str = "laptop",
+) -> ApiUser:
+    """Sign in through the API, then set nickname and consent (if given)."""
+    session = sign_in(client, session_factory, mailer, email, device_name)
+    headers = bearer(session)
+    if nickname is not None:
+        r = client.patch("/v1/me", json={"nickname": nickname}, headers=headers)
+        assert r.status_code == 200, r.text
+    if consent is not None:
+        r = client.put(
+            "/v1/me/consent", json=consent.model_dump(mode="json"), headers=headers
+        )
+        assert r.status_code == 200, r.text
+    with session_factory() as s:
+        user_id = s.scalars(select(User.id).where(User.email_canonical == email)).one()
+        device_id = s.scalars(
+            select(Device.id)
+            .where(Device.user_id == user_id, Device.name == device_name)
+            .order_by(Device.created_at.desc())
+        ).first()
+    assert device_id is not None
+    return ApiUser(session, headers, user_id, device_id)
+
+
+def seed_queued(
+    session_factory: SessionFactory,
+    user: SeededUser | ApiUser,
+    *,
+    now: datetime = START_TIME,
+    ttl_s: int = 90,
+    task_category: TaskCategory | None = None,
+    stack_tags: Sequence[StackTag] = (),
+    bucket: RemainingTimeBucket | None = None,
+    idempotency_key: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """A `queued` entry admitted at `now`; returns its id."""
+    with session_factory() as s:
+        entry = QueueEntry(
+            user_id=user.user_id,
+            device_id=user.device_id,
+            idempotency_key=idempotency_key or uuid.uuid4(),
+            status="queued",
+            presence_id=uuid.uuid4(),
+            task_category=task_category,
+            stack_tags=join_tags(stack_tags),
+            remaining_time_bucket=bucket,
+            admitted_at=now,
+            expires_at=now + timedelta(seconds=ttl_s),
+        )
+        s.add(entry)
+        s.commit()
+        return entry.id
+
+
+def seed_match(
+    session_factory: SessionFactory,
+    a: SeededUser | ApiUser,
+    b: SeededUser | ApiUser,
+    *,
+    now: datetime = START_TIME,
+    ttl_s: int = 900,
+    shared_tags: Sequence[StackTag] = (),
+    shared_category: TaskCategory | None = None,
+) -> uuid.UUID:
+    """An active match between `a` and `b` (no queue entries); returns its id."""
+    with session_factory() as s:
+        match = Match(
+            status="active",
+            created_at=now,
+            ends_at=now + timedelta(seconds=ttl_s),
+            shared_tags=join_tags(shared_tags),
+            shared_category=shared_category,
+        )
+        s.add(match)
+        s.flush()
+        s.add_all(
+            [
+                MatchParticipant(match_id=match.id, user_id=a.user_id, active=True),
+                MatchParticipant(match_id=match.id, user_id=b.user_id, active=True),
+            ]
+        )
+        s.commit()
+        return match.id
 
 
 @pytest.fixture(autouse=True)

@@ -25,6 +25,7 @@ from breakroom_server.auth import Principal, authenticate_access
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
 from breakroom_server.models import Device, User
+from breakroom_server.notify import make_frame as make_frame
 from breakroom_server.ratelimit import RateLimiter
 from breakroom_shared.api import (
     MAX_WS_FRAME_BYTES,
@@ -92,6 +93,14 @@ class Hub:
             conn = self._connections.get(device_id)
         if conn is not None:
             conn.kick(WS_CLOSE["unauthorized"])
+
+    def send_to_user(self, user_id: UUID, frame: BaseModel) -> None:
+        """Notifier: queue `frame` for every socket of the user. M4-04."""
+        raise NotImplementedError
+
+    def is_user_connected(self, user_id: UUID) -> bool:
+        """Notifier: does the user have an authenticated socket? M4-04."""
+        raise NotImplementedError
 
     def connected_count(self) -> int:
         with self._lock:

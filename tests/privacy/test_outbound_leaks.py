@@ -370,7 +370,7 @@ def test_no_protected_string_leaves_the_machine(
     sock_dir.chmod(0o700)
     ipc = IpcWorker(
         sock_dir / "s",
-        StatusReply(kind="status", version=2, invitation="idle"),
+        StatusReply(kind="status", version=3, invitation="idle"),
     )
     sink = EventSink(ipc)
     ipc.start()

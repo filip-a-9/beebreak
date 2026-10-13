@@ -50,6 +50,10 @@ _STATUS: dict[ErrorCode, int] = {
     "nickname_taken": 409,
     "nickname_reserved": 409,
     "rate_limited": 429,
+    "already_queued": 409,
+    "already_matched": 409,
+    "setup_incomplete": 409,
+    "not_found": 404,
 }
 
 
@@ -80,6 +84,7 @@ class Limiters:
     start_ip: RateLimiter
     verify_ip: RateLimiter
     refresh_device: RateLimiter
+    queue_user: RateLimiter
 
 
 def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
@@ -89,6 +94,7 @@ def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
         start_ip=RateLimiter(config.rate_start_ip, window, clock),
         verify_ip=RateLimiter(config.rate_verify_ip, window, clock),
         refresh_device=RateLimiter(config.rate_refresh_device, window, clock),
+        queue_user=RateLimiter(config.rate_queue_user, window, clock),
     )
 
 

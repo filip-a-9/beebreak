@@ -58,7 +58,7 @@ def test_reply_fields_are_passed_through_and_nothing_else() -> None:
     when = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
     out = _call(
         StatusReply(
-            kind="status", version=2, invitation="suggested", last_event_at=when
+            kind="status", version=3, invitation="suggested", last_event_at=when
         )
     )
     assert set(out) == STATUS_KEYS
@@ -68,7 +68,7 @@ def test_reply_fields_are_passed_through_and_nothing_else() -> None:
 
 
 def test_reply_without_last_event_reports_null_timestamp() -> None:
-    out = _call(StatusReply(kind="status", version=2, invitation="idle"))
+    out = _call(StatusReply(kind="status", version=3, invitation="idle"))
     assert out["companion"] == "running"
     assert out["invitation"] == "idle"
     assert out["last_event_at"] is None
@@ -78,7 +78,7 @@ def test_activity_and_estimate_come_from_a_v2_reply() -> None:
     out = _call(
         StatusReply(
             kind="status",
-            version=2,
+            version=3,
             invitation="suggested",
             activity="active",
             estimate="10_20m",
@@ -89,7 +89,7 @@ def test_activity_and_estimate_come_from_a_v2_reply() -> None:
 
 
 def test_reply_defaults_report_unknown_activity_and_no_estimate() -> None:
-    out = _call(StatusReply(kind="status", version=2, invitation="idle"))
+    out = _call(StatusReply(kind="status", version=3, invitation="idle"))
     assert out["activity"] == "unknown"
     assert out["estimate"] is None
 

@@ -206,6 +206,14 @@ Invariants: at most one outstanding suggestion per developer; acceptance opens q
 
 Invariants: at most one active queue/match for each user across devices; admission requires valid login, allowed beta access, unblocked profile, and explicit local acceptance; the user can cancel at any point; server enforces queue TTL; fairness prevents indefinite starvation. A match is committed atomically and cannot consume a participant twice.
 
+M4 (**CONFIRMED** 2026-10-13):
+
+- Admission also requires a saved nickname and consent (`409 setup_incomplete`), and every presence field sent must be covered by the stored consent (`400`). The search lasts 90 s (`queue_ttl_s`); then `expired` and a "nobody available" screen, no automatic retry.
+- One `queued` entry and one active match per user are enforced by partial unique indexes on both PostgreSQL and SQLite; the in-process matcher lock is only a performance aid.
+- Only users with a live WebSocket are paired; a disconnected user's entry waits and expires by its TTL.
+- A match (`active -> ended`) ends by either participant (End or Block), after 15 min (`match_ttl_s`, until M5's chat replaces it), or when an admin disables a participant. A blocked peer is told only `ended`.
+- When an entry leaves `queued` its presence fields are nulled at once; ended rows are deleted after 30 days (`retention_s`).
+
 ### 6.4 Chat (server)
 
 `matched -> active -> grace_period -> [extended_active | ended]`
@@ -268,7 +276,9 @@ An engine can be `heuristic` or `local_model`, but both return the same validate
 | `breakroom_status` | none | Local activity/break status, no private chat content | none |
 | `breakroom_set_suggestions` | `enabled: bool` | Effective local setting | changes local consent preference only on explicit authorized user request |
 | `breakroom_open_window` | none | UI-opening acknowledgment | opens independent companion UI |
-| `breakroom_leave_queue` | none | Queue cancel acknowledgment | cancels an existing accepted matchmaking request |
+| `breakroom_leave_queue` | none | `cancelled` / `not_searching` / `unavailable` / `companion_not_running` | cancels an existing search; never ends a match (M4) |
+
+M4: `breakroom_status` gains a fixed `queue` field (`none`/`searching`/`matched`); no peer nickname or tag reaches Claude's context.
 
 Agent-facing tools should not be able to silently enroll a user into remote matchmaking: queue entry requires a **direct user acceptance in the companion UI**, independent of what the LLM requests. Tool responses must be bounded and not leak messages or peer profile details into Claude's context. Additional tools require separate acceptance criteria.
 
@@ -281,11 +291,11 @@ CLI/hook paths should resolve to a verified companion-installed launcher. The pl
 - `POST /v1/auth/*` — beta invitation / sign-in flow (provider-specific, to be decided)
 - `GET /v1/me` — private account and nickname/profile
 - `PATCH /v1/me` — bounded nickname and optional interests
-- `POST /v1/queue` — authenticated enqueue; idempotency key required
-- `DELETE /v1/queue/current` — cancel own queue entry
-- `POST /v1/chat/{id}/end` — leave active session
+- `POST /v1/queue` — authenticated enqueue; idempotency key (scoped per user) required; body carries the consented `OutboundPresence`. 201, or 200 on replay; 409 `setup_incomplete` / `already_queued` / `already_matched`; per-user rate limit (M4)
+- `DELETE /v1/queue/current` — cancel own queue entry; always 204 (M4)
+- `POST /v1/matches/{id}/end` — leave the active match; 404 `not_found` for non-participants (M4; replaces `/v1/chat/{id}/end`, M5 hangs chat off the match)
 - `POST /v1/chat/{id}/extension` — request/accept/decline extension, server adjudicates
-- `POST /v1/users/{id}/block` — prevent future pairing
+- `POST /v1/matches/{id}/block` — end the match and block the other participant by account ID (M4; replaces `/v1/users/{id}/block`: clients never see account IDs)
 - `POST /v1/reports` — file a report with explicit user-selected content/evidence
 - `GET /v1/privacy/export-preview` — *not necessary* if preview is purely local; don't send it remotely
 
@@ -294,6 +304,8 @@ CLI/hook paths should resolve to a verified companion-installed launcher. The pl
 Authenticated `WSS /v1/realtime` supports:
 
 `queue.joined`, `queue.expired`, `match.created`, `chat.message`, `chat.message_ack`, `chat.status`, `chat.extension_requested`, `chat.extension_resolved`, `chat.ended`, `session.reconnected`.
+
+M4 implements `sync` (sent once after the first `session.ready`: the user's current entry and match), `queue.joined`, `queue.ended` (reason `cancelled` or `expired`; this is §9.2's `queue.expired`), `match.created` and `match.ended` (reason `ended` or `expired`; a block is reported as `ended`). Queue and match frames go to every connected device of the user. Frames are best effort; the database is the truth and `sync` restores it on reconnect.
 
 All frames include `version`, `event_id`, and server-side timestamp. Chat send requests include a unique client message ID for idempotency. The server validates session membership and authorization on **every** message and operation, not just WebSocket connection setup. Bound lengths, validate Unicode/attachments, and set message rate limits.
 
@@ -305,6 +317,8 @@ All frames include `version`, `event_id`, and server-side timestamp. Chat send r
 - Enqueue, match, and expiry are idempotent; reconnects must never produce two matches for one user.
 - Start with a single server instance to simplify real-time routing; a horizontal-scale design requires explicit shared presence/pubsub and distributed-lock testing.
 
+M4 (**CONFIRMED** 2026-10-13): availability does not filter pairs; the remaining-time bucket only ranks. The matcher runs on every join and on a 1 s sweep. It walks queued, connected, active users oldest first and gives each the best unblocked partner by: not matched together in the last 24 h, then closer time bucket, then the partner's wait, then more shared stack tags. Each match is one transaction; a uniqueness violation skips the pair.
+
 ## 10. Suggested minimal database entities
 
 - `users`: private stable account ID, auth-provider identity, nickname, status, created time.
@@ -312,12 +326,13 @@ All frames include `version`, `event_id`, and server-side timestamp. Chat send r
 - `user_interests`: controlled optional tags; do not automatically retain per-task categories here.
 - `blocks`: blocker ID, blocked ID, timestamp, unique pair constraint.
 - `queue_entries`: user ID, public sanitized activity buckets, admitted/expires timestamps, status, idempotency key.
+- `matches` and `match_participants` (M4): two participants per match, `active` flag per participant, end deadline and reason, the shared tags/category shown to both. M5's chat attaches to the match.
 - `chat_sessions`: two distinct user IDs, state, end deadline, extension sequence, created/closed times.
 - `messages`: session ID, author ID, message ID, text, server timestamp, expiry timestamp.
 - `reports`: reporting user, reported user/session, moderation status, expressly included evidence.
 - `beta_invites`: invitation token (hashed), invitee/role, expiry, redemption state.
 
-**Retention proposal:** short-lived queue metadata (purged promptly after expiry), chat messages deleted automatically after a proposed 24-hour recovery window, and longer report evidence retained under a separately disclosed moderation policy. Exact durations, account deletion/export, and legally appropriate retention must be finalized before beta. Logs should contain structured IDs, no message bodies or task metadata beyond minimal operational metrics.
+**Retention proposal:** short-lived queue metadata (purged promptly after expiry; M4: presence fields nulled when the entry ends, ended entries and matches deleted after 30 days), chat messages deleted automatically after a proposed 24-hour recovery window, and longer report evidence retained under a separately disclosed moderation policy. Exact durations, account deletion/export, and legally appropriate retention must be finalized before beta. Logs should contain structured IDs, no message bodies or task metadata beyond minimal operational metrics.
 
 ## 11. Security, abuse, and resilience controls
 
@@ -461,6 +476,7 @@ These are deliberately unresolved until the next *non-interview* architecture re
 8. Exact timer defaults, UI presentation when estimated duration changes. M2 (**CONFIRMED** 2026-10-12): the invitation shows the remaining-time bucket as a range, nothing when unknown; no live countdown. Session/grace/extension defaults stay open (M5).
 9. ~~Apache-2.0 versus MIT/AGPL~~ — resolved 2026-10-12: Apache-2.0.
 10. Hosting cost ceiling, monitoring, backup/restore, and abuse operational responsibilities. M3 runs on local Docker only; a host is chosen later.
+11. Matchmaking (M4, **CONFIRMED** 2026-10-13): single in-process matcher (join + 1 s sweep), uniqueness in the database; 90 s search; blocks by account ID through the match, unblock by admin only; reports wait for M5.
 
 Each architecture decision should have its own ADR explaining choice, alternatives, consequences, acceptance tests, and rollback path. None requires another interview until a product-level tradeoff genuinely needs the founder's decision.
 

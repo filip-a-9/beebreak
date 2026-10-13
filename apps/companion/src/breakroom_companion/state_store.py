@@ -12,12 +12,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
+from breakroom_shared.presence import StackTag
+
 
 @dataclass(frozen=True)
 class PersistedState:
     enabled: bool = True
     # Aware UTC.
     cooldown_until: datetime | None = None
+    # Chosen in Settings, sent only with consent (M4-06). At most 5, vocabulary.
+    stack_tags: tuple[StackTag, ...] = ()
 
 
 class StateStore(Protocol):
