@@ -19,16 +19,43 @@ import threading
 from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from PySide6.QtCore import QObject, Signal
 
 from breakroom_companion.api_client import ApiClient, ApiError
+from breakroom_companion.break_state import (
+    BreakEvent,
+    BreakState,
+    Dismiss,
+    Frame,
+    Joined,
+    JoinFailed,
+    Joining,
+    SignedOut,
+    Sync,
+    reduce,
+)
 from breakroom_companion.config import worker_start_timeout_s, worker_stop_timeout_s
 from breakroom_companion.credentials import CredentialStore, StoredCredentials
-from breakroom_companion.realtime_client import RealtimeClient, RealtimeError
+from breakroom_companion.realtime_client import (
+    RealtimeClient,
+    RealtimeError,
+    ServerFrame,
+)
 from breakroom_companion.remote_config import RemoteConfig
-from breakroom_shared.api import WS_CLOSE, Consent, Me, TokenPair
+from breakroom_shared.api import (
+    WS_CLOSE,
+    Consent,
+    Me,
+    QueueJoinRequest,
+    TokenPair,
+    WsMatchCreated,
+    WsMatchEnded,
+    WsQueueEnded,
+    WsQueueJoined,
+    WsSync,
+)
 from breakroom_shared.presence import OutboundPresence
 
 ConnectionState = Literal[
@@ -96,6 +123,7 @@ class RemoteWorker(QObject):
         self._refresh_token: str | None = None
         self._refresh_after_s = MIN_REFRESH_DELAY_S
         self._challenge_id: UUID | None = None
+        self._break = BreakState()
 
     # --- public, thread-safe ---
 
@@ -122,19 +150,23 @@ class RemoteWorker(QObject):
 
     def join_queue(self, presence: OutboundPresence) -> None:
         """Start a search with `presence` (the only path presence leaves by)."""
-        raise NotImplementedError
+        self._submit(self._join_queue(presence))
 
     def leave_queue(self) -> None:
         """Cancel the current search; no-op when not searching."""
-        raise NotImplementedError
+        self._submit(self._leave_queue())
 
     def end_match(self) -> None:
         """End the current match; no-op when not matched."""
-        raise NotImplementedError
+        self._submit(self._end_match(block=False))
 
     def block_peer(self) -> None:
         """End the current match and block the peer; no-op when not matched."""
-        raise NotImplementedError
+        self._submit(self._end_match(block=True))
+
+    def dismiss_break(self) -> None:
+        """Clear a finished result ("nobody available", "ended")."""
+        self._submit(self._dismiss_break())
 
     def stop(self) -> None:
         """Close the socket and client, join the thread (bounded wait)."""
@@ -227,6 +259,87 @@ class RemoteWorker(QObject):
     def _emit_me(self, me: Me | None) -> None:
         with contextlib.suppress(RuntimeError):
             self.me_changed.emit(me)
+
+    # --- break (loop thread) ---
+
+    def _apply(self, event: BreakEvent) -> None:
+        new = reduce(self._break, event, datetime.now(UTC))
+        if new != self._break:
+            self._break = new
+            with contextlib.suppress(RuntimeError):  # Qt object already deleted
+                self.break_changed.emit(new)
+
+    def _on_frame(self, frame: ServerFrame) -> None:
+        if isinstance(frame, WsSync):
+            self._apply(Sync(frame.queue, frame.match))
+        elif isinstance(
+            frame, WsQueueJoined | WsQueueEnded | WsMatchCreated | WsMatchEnded
+        ):
+            self._apply(Frame(frame))
+
+    def _synthetic(self) -> dict[str, Any]:
+        return {"version": 1, "event_id": uuid4(), "server_time": datetime.now(UTC)}
+
+    async def _join_queue(self, presence: OutboundPresence) -> None:
+        api = self._api
+        assert api is not None
+        if not self._signed_in or self.state != "connected":
+            return
+        if self._break.phase not in ("none", "nobody_available", "ended"):
+            return
+        # One key per call: the retry after a token refresh reuses this request.
+        request = QueueJoinRequest(idempotency_key=uuid4(), presence=presence)
+        self._apply(Joining())
+        try:
+            entry = await self._authed(lambda token: api.join_queue(token, request))
+        except ApiError as exc:
+            self._apply(JoinFailed(exc.code))
+            if exc.code in ("already_queued", "already_matched"):
+                return  # the existing search or match is announced to us anyway
+            raise
+        self._apply(Joined(entry))
+
+    async def _leave_queue(self) -> None:
+        api = self._api
+        entry = self._break.entry
+        if api is None or not self._signed_in or self._break.phase != "searching":
+            return
+        assert entry is not None
+        await self._authed(lambda token: api.leave_queue(token))
+        self._apply(
+            Frame(
+                WsQueueEnded(
+                    type="queue.ended",
+                    entry_id=entry.entry_id,
+                    reason="cancelled",
+                    **self._synthetic(),
+                )
+            )
+        )
+
+    async def _end_match(self, *, block: bool) -> None:
+        api = self._api
+        match = self._break.match
+        if api is None or not self._signed_in or self._break.phase != "matched":
+            return
+        assert match is not None
+        if block:
+            await self._authed(lambda token: api.block_match(token, match.match_id))
+        else:
+            await self._authed(lambda token: api.end_match(token, match.match_id))
+        self._apply(
+            Frame(
+                WsMatchEnded(
+                    type="match.ended",
+                    match_id=match.match_id,
+                    reason="ended",
+                    **self._synthetic(),
+                )
+            )
+        )
+
+    async def _dismiss_break(self) -> None:
+        self._apply(Dismiss())
 
     # --- sign-in ---
 
@@ -347,6 +460,7 @@ class RemoteWorker(QObject):
             return
         self._signed_in = False
         await self._cancel_connection()
+        self._apply(SignedOut())
         self._access = None
         self._refresh_token = None
         await asyncio.to_thread(self.store.clear)
@@ -407,6 +521,7 @@ class RemoteWorker(QObject):
                         self.config.server_url,
                         self.config.http_timeout_s,
                         self.config.ws_ping_interval_s,
+                        self._on_frame,
                     )
                     self._rt = rt
                     assert self._access is not None

@@ -20,6 +20,8 @@ from breakroom_shared.api import (
     ErrorResponse,
     Me,
     NicknameUpdate,
+    QueueEntryView,
+    QueueJoinRequest,
     RefreshRequest,
     SessionResponse,
     TokenPair,
@@ -39,9 +41,16 @@ class ApiError(Exception):
 
 
 class ApiClient:
-    def __init__(self, origin: str, timeout_s: float) -> None:
+    def __init__(
+        self,
+        origin: str,
+        timeout_s: float,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
         self._client = httpx.AsyncClient(
             base_url=origin,
+            transport=transport,
             timeout=timeout_s,
             follow_redirects=False,
             trust_env=False,  # never pick up proxies from the environment
@@ -155,3 +164,39 @@ class ApiClient:
         )
         assert reply is not None
         return reply
+
+    # --- queue and matches (M4) ---
+
+    async def join_queue(
+        self, access_token: str, request: QueueJoinRequest
+    ) -> QueueEntryView:
+        reply = await self._call(
+            "POST",
+            "/v1/queue",
+            model=QueueEntryView,
+            body=request,
+            access_token=access_token,
+        )
+        assert reply is not None
+        return reply
+
+    async def leave_queue(self, access_token: str) -> None:
+        await self._call(
+            "DELETE", "/v1/queue/current", model=None, access_token=access_token
+        )
+
+    async def end_match(self, access_token: str, match_id: UUID) -> None:
+        await self._call(
+            "POST",
+            f"/v1/matches/{match_id}/end",
+            model=None,
+            access_token=access_token,
+        )
+
+    async def block_match(self, access_token: str, match_id: UUID) -> None:
+        await self._call(
+            "POST",
+            f"/v1/matches/{match_id}/block",
+            model=None,
+            access_token=access_token,
+        )

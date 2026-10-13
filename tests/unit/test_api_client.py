@@ -2,14 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import http.server
+import json
 import threading
 from collections.abc import Callable, Coroutine, Iterator
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import UUID
 
+import httpx
 import pytest
 
 from breakroom_companion.api_client import ApiClient, ApiError
-from breakroom_shared.api import Consent, SessionResponse
+from breakroom_shared.api import (
+    Consent,
+    QueueEntryView,
+    QueueJoinRequest,
+    SessionResponse,
+)
+from breakroom_shared.presence import OutboundPresence
 
 if TYPE_CHECKING:
     from tests.e2e_support.server import LiveServer
@@ -249,3 +259,183 @@ def test_cookies_are_not_kept(
             await api.aclose()
 
     assert run(scenario()) == 0
+
+
+# --- queue and matches (M4-05), against httpx.MockTransport ---
+
+ENTRY_ID = UUID(int=7)
+MATCH_ID = UUID(int=9)
+KEY = UUID(int=3)
+PRESENCE = OutboundPresence(
+    schema_version=1,
+    presence_id=UUID(int=4),
+    task_category="backend",
+    stack_tags=("python", "docker"),
+    remaining_time_bucket="5_10m",
+    status="available",
+)
+JOIN = QueueJoinRequest(idempotency_key=KEY, presence=PRESENCE)
+ENTRY_JSON = {
+    "entry_id": str(ENTRY_ID),
+    "status": "queued",
+    "expires_at": datetime(2026, 10, 13, 12, 0, tzinfo=UTC).isoformat(),
+}
+
+
+def mock_api(
+    reply: Callable[[httpx.Request], httpx.Response],
+) -> tuple[ApiClient, list[httpx.Request]]:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return reply(request)
+
+    api = ApiClient(
+        "http://server.test", TIMEOUT_S, transport=httpx.MockTransport(handler)
+    )
+    return api, seen
+
+
+def error_reply(status: int, code: str) -> Callable[[httpx.Request], httpx.Response]:
+    return lambda _r: httpx.Response(status, json={"error": code})
+
+
+def test_join_queue_posts_exactly_the_model_with_a_bearer_token() -> None:
+    async def scenario() -> tuple[QueueEntryView, list[httpx.Request]]:
+        api, seen = mock_api(lambda _r: httpx.Response(201, json=ENTRY_JSON))
+        try:
+            return await api.join_queue("bra_tok", JOIN), seen
+        finally:
+            await api.aclose()
+
+    entry, seen = run(scenario())
+
+    assert entry.entry_id == ENTRY_ID and entry.status == "queued"
+    (request,) = seen
+    assert (request.method, request.url.path) == ("POST", "/v1/queue")
+    assert request.headers["authorization"] == "Bearer bra_tok"
+    assert request.headers["content-type"] == "application/json"
+    assert json.loads(request.content) == json.loads(JOIN.model_dump_json())
+
+
+def test_join_queue_accepts_200_for_an_idempotent_replay() -> None:
+    async def scenario() -> QueueEntryView:
+        api, _ = mock_api(lambda _r: httpx.Response(200, json=ENTRY_JSON))
+        try:
+            return await api.join_queue("bra_tok", JOIN)
+        finally:
+            await api.aclose()
+
+    assert run(scenario()).entry_id == ENTRY_ID
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (400, "invalid_request"),
+        (401, "unauthorized"),
+        (409, "setup_incomplete"),
+        (409, "already_queued"),
+        (409, "already_matched"),
+        (429, "rate_limited"),
+    ],
+)
+def test_join_queue_error_codes_map(status: int, code: str) -> None:
+    async def scenario() -> str:
+        api, _ = mock_api(error_reply(status, code))
+        try:
+            await api.join_queue("bra_tok", JOIN)
+        except ApiError as exc:
+            return exc.code
+        finally:
+            await api.aclose()
+        return "no error"
+
+    assert run(scenario()) == code
+
+
+def test_join_queue_with_a_bad_body_is_network() -> None:
+    async def scenario() -> str:
+        api, _ = mock_api(lambda _r: httpx.Response(201, json={"entry_id": "nope"}))
+        try:
+            await api.join_queue("bra_tok", JOIN)
+        except ApiError as exc:
+            return exc.code
+        finally:
+            await api.aclose()
+        return "no error"
+
+    assert run(scenario()) == "network"
+
+
+def test_leave_queue_deletes_current_without_a_body() -> None:
+    async def scenario() -> list[httpx.Request]:
+        api, seen = mock_api(lambda _r: httpx.Response(204))
+        try:
+            await api.leave_queue("bra_tok")
+            return seen
+        finally:
+            await api.aclose()
+
+    (request,) = run(scenario())
+
+    assert (request.method, request.url.path) == ("DELETE", "/v1/queue/current")
+    assert request.headers["authorization"] == "Bearer bra_tok"
+    assert request.content == b""
+
+
+@pytest.mark.parametrize("name", ["end_match", "block_match"])
+def test_match_actions_post_to_their_route(name: str) -> None:
+    async def scenario() -> list[httpx.Request]:
+        api, seen = mock_api(lambda _r: httpx.Response(204))
+        try:
+            assert await getattr(api, name)("bra_tok", MATCH_ID) is None
+            return seen
+        finally:
+            await api.aclose()
+
+    (request,) = run(scenario())
+
+    suffix = "end" if name == "end_match" else "block"
+    assert (request.method, request.url.path) == (
+        "POST",
+        f"/v1/matches/{MATCH_ID}/{suffix}",
+    )
+    assert request.headers["authorization"] == "Bearer bra_tok"
+    assert request.content == b""
+
+
+@pytest.mark.parametrize("name", ["end_match", "block_match"])
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [(404, "not_found"), (401, "unauthorized"), (429, "rate_limited")],
+)
+def test_match_action_error_codes_map(name: str, status: int, code: str) -> None:
+    async def scenario() -> str:
+        api, _ = mock_api(error_reply(status, code))
+        try:
+            await getattr(api, name)("bra_tok", MATCH_ID)
+        except ApiError as exc:
+            return exc.code
+        finally:
+            await api.aclose()
+        return "no error"
+
+    assert run(scenario()) == code
+
+
+def test_queue_calls_never_leak_the_token_or_presence_into_errors() -> None:
+    async def scenario() -> str:
+        api, _ = mock_api(error_reply(500, "not a code"))
+        try:
+            await api.join_queue("bra_secret", JOIN)
+        except ApiError as exc:
+            return f"{exc!s} {exc!r} {exc.args}"
+        finally:
+            await api.aclose()
+        return ""
+
+    text = run(scenario())
+
+    assert "bra_secret" not in text and "python" not in text

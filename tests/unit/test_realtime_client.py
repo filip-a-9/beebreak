@@ -16,8 +16,17 @@ from breakroom_companion.realtime_client import (
     CLOSE_PROTOCOL_ERROR,
     RealtimeClient,
     RealtimeError,
+    ServerFrame,
 )
-from breakroom_shared.api import MAX_WS_FRAME_BYTES
+from breakroom_shared.api import (
+    MAX_WS_FRAME_BYTES,
+    WsMatchCreated,
+    WsMatchEnded,
+    WsQueueEnded,
+    WsQueueJoined,
+    WsReady,
+    WsSync,
+)
 
 if TYPE_CHECKING:
     from tests.e2e_support.server import LiveServer
@@ -344,3 +353,138 @@ def test_a_redirect_is_never_followed_and_the_token_goes_nowhere_else() -> None:
 
     # connect() has returned: a followed redirect would already have arrived.
     assert received == []
+
+
+# --- product frames (M4-05) ---
+
+ENTRY = {
+    "entry_id": str(uuid4()),
+    "status": "queued",
+    "expires_at": "2026-10-13T12:01:30+00:00",
+}
+MATCH = {
+    "match_id": str(uuid4()),
+    "peer_nickname": "bobby",
+    "shared_tags": ["python"],
+    "shared_category": None,
+    "ends_at": "2026-10-13T12:15:00+00:00",
+}
+
+
+def frame(kind: str, **fields: Any) -> str:
+    return json.dumps(
+        {
+            "type": kind,
+            "version": 1,
+            "event_id": str(uuid4()),
+            "server_time": datetime.now(UTC).isoformat(),
+            **fields,
+        }
+    )
+
+
+SERVER_FRAMES = [
+    frame("sync", queue=None, match=None),
+    frame("queue.joined", entry=ENTRY),
+    frame("pong"),
+    frame("match.created", entry_id=ENTRY["entry_id"], match=MATCH),
+    frame("queue.ended", entry_id=ENTRY["entry_id"], reason="expired"),
+    frame("pong"),
+    frame("match.ended", match_id=MATCH["match_id"], reason="ended"),
+]
+
+
+def test_frames_reach_on_frame_in_order_and_pong_does_not() -> None:
+    got: list[ServerFrame] = []
+
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.send(ready_frame())
+        for raw in SERVER_FRAMES:
+            await ws.send(raw)
+        await ws.wait_closed()
+
+    async def scenario(origin: str) -> None:
+        done = asyncio.Event()
+
+        def on_frame(f: ServerFrame) -> None:
+            got.append(f)
+            if isinstance(f, WsMatchEnded):
+                done.set()
+
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S, on_frame)
+        try:
+            ready = await client.connect("bra_x")
+            assert isinstance(ready, WsReady)
+            await asyncio.wait_for(done.wait(), TIMEOUT_S)
+        finally:
+            await client.close()
+
+    run(with_fake_server(handler, scenario))
+
+    assert [type(f) for f in got] == [
+        WsSync,
+        WsQueueJoined,
+        WsMatchCreated,
+        WsQueueEnded,
+        WsMatchEnded,
+    ]
+    assert isinstance(got[2], WsMatchCreated)
+    assert got[2].match.peer_nickname == "bobby"
+
+
+def test_a_failing_handler_does_not_stop_later_frames() -> None:
+    seen: list[str] = []
+
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.send(ready_frame())
+        await ws.send(frame("sync", queue=None, match=None))
+        await ws.send(frame("queue.joined", entry=ENTRY))
+        await ws.wait_closed()
+
+    async def scenario(origin: str) -> None:
+        done = asyncio.Event()
+
+        def on_frame(f: ServerFrame) -> None:
+            seen.append(f.type)
+            if isinstance(f, WsQueueJoined):
+                done.set()
+            else:
+                raise RuntimeError("handler bug")
+
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S, on_frame)
+        try:
+            await client.connect("bra_x")
+            await asyncio.wait_for(done.wait(), TIMEOUT_S)
+        finally:
+            await client.close()
+
+    run(with_fake_server(handler, scenario))
+
+    assert seen == ["sync", "queue.joined"]
+
+
+def test_a_malformed_product_frame_closes_the_socket_and_is_not_delivered() -> None:
+    got: list[ServerFrame] = []
+    server_saw: list[int | None] = []
+
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.send(ready_frame())
+        await ws.send(frame("queue.joined", entry={"entry_id": "not a uuid"}))
+        await ws.wait_closed()
+        server_saw.append(ws.close_code)
+
+    async def scenario(origin: str) -> None:
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S, got.append)
+        try:
+            await client.connect("bra_x")
+            assert await asyncio.wait_for(client.wait_closed(), TIMEOUT_S) is None
+        finally:
+            await client.close()
+
+    run(with_fake_server(handler, scenario))
+
+    assert got == []
+    assert server_saw == [CLOSE_PROTOCOL_ERROR]

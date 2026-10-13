@@ -8,6 +8,7 @@ The token is sent only in the first frame, never in the URL.
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 
 from pydantic import ValidationError
 from websockets.asyncio.client import ClientConnection
@@ -18,8 +19,25 @@ from breakroom_shared.api import (
     MAX_WS_FRAME_BYTES,
     ServerWsFrame,
     WsAuth,
+    WsMatchCreated,
+    WsMatchEnded,
     WsPing,
+    WsPong,
+    WsQueueEnded,
+    WsQueueJoined,
     WsReady,
+    WsSync,
+)
+
+# A parsed server frame (the root of `ServerWsFrame`) as `on_frame` receives it.
+ServerFrame = (
+    WsReady
+    | WsPong
+    | WsSync
+    | WsQueueJoined
+    | WsQueueEnded
+    | WsMatchCreated
+    | WsMatchEnded
 )
 
 _log = logging.getLogger(__name__)
@@ -57,7 +75,14 @@ def _ws_url(origin: str) -> str:
 
 
 class RealtimeClient:
-    def __init__(self, origin: str, timeout_s: float, ping_interval_s: float) -> None:
+    def __init__(
+        self,
+        origin: str,
+        timeout_s: float,
+        ping_interval_s: float,
+        on_frame: Callable[[ServerFrame], None] | None = None,
+    ) -> None:
+        self._on_frame = on_frame
         self._url = _ws_url(origin)
         self._timeout_s = timeout_s
         self._ping_interval_s = ping_interval_s
@@ -157,7 +182,9 @@ class RealtimeClient:
             async for raw in ws:
                 if isinstance(raw, bytes):
                     raise ValueError("binary frame")
-                ServerWsFrame.model_validate_json(raw)
+                frame = ServerWsFrame.model_validate_json(raw).root
+                if not isinstance(frame, WsPong):
+                    self._deliver(frame)
             self._finish(self._code(ws))  # a clean close ends the iteration
         except ConnectionClosed:
             self._finish(self._code(ws))
@@ -166,6 +193,15 @@ class RealtimeClient:
             self._finish(None)
         except Exception:
             self._finish(None)
+
+    def _deliver(self, frame: ServerFrame) -> None:
+        """Hand a frame to the owner on this loop; its bugs must not end the pump."""
+        if self._on_frame is None:
+            return
+        try:
+            self._on_frame(frame)
+        except Exception:
+            _log.warning("frame handler failed")
 
     @staticmethod
     async def _discard_with(ws: ClientConnection, code: int) -> None:
