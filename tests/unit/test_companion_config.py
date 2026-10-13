@@ -60,3 +60,11 @@ def test_trigger_config_env_and_rejection(monkeypatch: pytest.MonkeyPatch) -> No
         monkeypatch.setenv("BREAKROOM_COOLDOWN_S", bad)
         with pytest.raises(ValueError):
             config.TriggerConfig.from_env()
+
+
+def test_task_evidence_wait_default_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert config.TriggerConfig().task_evidence_wait_s == 300
+    monkeypatch.setenv("BREAKROOM_TASK_EVIDENCE_WAIT_S", "40")
+    assert config.TriggerConfig.from_env().task_evidence_wait_s == 40
+    with pytest.raises(ValueError):
+        config.TriggerConfig(task_evidence_wait_s=0)

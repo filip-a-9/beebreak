@@ -162,7 +162,7 @@ def test_11_four_open_tasks_carry_5_10m() -> None:
     inv = invites(run(syn.s11_four_open_tasks))
     assert len(inv) == 1
     assert inv[0].estimate == "5_10m"
-    assert 250 <= off(inv[0]) <= 255
+    assert 120 <= off(inv[0]) <= 122
 
 
 def test_12_one_open_task_is_vetoed_as_under_5m() -> None:
@@ -204,3 +204,10 @@ def test_17_late_event_cannot_resurrect_closed_session() -> None:
     tr = run(syn.s17_late_event_after_close)
     assert invite_times(tr) == []
     assert tr[-1].activity == "unknown"
+
+
+def test_18_tasks_without_completion_invite_unknown_after_wait() -> None:
+    inv = invites(run(syn.s18_tasks_never_complete))
+    assert len(inv) == 1
+    assert inv[0].estimate == "unknown"
+    assert 300 <= off(inv[0]) <= 302

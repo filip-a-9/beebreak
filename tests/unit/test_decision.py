@@ -184,9 +184,28 @@ def test_no_tasks_unknown_and_suitable() -> None:
     assert d.result.invite_suitable
 
 
-def test_tasks_without_intervals_unknown() -> None:
-    d = decide({"a": sess(open_tasks=3)})
+def test_open_tasks_without_intervals_wait_for_evidence() -> None:
+    # No task has completed yet: deciding now would invite with "unknown" and
+    # spend the run before an estimate (or an under_5m veto) could exist.
+    d = decide({"a": sess(age_s=299, open_tasks=3)})
+    assert not d.result.invite_suitable
+    assert d.result.reason_code == "insufficient_evidence"
+    assert d.session_key is None
+
+
+def test_open_tasks_without_intervals_unknown_after_wait() -> None:
+    d = decide({"a": sess(age_s=300, open_tasks=3)})
     assert d.result.remaining_time_bucket == "unknown"
+    assert d.result.invite_suitable
+
+
+def test_waiting_for_evidence_is_per_candidate() -> None:
+    sessions = {
+        "a": sess(age_s=200, open_tasks=3),
+        "b": sess(age_s=100),
+    }
+    d = decide(sessions)
+    assert d.session_key == "b"
     assert d.result.invite_suitable
 
 

@@ -87,7 +87,8 @@ export BREAKROOM_WAITING_MAX_S=90
 ```
 
 Defaults: 60 / 2 / 900 / 60 / 180 / 300. Not changed here (defaults apply):
-`BREAKROOM_OPEN_TOOL_MAX_S` (1800), `BREAKROOM_FORGET_AFTER_S` (7200). Values
+`BREAKROOM_OPEN_TOOL_MAX_S` (1800), `BREAKROOM_FORGET_AFTER_S` (7200),
+`BREAKROOM_TASK_EVIDENCE_WAIT_S` (300). Values
 must be positive integers; anything else makes the companion refuse to start.
 **Restart the companion after changing any of these**: they are read once at
 startup. Export them in the replay shell too (see above).

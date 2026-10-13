@@ -70,6 +70,9 @@ class TriggerConfig:
     # Shorter than open_tool_max_s: an Esc on a prompt fires no hook (M2 README).
     waiting_max_s: int = 300
     forget_after_s: int = 7200
+    # Open tasks but none completed yet: wait this long from the run start for
+    # a first interval before deciding without an estimate (M2-03 rule 4a).
+    task_evidence_wait_s: int = 300
 
     def __post_init__(self) -> None:
         for field in (
@@ -81,6 +84,7 @@ class TriggerConfig:
             self.open_tool_max_s,
             self.waiting_max_s,
             self.forget_after_s,
+            self.task_evidence_wait_s,
         ):
             if field <= 0:
                 raise ValueError("trigger config values must be positive")
@@ -101,4 +105,7 @@ class TriggerConfig:
             open_tool_max_s=_positive("BREAKROOM_OPEN_TOOL_MAX_S", d.open_tool_max_s),
             waiting_max_s=_positive("BREAKROOM_WAITING_MAX_S", d.waiting_max_s),
             forget_after_s=_positive("BREAKROOM_FORGET_AFTER_S", d.forget_after_s),
+            task_evidence_wait_s=_positive(
+                "BREAKROOM_TASK_EVIDENCE_WAIT_S", d.task_evidence_wait_s
+            ),
         )

@@ -151,22 +151,19 @@ def s10_duplicated_and_swapped() -> list[NormalizedEvent]:
     return events
 
 
-# Scenarios 11 and 12: the tool events start only after the task events. With
-# tools from 0 s the companion invites at 60 s with an "unknown" estimate,
-# because no task has completed by activity_threshold_s; the estimate label and
-# the under_5m veto apply only when a task completes before the threshold.
-# Reported as a companion finding to M2-02/M2-03.
+# Scenarios 11, 12 and 18: tools run from 0 s alongside the task list. The
+# engine waits for the first completed task (up to task_evidence_wait_s from the
+# run start) before deciding, so the estimate and the under_5m veto can apply.
 
 
 def s11_four_open_tasks() -> list[NormalizedEvent]:
     tr = _Trace("s11")
     tr.add(0, "turn_submitted")
-    for t in range(6):
+    for t in range(5):
         tr.add(t, "task_created")
-    tr.add(120, "task_completed")
-    tr.add(240, "task_completed")
-    tr.steady(250, 300)
-    return tr.events
+    tr.steady(5, 300)
+    tr.add(120, "task_completed")  # 4 open, interval 120 s
+    return _sorted(tr.events)
 
 
 def s12_one_open_task() -> list[NormalizedEvent]:
@@ -174,9 +171,18 @@ def s12_one_open_task() -> list[NormalizedEvent]:
     tr.add(0, "turn_submitted")
     tr.add(0, "task_created")
     tr.add(1, "task_created")
-    tr.add(60, "task_completed")
-    tr.steady(70, 300)
-    return tr.events
+    tr.steady(5, 300)
+    tr.add(60, "task_completed")  # 1 open, interval 60 s
+    return _sorted(tr.events)
+
+
+def s18_tasks_never_complete() -> list[NormalizedEvent]:
+    tr = _Trace("s18")
+    tr.add(0, "turn_submitted")
+    for t in range(3):
+        tr.add(t, "task_created")
+    tr.steady(5, 400)
+    return _sorted(tr.events)
 
 
 def s13_repeated_turns() -> list[NormalizedEvent]:

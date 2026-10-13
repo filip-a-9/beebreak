@@ -77,7 +77,16 @@ class HeuristicEngine:
         # Oldest run first, ties on the lower key; an under_5m estimate vetoes
         # only its own session, and the next candidate is tried.
         vetoed: RemainingTimeBucket = "unknown"
-        for _, key, chosen in sorted(candidates, key=lambda c: (c[0], c[1])):
+        for started, key, chosen in sorted(candidates, key=lambda c: (c[0], c[1])):
+            if (
+                chosen.open_tasks > 0
+                and not chosen.task_intervals_s
+                and (now - started).total_seconds() < cfg.task_evidence_wait_s
+            ):
+                # Tasks are open but none has completed: deciding now would
+                # spend the run on an "unknown" estimate before a label or an
+                # under_5m veto could exist. Wait for the first interval.
+                continue
             bucket = _bucket(chosen)
             if bucket == "under_5m":
                 vetoed = bucket
