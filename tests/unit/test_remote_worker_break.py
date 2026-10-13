@@ -88,6 +88,8 @@ class FakeServer:
         self.sync: dict[str, Any] = {"queue": None, "match": None}
         self.snapshot: dict[str, Any] = {"queue": None, "match": None}
         self.snapshot_error: tuple[int, str] | None = None
+        # A frame sent just before the snapshot reply, which is then delayed.
+        self.frame_before_snapshot: dict[str, Any] | None = None
         self.ws_connects = 0
         self._outbox: list[asyncio.Queue[str | None]] = []
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -187,7 +189,12 @@ class FakeServer:
         if self.snapshot_error is not None:
             status, code = self.snapshot_error
             return JSONResponse({"error": code}, status_code=status)
-        return JSONResponse(self.snapshot)
+        reply = JSONResponse(self.snapshot)  # read before the frame goes out
+        if self.frame_before_snapshot is not None:
+            for box in list(self._outbox):
+                box.put_nowait(json.dumps(self.frame_before_snapshot))
+            await asyncio.sleep(0.3)  # the frame wins the race to the client
+        return reply
 
     async def _no_content(self, request: Request) -> Response:
         await self._record(request)
@@ -895,3 +902,27 @@ def test_conflict_with_a_failing_snapshot_falls_back_to_idle(
 
     assert rig.rec.phases == ["joining", "none"]
     assert rig.rec.errors == []
+
+
+def test_a_snapshot_older_than_a_frame_is_not_applied(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: FakeServer
+) -> None:
+    rig = make_rig()
+    entry = {
+        "entry_id": str(UUID(int=59)),
+        "status": "queued",
+        "expires_at": (_now() + timedelta(seconds=90)).isoformat(),
+    }
+    server.snapshot = {"queue": entry, "match": None}  # read before the match
+    server.frame_before_snapshot = frame(
+        "match.created", entry_id=entry["entry_id"], match=match_json(UUID(int=60))
+    )
+    server.queue_error = (409, "already_queued")
+
+    rig.worker.join_queue(PRESENCE)
+    wait_phase(qtbot, rig, "matched")
+    wait(qtbot, lambda: len(server.calls("GET", "/v1/queue/current")) == 1)
+    settle(qtbot, rig, extra_ms=600)  # the stale reply has been handled by now
+
+    assert rig.rec.last.phase == "matched"
+    assert "searching" not in rig.rec.phases

@@ -125,6 +125,7 @@ class RemoteWorker(QObject):
         self._challenge_id: UUID | None = None
         self._break = BreakState()
         self._join_in_flight = False
+        self._frames_seen = 0  # bumped per applied queue/match/sync frame
 
     # --- public, thread-safe ---
 
@@ -271,6 +272,10 @@ class RemoteWorker(QObject):
                 self.break_changed.emit(new)
 
     def _on_frame(self, frame: ServerFrame) -> None:
+        if isinstance(
+            frame, WsSync | WsQueueJoined | WsQueueEnded | WsMatchCreated | WsMatchEnded
+        ):
+            self._frames_seen += 1
         if isinstance(frame, WsSync):
             self._apply(Sync(frame.queue, frame.match, self._join_in_flight))
         elif isinstance(
@@ -310,10 +315,13 @@ class RemoteWorker(QObject):
     async def _show_existing(self, api: ApiClient) -> None:
         """After a 409: show the search or match another device started. If the
         fetch fails the state stays idle and the next frame or sync shows it."""
+        seen = self._frames_seen
         try:
             snapshot = await self._authed(lambda token: api.current_queue(token))
         except ApiError:
             return
+        if self._frames_seen != seen:
+            return  # a newer frame arrived while the reply was in flight
         self._apply(Sync(snapshot.queue, snapshot.match))
 
     async def _leave_queue(self) -> None:
