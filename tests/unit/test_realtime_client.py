@@ -1,0 +1,299 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import Awaitable, Callable, Coroutine
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, TypeVar
+from uuid import uuid4
+
+import pytest
+from websockets.asyncio.server import ServerConnection, serve
+from websockets.exceptions import ConnectionClosed
+
+from breakroom_companion.api_client import ApiClient
+from breakroom_companion.realtime_client import (
+    CLOSE_PROTOCOL_ERROR,
+    RealtimeClient,
+    RealtimeError,
+)
+from breakroom_shared.api import MAX_WS_FRAME_BYTES
+
+if TYPE_CHECKING:
+    from tests.e2e_support.server import LiveServer
+
+pytest_plugins = ["tests.e2e_support.server"]  # live_server fixtures
+
+T = TypeVar("T")
+TIMEOUT_S = 2.0
+FAST_PING_S = 0.05
+Handler = Callable[[ServerConnection], Awaitable[None]]
+
+
+def run[T](coro: Coroutine[Any, Any, T]) -> T:
+    return asyncio.run(coro)
+
+
+def ready_frame(nickname: str | None = None) -> str:
+    return json.dumps(
+        {
+            "type": "session.ready",
+            "version": 1,
+            "event_id": str(uuid4()),
+            "server_time": datetime.now(UTC).isoformat(),
+            "nickname": nickname,
+        }
+    )
+
+
+def pong_frame() -> str:
+    return json.dumps(
+        {
+            "type": "pong",
+            "version": 1,
+            "event_id": str(uuid4()),
+            "server_time": datetime.now(UTC).isoformat(),
+        }
+    )
+
+
+async def with_fake_server[T](
+    handler: Handler, scenario: Callable[[str], Awaitable[T]]
+) -> T:
+    async with serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        return await scenario(f"http://127.0.0.1:{port}")
+
+
+async def sign_in(api: ApiClient, server: LiveServer, email: str) -> Any:
+    invite = server.invite(email)
+    challenge = await api.start_auth(email, invite)
+    return await api.verify(challenge.challenge_id, server.last_code(), "test box")
+
+
+# --- live server ---
+
+
+def test_connects_pings_and_reports_a_server_side_replacement(
+    live_server: LiveServer,
+) -> None:
+    async def scenario() -> None:
+        api = ApiClient(live_server.base_url, TIMEOUT_S)
+        first = RealtimeClient(live_server.base_url, TIMEOUT_S, FAST_PING_S)
+        second = RealtimeClient(live_server.base_url, TIMEOUT_S, FAST_PING_S)
+        try:
+            session = await sign_in(api, live_server, "ada@example.com")
+            token = session.tokens.access_token
+            await api.set_nickname(token, "ada_l")
+
+            ready = await first.connect(token)
+            assert ready.nickname == "ada_l"
+            # Same device again: the server replaces the first socket.
+            await second.connect(token)
+            assert await asyncio.wait_for(first.wait_closed(), TIMEOUT_S) == 4409
+        finally:
+            await first.close()
+            await second.close()
+            await api.aclose()
+
+    run(scenario())
+
+
+def test_bad_token_is_closed_with_4401(live_server: LiveServer) -> None:
+    async def scenario() -> None:
+        client = RealtimeClient(live_server.base_url, TIMEOUT_S, FAST_PING_S)
+        with pytest.raises(RealtimeError) as info:
+            await client.connect("bra_not-a-token")
+        assert info.value.code == 4401
+        assert "bra_not-a-token" not in str(info.value)
+
+    run(scenario())
+
+
+def test_reauth_on_live_socket_keeps_it_open_and_logout_closes_4401(
+    live_server: LiveServer,
+) -> None:
+    async def scenario() -> None:
+        api = ApiClient(live_server.base_url, TIMEOUT_S)
+        client = RealtimeClient(live_server.base_url, TIMEOUT_S, FAST_PING_S)
+        try:
+            session = await sign_in(api, live_server, "ada@example.com")
+            await client.connect(session.tokens.access_token)
+            fresh = await api.refresh(session.tokens.refresh_token)
+            await client.reauth(fresh.access_token)
+            # The server accepted the fresh token: pings keep the socket open.
+            closing = asyncio.ensure_future(client.wait_closed())
+            done, _ = await asyncio.wait({closing}, timeout=4 * FAST_PING_S)
+            assert not done
+            await api.logout(fresh.access_token)
+            assert await asyncio.wait_for(closing, TIMEOUT_S) == 4401
+        finally:
+            await client.close()
+            await api.aclose()
+
+    run(scenario())
+
+
+def test_connection_refused_is_a_codeless_error() -> None:
+    async def scenario() -> None:
+        client = RealtimeClient("http://127.0.0.1:1", TIMEOUT_S, FAST_PING_S)
+        with pytest.raises(RealtimeError) as info:
+            await client.connect("bra_x")
+        assert info.value.code is None
+
+    run(scenario())
+
+
+# --- fake servers ---
+
+
+def test_sends_no_origin_no_extra_headers_and_no_token_in_the_url() -> None:
+    seen: dict[str, Any] = {}
+
+    async def handler(ws: ServerConnection) -> None:
+        assert ws.request is not None
+        seen["headers"] = {k.lower() for k in ws.request.headers}
+        seen["path"] = ws.request.path
+        seen["first"] = json.loads(await ws.recv())
+        await ws.send(ready_frame())
+        await ws.wait_closed()
+
+    async def scenario(origin: str) -> None:
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S)
+        try:
+            await client.connect("bra_secret-token")
+        finally:
+            await client.close()
+
+    run(with_fake_server(handler, scenario))
+
+    assert seen["path"] == "/v1/realtime"
+    assert seen["first"] == {
+        "type": "auth",
+        "version": 1,
+        "access_token": "bra_secret-token",
+    }
+    assert seen["headers"] <= {
+        "host",
+        "upgrade",
+        "connection",
+        "sec-websocket-key",
+        "sec-websocket-version",
+    }
+
+
+def test_pings_repeat_and_reauth_sends_a_fresh_auth_frame() -> None:
+    frames: list[dict[str, Any]] = []
+    enough = asyncio.Event
+
+    async def scenario_inner() -> None:
+        got_pings = enough()
+        got_reauth = enough()
+
+        async def handler(ws: ServerConnection) -> None:
+            try:
+                async for raw in ws:
+                    frame = json.loads(raw)
+                    frames.append(frame)
+                    if frame["type"] == "auth":
+                        await ws.send(ready_frame())
+                        if len(frames) > 1:
+                            got_reauth.set()
+                    else:
+                        await ws.send(pong_frame())
+                        if sum(f["type"] == "ping" for f in frames) >= 3:
+                            got_pings.set()
+            except ConnectionClosed:
+                pass
+
+        async def scenario(origin: str) -> None:
+            client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S)
+            try:
+                await client.connect("bra_one")
+                await asyncio.wait_for(got_pings.wait(), TIMEOUT_S)
+                await client.reauth("bra_two")
+                await asyncio.wait_for(got_reauth.wait(), TIMEOUT_S)
+            finally:
+                await client.close()
+
+        await with_fake_server(handler, scenario)
+
+    run(scenario_inner())
+
+    assert frames[0]["access_token"] == "bra_one"
+    assert any(f["type"] == "auth" and f["access_token"] == "bra_two" for f in frames)
+
+
+def test_no_ready_frame_in_time_is_an_error() -> None:
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.wait_closed()  # never answers
+
+    async def scenario(origin: str) -> None:
+        client = RealtimeClient(origin, 0.2, FAST_PING_S)
+        with pytest.raises(RealtimeError) as info:
+            await client.connect("bra_x")
+        assert info.value.code is None
+
+    run(with_fake_server(handler, scenario))
+
+
+@pytest.mark.parametrize("first_reply", ["not json", pong_frame()])
+def test_bad_first_reply_is_an_error(first_reply: str) -> None:
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.send(first_reply)
+        await ws.wait_closed()
+
+    async def scenario(origin: str) -> None:
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S)
+        with pytest.raises(RealtimeError):
+            await client.connect("bra_x")
+
+    run(with_fake_server(handler, scenario))
+
+
+@pytest.mark.parametrize(
+    "bad", ["not json", json.dumps({"type": "other"}), b"binary"], ids=str
+)
+def test_invalid_inbound_frame_closes_the_socket(bad: str | bytes) -> None:
+    server_saw: list[int | None] = []
+
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.send(ready_frame())
+        await ws.send(bad)
+        await ws.wait_closed()
+        server_saw.append(ws.close_code)
+
+    async def scenario(origin: str) -> None:
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S)
+        try:
+            await client.connect("bra_x")
+            assert await asyncio.wait_for(client.wait_closed(), TIMEOUT_S) is None
+        finally:
+            await client.close()
+
+    run(with_fake_server(handler, scenario))
+
+    assert server_saw == [CLOSE_PROTOCOL_ERROR]
+
+
+def test_oversized_inbound_frame_closes_the_socket() -> None:
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.send(ready_frame())
+        await ws.send("x" * (MAX_WS_FRAME_BYTES + 1))
+        await ws.wait_closed()
+
+    async def scenario(origin: str) -> None:
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S)
+        try:
+            await client.connect("bra_x")
+            code = await asyncio.wait_for(client.wait_closed(), TIMEOUT_S)
+            assert code is None or code == 1009  # message too big
+            assert code != 1000
+        finally:
+            await client.close()
+
+    run(with_fake_server(handler, scenario))
