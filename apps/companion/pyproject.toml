@@ -9,6 +9,9 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "breakroom-shared",
+    "httpx==0.28.1",
+    "keyring==25.7.0",
+    "websockets==17.1",
     # Essentials only: full PySide6 adds WebEngine/PDF the companion never uses.
     "pyside6-essentials==6.12.0",
 ]

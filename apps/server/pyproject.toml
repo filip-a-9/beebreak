@@ -1,0 +1,28 @@
+[project]
+name = "breakroom-server"
+version = "0.1.0"
+description = "Breakroom hosted service: accounts, sign-in and realtime connection"
+authors = [
+    { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }
+]
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "breakroom-shared",
+    "alembic==1.20.0",
+    "fastapi==0.141.1",
+    "psycopg[binary]==3.3.6",
+    "sqlalchemy==2.1.1",
+    "uvicorn[standard]==0.54.0",
+]
+
+[project.scripts]
+breakroom-server = "breakroom_server.cli:main"
+breakroom-admin = "breakroom_server.admin:main"
+
+[tool.uv.sources]
+breakroom-shared = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"

@@ -65,3 +65,8 @@ def state_dir() -> Path:
 
 def state_path() -> Path:
     return state_dir() / "companion-state.json"
+
+
+def credentials_path() -> Path:
+    """File credential store, used only when no OS keyring backend works."""
+    return state_dir() / "credentials.json"

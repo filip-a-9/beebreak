@@ -66,9 +66,12 @@ Some developers will accept unobtrusive invitations, meet an available peer, and
 | Test/tooling | pytest, Ruff, mypy or pyright, property tests, migration tests | Predictable contract and behavior testing |
 | Packaging | `uv` in development; signed/package-verified companion builds per OS later | Stable dependency sets; distribute runnable software rather than requiring source setup |
 | Beta auth | Invite-only email sign-in, private email and public nickname | Simple access control without mandatory GitHub identity; select provider during implementation review |
+| Beta auth, M3 (**CONFIRMED** 2026-10-13) | Self-hosted: admin-CLI invite bound to an email, 8-character one-time code by email typed into the companion; opaque access (15 min) and rotating refresh (30 days) tokens, stored hashed; refresh reuse revokes the device | No identity vendor; no links or URL-scheme handoff from a desktop app; revocation is a row update |
 | License | Apache-2.0 (**CONFIRMED** 2026-10-12) | Permissive source distribution with explicit patent terms; dependency compliance review still applies, e.g. PySide6 is LGPL |
 
 **Platform decision (CONFIRMED 2026-10-12):** M1 targets WSL2 Linux end to end — Claude Code, hooks, MCP server, companion (GUI via WSLg) and local IPC all run inside WSL. This supersedes the Windows-first proposal below for M1; later platforms remain open (ADR #2).
+
+**M3 decisions (CONFIRMED 2026-10-13):** local Docker only (Postgres, Mailpit, server, ports bound to `127.0.0.1`); the companion keeps its refresh token in the OS keyring, or a `0600` file in its private state directory when no keyring backend works (shown to the user); privacy consent per field (category, stack tags, time bucket), all off by default, stored server-side with version and time; nicknames ASCII `[A-Za-z0-9_-]{3,24}` after NFKC, unique by a confusable skeleton; M3 sends no task metadata, only an authenticated connection with heartbeats.
 
 **Local IPC decision (CONFIRMED 2026-10-12, M1):** a Unix domain socket in a `0700` runtime directory replaces loopback HTTP, because WSL2 forwards `127.0.0.1` listeners to Windows. Other platforms revisit this under ADR #3.
 
@@ -453,11 +456,11 @@ These are deliberately unresolved until the next *non-interview* architecture re
 3. Local IPC HTTP versus OS socket/pipe, including same-user authentication and permission audit.
 4. Exact availability estimation baseline and calibration; what counts as a reliable task finish. M2 baseline (**CONFIRMED** 2026-10-12): heuristic engine only; nothing counts as a whole-task finish, `TaskCompleted` is a hint; with several sessions, invite only if one qualifies and none waits for input. Calibration stays open.
 5. Local model candidates and resource budgets. No default model weight bundled until evaluated.
-6. Auth provider, email invitation workflow, token/device lifecycle.
+6. Auth provider, email invitation workflow, token/device lifecycle. M3 (**CONFIRMED** 2026-10-13): self-hosted email codes with admin invites, see §2; email change and account deletion stay open.
 7. Message and reports retention policy, deletion/export UX, locale/jurisdiction requirements.
 8. Exact timer defaults, UI presentation when estimated duration changes. M2 (**CONFIRMED** 2026-10-12): the invitation shows the remaining-time bucket as a range, nothing when unknown; no live countdown. Session/grace/extension defaults stay open (M5).
 9. ~~Apache-2.0 versus MIT/AGPL~~ — resolved 2026-10-12: Apache-2.0.
-10. Hosting cost ceiling, monitoring, backup/restore, and abuse operational responsibilities.
+10. Hosting cost ceiling, monitoring, backup/restore, and abuse operational responsibilities. M3 runs on local Docker only; a host is chosen later.
 
 Each architecture decision should have its own ADR explaining choice, alternatives, consequences, acceptance tests, and rollback path. None requires another interview until a product-level tradeoff genuinely needs the founder's decision.
 

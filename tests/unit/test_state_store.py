@@ -86,6 +86,7 @@ def test_save_replaces_an_existing_file(tmp_path: Path) -> None:
     assert store.load().enabled is True
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
 def test_failed_save_returns_false(tmp_path: Path) -> None:
     ro = tmp_path / "ro"
     ro.mkdir()

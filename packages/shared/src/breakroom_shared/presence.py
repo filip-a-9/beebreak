@@ -4,10 +4,13 @@ Every field is optional except identity and status, so a user with technical
 sharing disabled sends presence alone. Free text has no field to live in.
 """
 
+from collections.abc import Sequence
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from breakroom_shared.api import Consent
 
 TaskCategory = Literal["backend", "frontend", "devops", "data", "testing", "other"]
 
@@ -49,3 +52,14 @@ class OutboundPresence(BaseModel):
     stack_tags: tuple[StackTag, ...] = Field(default=(), max_length=5)
     remaining_time_bucket: RemainingTimeBucket | None = None
     status: Literal["available"]
+
+
+def build_presence(
+    consent: Consent,
+    *,
+    task_category: TaskCategory | None,
+    stack_tags: Sequence[StackTag],
+    remaining_time_bucket: RemainingTimeBucket | None,
+) -> OutboundPresence:
+    """Presence with a fresh presence_id and only the consented fields. M3-04."""
+    raise NotImplementedError
