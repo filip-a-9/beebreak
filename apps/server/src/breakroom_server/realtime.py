@@ -9,11 +9,12 @@ import asyncio
 import contextlib
 import logging
 import threading
+from collections import deque
 from collections.abc import AsyncIterator, Callable, MutableMapping
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, Final
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, FastAPI, WebSocket
 from pydantic import BaseModel, ValidationError
@@ -26,14 +27,18 @@ from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
 from breakroom_server.models import Device, User
 from breakroom_server.notify import make_frame as make_frame
+from breakroom_server.queue import current_state
 from breakroom_server.ratelimit import RateLimiter
 from breakroom_shared.api import (
     MAX_WS_FRAME_BYTES,
     WS_CLOSE,
     ClientWsFrame,
+    MatchView,
+    QueueEntryView,
     WsAuth,
     WsPong,
     WsReady,
+    WsSync,
 )
 
 _log = logging.getLogger(__name__)
@@ -42,50 +47,82 @@ _log = logging.getLogger(__name__)
 FLOOD_FRAMES: Final = 20
 FLOOD_WINDOW_S: Final = 10.0
 NORMAL_CLOSE: Final = 1000
+OUTBOUND_MAX: Final = 32  # frames queued per socket; overflow closes with 4429
 
 router = APIRouter()
 
 
 class Connection:
-    """One live socket. `kick` may be called from any thread."""
+    """One live socket. `kick` and `enqueue` may be called from any thread."""
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
-        self._event = asyncio.Event()
+        self.signal = asyncio.Event()  # set by kick and by new outbound frames
         self.kick_code: int | None = None
+        self.outbound: deque[str] = deque()
 
-    def kick(self, code: int) -> None:
-        if self.kick_code is None:
-            self.kick_code = code
+    def _call(self, fn: Callable[..., None], *args: Any) -> None:
         # RuntimeError: loop already closed, the socket is gone anyway.
         with contextlib.suppress(RuntimeError):
-            self._loop.call_soon_threadsafe(self._event.set)
+            self._loop.call_soon_threadsafe(fn, *args)
 
-    async def kicked(self) -> None:
-        await self._event.wait()
+    def kick(self, code: int) -> None:
+        self._call(self._kick, code)
+
+    def _kick(self, code: int) -> None:
+        if self.kick_code is None:
+            self.kick_code = code
+        self.signal.set()
+
+    def enqueue(self, text: str) -> None:
+        self._call(self._enqueue, text)
+
+    def _enqueue(self, text: str) -> None:
+        if self.kick_code is not None:
+            return
+        if len(self.outbound) >= OUTBOUND_MAX:
+            # The client re-syncs on reconnect.
+            self.outbound.clear()
+            self._kick(WS_CLOSE["rate_limited"])
+            return
+        self.outbound.append(text)
+        self.signal.set()
 
 
 class Hub:
-    """In-memory `device_id -> connection`; one connection per device."""
+    """In-memory `device_id -> connection` and `user_id -> {device_id}`.
+
+    One connection per device. Implements `notify.Notifier`.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._connections: dict[UUID, Connection] = {}
+        self._users: dict[UUID, set[UUID]] = {}
+        self._owner: dict[UUID, UUID] = {}  # device_id -> user_id
 
-    def register(self, device_id: UUID, conn: Connection) -> None:
+    def register(self, device_id: UUID, user_id: UUID, conn: Connection) -> None:
         with self._lock:
             old = self._connections.get(device_id)
             self._connections[device_id] = conn
+            self._owner[device_id] = user_id
+            self._users.setdefault(user_id, set()).add(device_id)
         if old is not None:
             old.kick(WS_CLOSE["replaced"])
 
     def unregister(self, device_id: UUID, conn: Connection) -> bool:
         """True if `conn` was the current connection of the device."""
         with self._lock:
-            if self._connections.get(device_id) is conn:
-                del self._connections[device_id]
-                return True
-            return False
+            if self._connections.get(device_id) is not conn:
+                return False
+            del self._connections[device_id]
+            user_id = self._owner.pop(device_id)
+            devices = self._users.get(user_id)
+            if devices is not None:
+                devices.discard(device_id)
+                if not devices:
+                    del self._users[user_id]
+            return True
 
     def disconnect_device(self, device_id: UUID) -> None:
         """Close the live socket of a device with 4401 (logout, admin disable)."""
@@ -95,12 +132,24 @@ class Hub:
             conn.kick(WS_CLOSE["unauthorized"])
 
     def send_to_user(self, user_id: UUID, frame: BaseModel) -> None:
-        """Notifier: queue `frame` for every socket of the user. M4-04."""
-        raise NotImplementedError
+        """Notifier: queue `frame` for every socket of the user. Best effort."""
+        try:
+            text = frame.model_dump_json()
+            with self._lock:
+                conns = [
+                    self._connections[d]
+                    for d in self._users.get(user_id, ())
+                    if d in self._connections
+                ]
+            for conn in conns:
+                conn.enqueue(text)
+        except Exception:
+            _log.warning("could not queue frame")
 
     def is_user_connected(self, user_id: UUID) -> bool:
-        """Notifier: does the user have an authenticated socket? M4-04."""
-        raise NotImplementedError
+        """Notifier: does the user have an authenticated socket?"""
+        with self._lock:
+            return bool(self._users.get(user_id))
 
     def connected_count(self) -> int:
         with self._lock:
@@ -189,29 +238,16 @@ async def _send(ws: WebSocket, frame: BaseModel) -> None:
     await ws.send_text(frame.model_dump_json())
 
 
-async def _next_message(
-    ws: WebSocket, conn: Connection, timeout_s: float, on_timeout: int
-) -> MutableMapping[str, Any]:
-    """The next raw ASGI message; _Close on kick or timeout."""
-    if conn.kick_code is not None:
-        raise _Close(conn.kick_code)
-    recv = asyncio.ensure_future(ws.receive())
-    kick = asyncio.ensure_future(conn.kicked())
-    try:
-        done, _ = await asyncio.wait(
-            {recv, kick}, timeout=timeout_s, return_when=asyncio.FIRST_COMPLETED
-        )
-        if recv in done:
-            message: MutableMapping[str, Any] = recv.result()
-            return message
-        if kick in done:
-            raise _Close(conn.kick_code or WS_CLOSE["unauthorized"])
-        raise _Close(on_timeout)
-    finally:
-        for task in (recv, kick):
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(recv, kick, return_exceptions=True)
+async def _flush(ws: WebSocket, conn: Connection) -> None:
+    while conn.outbound:
+        await ws.send_text(conn.outbound.popleft())
+
+
+def _read_state(
+    factory: SessionFactory, now: datetime, user_id: UUID
+) -> tuple[QueueEntryView | None, MatchView | None]:
+    with factory() as session:
+        return current_state(session, now, user_id)
 
 
 def _parse(message: MutableMapping[str, Any]) -> Any:
@@ -235,23 +271,45 @@ async def realtime(websocket: WebSocket) -> None:
     hub: Hub = state.hub
 
     await websocket.accept()
-    conn = Connection(asyncio.get_running_loop())
+    loop = asyncio.get_running_loop()
+    conn = Connection(loop)
     limiter = RateLimiter(FLOOD_FRAMES, FLOOD_WINDOW_S, clock)
     principal: Principal | None = None
     code = NORMAL_CLOSE
+    recv: asyncio.Future[MutableMapping[str, Any]] | None = None
+    deadline = loop.time() + config.ws_auth_timeout_s
     try:
         # Browsers send Origin; the desktop client does not. No browser clients.
         if websocket.headers.get("origin") is not None:
             raise _Close(WS_CLOSE["unauthorized"])
         while True:
-            if principal is None:
-                timeout_s, on_timeout = (
-                    config.ws_auth_timeout_s,
-                    WS_CLOSE["auth_timeout"],
+            # Clear first: anything queued after this point sets it again.
+            conn.signal.clear()
+            if conn.kick_code is not None:
+                raise _Close(conn.kick_code)
+            if principal is not None:
+                await _flush(websocket, conn)
+            if recv is None:
+                recv = asyncio.ensure_future(websocket.receive())
+            wake = asyncio.ensure_future(conn.signal.wait())
+            try:
+                waiting: set[asyncio.Future[Any]] = {recv, wake}
+                done, _ = await asyncio.wait(
+                    waiting,
+                    timeout=max(deadline - loop.time(), 0.0),
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
-            else:
-                timeout_s, on_timeout = config.ws_idle_timeout_s, NORMAL_CLOSE
-            message = await _next_message(websocket, conn, timeout_s, on_timeout)
+            finally:
+                wake.cancel()
+                await asyncio.gather(wake, return_exceptions=True)
+            if not done:
+                raise _Close(
+                    NORMAL_CLOSE if principal is not None else WS_CLOSE["auth_timeout"]
+                )
+            if recv not in done:
+                continue  # outbound frame or kick
+            message: MutableMapping[str, Any] = recv.result()
+            recv = None
             if message["type"] == "websocket.disconnect":
                 code = -1
                 return
@@ -274,38 +332,43 @@ async def realtime(websocket: WebSocket) -> None:
                 if auth is None:
                     raise _Close(WS_CLOSE["unauthorized"])
                 new_principal, nickname = auth
+                first = principal is None
                 if principal is None:
                     principal = new_principal
                     await run_in_threadpool(
                         _mark_connected, factory, principal.device_id, now
                     )
-                    hub.register(principal.device_id, conn)
+                    hub.register(principal.device_id, principal.user_id, conn)
                 elif new_principal.device_id != principal.device_id:
                     raise _Close(WS_CLOSE["unauthorized"])
                 else:
                     principal = new_principal
-                await _send(
-                    websocket,
-                    WsReady(
-                        type="session.ready",
-                        version=1,
-                        event_id=uuid4(),
-                        server_time=now,
-                        nickname=nickname,
-                    ),
-                )
+                await _send(websocket, make_frame(WsReady, now, nickname=nickname))
+                if first:
+                    queue_view, match_view = await run_in_threadpool(
+                        _read_state, factory, now, principal.user_id
+                    )
+                    await _send(
+                        websocket,
+                        make_frame(WsSync, now, queue=queue_view, match=match_view),
+                    )
             else:
                 if principal is None:
                     raise _Close(WS_CLOSE["unauthorized"])
-                await _send(
-                    websocket,
-                    WsPong(type="pong", version=1, event_id=uuid4(), server_time=now),
-                )
+                await _send(websocket, make_frame(WsPong, now))
+            deadline = loop.time() + (
+                config.ws_idle_timeout_s
+                if principal is not None
+                else config.ws_auth_timeout_s
+            )
     except _Close as closing:
         code = closing.code
     except WebSocketDisconnect:
         code = -1
     finally:
+        if recv is not None:
+            recv.cancel()
+            await asyncio.gather(recv, return_exceptions=True)
         if principal is not None and hub.unregister(principal.device_id, conn):
             try:
                 await asyncio.shield(

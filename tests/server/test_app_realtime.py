@@ -25,6 +25,7 @@ def test_http_logout_closes_live_socket(
     with client.websocket_connect("/v1/realtime") as ws:
         ws.send_json({"type": "auth", "version": 1, "access_token": access})
         assert ws.receive_json()["type"] == "session.ready"
+        assert ws.receive_json()["type"] == "sync"
         assert client.app.state.hub.connected_count() == 1  # type: ignore[attr-defined]
         response = client.post("/v1/auth/logout", headers=bearer(session))
         assert response.status_code == 204
@@ -46,6 +47,7 @@ def test_refresh_reuse_closes_live_socket(
     with client.websocket_connect("/v1/realtime") as ws:
         ws.send_json({"type": "auth", "version": 1, "access_token": access})
         assert ws.receive_json()["type"] == "session.ready"
+        assert ws.receive_json()["type"] == "sync"
         replay = client.post("/v1/auth/refresh", json={"refresh_token": first_refresh})
         assert replay.status_code == 401
         with pytest.raises(WebSocketDisconnect) as info:
