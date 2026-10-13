@@ -5,8 +5,8 @@ sharing disabled sends presence alone. Free text has no field to live in.
 """
 
 from collections.abc import Sequence
-from typing import Literal
-from uuid import UUID
+from typing import Literal, get_args
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -62,4 +62,15 @@ def build_presence(
     remaining_time_bucket: RemainingTimeBucket | None,
 ) -> OutboundPresence:
     """Presence with a fresh presence_id and only the consented fields. M3-04."""
-    raise NotImplementedError
+    wanted = set(stack_tags)
+    tags = tuple(t for t in get_args(StackTag) if t in wanted)[:5]
+    return OutboundPresence(
+        schema_version=1,
+        presence_id=uuid4(),
+        task_category=task_category if consent.share_task_category else None,
+        stack_tags=tags if consent.share_stack_tags else (),
+        remaining_time_bucket=(
+            remaining_time_bucket if consent.share_time_bucket else None
+        ),
+        status="available",
+    )
