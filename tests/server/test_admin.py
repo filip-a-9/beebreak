@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from breakroom_server.admin import main
 from breakroom_server.db import SessionFactory
+from breakroom_server.mailer import RecordingMailer
 from breakroom_server.models import BetaInvite, Device, User
 from breakroom_server.tokens import hmac_code, normalize_code
 from tests.server.conftest import START_TIME, TEST_SECRET, FixedClock
@@ -99,17 +100,33 @@ def test_bad_email_message_does_not_echo_it(
     assert "secret.person" not in captured.out + captured.err
 
 
-def test_send_is_not_available_yet_and_creates_nothing(
+def test_send_emails_the_printed_code_through_the_mailer(
     session_factory: SessionFactory,
     clock: FixedClock,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert run(["invite", "create", EMAIL, "--send"], clock) == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert LOCAL not in captured.err
+    mailer = RecordingMailer()
+    assert main(["invite", "create", EMAIL, "--send"], clock=clock, mailer=mailer) == 0
+    printed = capsys.readouterr().out.strip()
+    assert mailer.sent == [("invite", "jane.doe@example.org", normalize_code(printed))]
     with session_factory() as s:
-        assert s.scalars(select(BetaInvite)).first() is None
+        assert s.scalars(select(BetaInvite)).one().redeemed_at is None
+
+
+def test_send_without_a_mailer_uses_the_configured_one(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("BREAKROOM_MAILER", "record")
+    assert run(["invite", "create", EMAIL, "--send"], clock) == 0
+    assert normalize_code(capsys.readouterr().out.strip()) is not None
+
+
+def test_no_mail_without_send(clock: FixedClock) -> None:
+    mailer = RecordingMailer()
+    assert main(["invite", "create", EMAIL], clock=clock, mailer=mailer) == 0
+    assert mailer.sent == []
 
 
 def test_missing_config_exits_2(
@@ -288,7 +305,9 @@ def test_no_output_contains_a_full_email_address(
 ) -> None:
     _ = run(["invite", "create", EMAIL], clock)
     _ = run(["invite", "create", "bad@@x"], clock)
-    _ = run(["invite", "create", EMAIL, "--send"], clock)
+    _ = main(
+        ["invite", "create", EMAIL, "--send"], clock=clock, mailer=RecordingMailer()
+    )
     _ = run(["invite", "list"], clock)
     _ = run(["devices"], clock)
     captured = capsys.readouterr()

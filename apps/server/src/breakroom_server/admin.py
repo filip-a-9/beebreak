@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import make_engine
+from breakroom_server.mailer import Mailer, RecordingMailer, SmtpMailer
 from breakroom_server.models import BetaInvite, Device, User, email_canonical
 from breakroom_server.tokens import hmac_code, new_code
 
@@ -89,14 +90,27 @@ def _format_code(code: str) -> str:
     return f"{code[:4]}-{code[4:]}"
 
 
+def _mailer_from(config: ServerConfig) -> Mailer:
+    if config.mailer == "record":
+        return RecordingMailer()
+    return SmtpMailer(
+        config.smtp_host,
+        config.smtp_port,
+        config.mail_from,
+        starttls=config.smtp_starttls,
+    )
+
+
 def _invite_create(
-    session: Session, config: ServerConfig, args: argparse.Namespace, now: datetime
+    session: Session,
+    config: ServerConfig,
+    args: argparse.Namespace,
+    now: datetime,
+    mailer: Mailer | None,
 ) -> None:
     email = email_canonical(args.email)
     if email is None:
         raise AdminError("invalid email address", EXIT_BAD_INPUT)
-    if args.send:
-        raise AdminError("--send is not available yet; omit it and deliver the code")
     ttl = (
         timedelta(days=args.days)
         if args.days is not None
@@ -113,6 +127,13 @@ def _invite_create(
     )
     session.commit()
     print(_format_code(code))
+    if args.send:
+        if mailer is None:
+            mailer = _mailer_from(config)
+        # Delivery is best effort and logged without addresses by the mailer;
+        # the code above is printed either way so it can be passed on by hand.
+        mailer.send_invite(email, code)
+        mailer.close()
 
 
 def _invite_list(session: Session, now: datetime) -> None:
@@ -179,7 +200,7 @@ def _devices(session: Session) -> None:
         print(f"{nickname or '-'}\t{device.name}\tconnected={connected}\t{last_seen}")
 
 
-def _run(args: argparse.Namespace, clock: Clock) -> None:
+def _run(args: argparse.Namespace, clock: Clock, mailer: Mailer | None) -> None:
     try:
         config = ServerConfig.from_env()
     except ValueError as err:
@@ -190,7 +211,7 @@ def _run(args: argparse.Namespace, clock: Clock) -> None:
         with Session(engine, expire_on_commit=False) as session:
             match (args.group, getattr(args, "action", None)):
                 case ("invite", "create"):
-                    _invite_create(session, config, args, now)
+                    _invite_create(session, config, args, now, mailer)
                 case ("invite", "list"):
                     _invite_list(session, now)
                 case ("invite", "revoke"):
@@ -205,13 +226,18 @@ def _run(args: argparse.Namespace, clock: Clock) -> None:
         engine.dispose()
 
 
-def main(argv: list[str] | None = None, *, clock: Clock = _utc_now) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    clock: Clock = _utc_now,
+    mailer: Mailer | None = None,
+) -> int:
     try:
         args = _parser().parse_args(argv)
     except SystemExit as exit_:
         return exit_.code if isinstance(exit_.code, int) else EXIT_BAD_INPUT
     try:
-        _run(args, clock)
+        _run(args, clock, mailer)
     except AdminError as err:
         print(err.message, file=sys.stderr)
         return err.code

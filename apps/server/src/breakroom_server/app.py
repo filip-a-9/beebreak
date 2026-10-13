@@ -1,12 +1,175 @@
 """FastAPI application factory. Owned by M3-02 (routes) and M3-03 (realtime)."""
 
-from collections.abc import Callable
-from datetime import datetime
+import inspect
+import logging
+import time
+import uuid
+from collections.abc import AsyncIterator, Callable, MutableMapping
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+from sqlalchemy.orm import sessionmaker
+from starlette.concurrency import run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from breakroom_server import profile
+from breakroom_server.auth import (
+    ApiError,
+    CurrentPrincipal,
+    Limiters,
+    Refreshed,
+    check_limit,
+    logout_device,
+    make_limiters,
+    refresh_tokens,
+    start_challenge,
+    verify_challenge,
+)
 from breakroom_server.config import ServerConfig
-from breakroom_server.mailer import Mailer
+from breakroom_server.db import SessionFactory, make_engine
+from breakroom_server.mailer import Mailer, RecordingMailer, SmtpMailer
+from breakroom_server.models import email_canonical
+from breakroom_server.profile import build_me
+from breakroom_shared.api import (
+    AuthStartRequest,
+    AuthStartResponse,
+    AuthVerifyRequest,
+    ErrorCode,
+    HealthResponse,
+    RefreshRequest,
+    SessionResponse,
+    TokenPair,
+)
+
+MAX_BODY_BYTES = 4 * 1024
+
+access_log = logging.getLogger("breakroom_server.access")
+_log = logging.getLogger(__name__)
+
+
+def _error(
+    status: int, code: ErrorCode, headers: dict[str, str] | None = None
+) -> JSONResponse:
+    return JSONResponse({"error": code}, status_code=status, headers=headers)
+
+
+class _BodyTooLarge(Exception):
+    pass
+
+
+class BodyLimitMiddleware:
+    """Rejects request bodies over `max_bytes`, declared or streamed."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = dict(scope["headers"]).get(b"content-length")
+        if declared is not None:
+            try:
+                too_big = int(declared) > self.max_bytes
+            except ValueError:
+                too_big = True
+            if too_big:
+                await _error(400, "invalid_request")(scope, receive, send)
+                return
+
+        received = 0
+        started = False
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise _BodyTooLarge
+            return message
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracking_send)
+        except _BodyTooLarge:
+            if started:
+                raise
+            await _error(400, "invalid_request")(scope, receive, send)
+
+
+class AccessLogMiddleware:
+    """One line per request: method, route template, status, duration, ids.
+
+    Never the body, query string, headers, email, code, token or client address.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = time.perf_counter()
+        status = 500
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message["status"]
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        finally:
+            route = scope.get("route")
+            state: MutableMapping[str, Any] = scope.get("state") or {}
+            access_log.info(
+                "%s %s %d %.1fms user=%s device=%s",
+                scope["method"],
+                getattr(route, "path", "-"),
+                status,
+                (time.perf_counter() - started) * 1000,
+                state.get("user_id", "-"),
+                state.get("device_id", "-"),
+            )
+
+
+def _default_mailer(config: ServerConfig) -> Mailer:
+    if config.mailer == "record":
+        return RecordingMailer()
+    return SmtpMailer(
+        config.smtp_host,
+        config.smtp_port,
+        config.mail_from,
+        starttls=config.smtp_starttls,
+    )
+
+
+def _client_key(request: Request) -> str:
+    return request.client.host if request.client else "-"
+
+
+async def _notify_hub(request: Request, device_id: uuid.UUID) -> None:
+    """Drop the device's live WebSocket, if the realtime hub is installed."""
+    hub = getattr(request.app.state, "hub", None)
+    if hub is None:
+        return
+    result = hub.disconnect_device(device_id)
+    if inspect.isawaitable(result):
+        await result
 
 
 def create_app(
@@ -14,7 +177,116 @@ def create_app(
     mailer: Mailer | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
-    raise NotImplementedError
+    clock = clock or (lambda: datetime.now(UTC))
+    engine = make_engine(config.database_url)
+    session_factory: SessionFactory = sessionmaker(engine, expire_on_commit=False)
+    mailer = mailer if mailer is not None else _default_mailer(config)
+    limiters: Limiters = make_limiters(config, clock)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            mailer.close()
+            engine.dispose()
+
+    app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    # What routers and the realtime hub need.
+    app.state.config = config
+    app.state.session_factory = session_factory
+    app.state.clock = clock
+    app.state.mailer = mailer
+    app.state.limiters = limiters
+
+    app.add_middleware(BodyLimitMiddleware, max_bytes=MAX_BODY_BYTES)
+    app.add_middleware(AccessLogMiddleware)
+
+    @app.exception_handler(ApiError)
+    async def _api_error(_request: Request, exc: ApiError) -> Response:
+        return _error(exc.status, exc.code, exc.headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(
+        _request: Request, _exc: RequestValidationError
+    ) -> Response:
+        return _error(400, "invalid_request")  # never echo the input
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http_error(_request: Request, exc: StarletteHTTPException) -> Response:
+        if exc.status_code == 401:
+            return _error(401, "unauthorized", {"WWW-Authenticate": "Bearer"})
+        status = 400 if exc.status_code == 422 else exc.status_code
+        return _error(status, "invalid_request")
+
+    @app.get("/v1/health")
+    def health() -> HealthResponse:
+        return HealthResponse(status="ok")
+
+    @app.post("/v1/auth/start", status_code=202)
+    def auth_start(request: Request, body: AuthStartRequest) -> AuthStartResponse:
+        check_limit(limiters.start_ip, _client_key(request))
+        # A malformed address is limited on its raw text so it cannot dodge this.
+        check_limit(
+            limiters.start_email,
+            email_canonical(body.email) or body.email.strip().lower(),
+        )
+        with session_factory() as session:
+            challenge_id = start_challenge(
+                session,
+                config,
+                mailer,
+                clock(),
+                raw_email=body.email,
+                invite_code=body.invite_code,
+            )
+        return AuthStartResponse(challenge_id=challenge_id)
+
+    @app.post("/v1/auth/verify")
+    def auth_verify(request: Request, body: AuthVerifyRequest) -> SessionResponse:
+        check_limit(limiters.verify_ip, _client_key(request))
+        with session_factory() as session:
+            signed_in = verify_challenge(
+                session,
+                config,
+                clock(),
+                challenge_id=body.challenge_id,
+                raw_code=body.code,
+                device_name=body.device_name,
+            )
+            return SessionResponse(
+                tokens=signed_in.tokens, me=build_me(session, signed_in.user_id)
+            )
+
+    @app.post("/v1/auth/refresh")
+    async def auth_refresh(request: Request, body: RefreshRequest) -> TokenPair:
+        def work() -> Refreshed:
+            with session_factory() as session:
+                return refresh_tokens(
+                    session, config, limiters, clock(), body.refresh_token
+                )
+
+        outcome = await run_in_threadpool(work)
+        if outcome.revoked_device is not None:
+            await _notify_hub(request, outcome.revoked_device)
+            raise ApiError("unauthorized", {"WWW-Authenticate": "Bearer"})
+        assert outcome.tokens is not None
+        return outcome.tokens
+
+    @app.post("/v1/auth/logout", status_code=204)
+    async def auth_logout(request: Request, principal: CurrentPrincipal) -> Response:
+        def work() -> None:
+            with session_factory() as session:
+                logout_device(session, principal.device_id, clock())
+
+        await run_in_threadpool(work)
+        await _notify_hub(request, principal.device_id)
+        return Response(status_code=204)
+
+    # --- routers (M3-03 adds its realtime router below this line) ---
+    app.include_router(profile.router)
+
+    return app
 
 
 def app_from_env() -> FastAPI:

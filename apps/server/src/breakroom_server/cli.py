@@ -42,7 +42,14 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
-    uvicorn.run(APP_FACTORY, factory=True, host=args.host, port=args.port)
+    # The app writes its own access line; uvicorn's would carry client addresses.
+    uvicorn.run(
+        APP_FACTORY,
+        factory=True,
+        host=args.host,
+        port=args.port,
+        access_log=False,
+    )
     return 0
 
 

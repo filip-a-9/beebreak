@@ -93,7 +93,7 @@ def test_serve_runs_uvicorn_factory_on_loopback(
     assert calls == [
         (
             ("breakroom_server.app:app_from_env",),
-            {"factory": True, "host": "127.0.0.1", "port": 8000},
+            {"factory": True, "host": "127.0.0.1", "port": 8000, "access_log": False},
         )
     ]
 
