@@ -41,6 +41,7 @@ from breakroom_agent_bridge.ipc_client import send_event
 from breakroom_agent_bridge.reducer import reduce
 from breakroom_agent_bridge.session_key import derive_key
 from breakroom_companion.api_client import ApiClient
+from breakroom_companion.break_state import BreakState
 from breakroom_companion.credentials import FileCredentialStore
 from breakroom_companion.realtime_client import RealtimeClient, RealtimeError
 from breakroom_companion.remote import RemoteWorker
@@ -50,6 +51,7 @@ from breakroom_server.models import Base, User
 from breakroom_shared.api import Consent
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import StatusReply
+from breakroom_shared.presence import build_presence
 from tests.e2e_support.server import LiveServer
 from tests.fixtures.hook_payloads import PAYLOADS, RAW_SESSION_ID
 from tests.fixtures.privacy_negative import SENSITIVE_STRINGS
@@ -249,6 +251,8 @@ class Recorder(QObject):
         self.errors: list[str] = []
         self.nickname: str | None = None
         self.consent: Consent | None = None
+        self.breaks: list[BreakState] = []
+        worker.break_changed.connect(self.on_break)
         worker.state_changed.connect(self.on_state)
         worker.me_changed.connect(self.on_me)
         worker.error.connect(self.on_error)
@@ -261,6 +265,14 @@ class Recorder(QObject):
     def on_me(self, me: Any) -> None:
         if me is not None:
             self.nickname, self.consent = me.nickname, me.consent
+
+    @Slot(object)
+    def on_break(self, state: Any) -> None:
+        self.breaks.append(state)
+
+    @property
+    def phase(self) -> str:
+        return self.breaks[-1].phase if self.breaks else "none"
 
     @Slot(str)
     def on_error(self, code: str) -> None:
@@ -294,7 +306,8 @@ def worker_factory(
             reconnect_max_s=0.2,
         )
         worker = RemoteWorker(
-            config, FileCredentialStore(tmp_path / "creds.json", config.server_url)
+            config,
+            FileCredentialStore(tmp_path / f"creds{len(made)}.json", config.server_url),
         )
         made.append(worker)
         return worker, Recorder(worker)
@@ -302,6 +315,37 @@ def worker_factory(
     yield make
     for worker in made:
         worker.stop()
+
+
+ALL_CONSENT = Consent(
+    version=1,
+    share_task_category=True,
+    share_stack_tags=True,
+    share_time_bucket=True,
+)
+
+
+def sign_in_worker(
+    qtbot: QtBot,
+    live_server: LiveServer,
+    worker: RemoteWorker,
+    rec: Recorder,
+    email: str,
+    nickname: str,
+    consent: Consent,
+) -> None:
+    """Start the worker and take it through sign-in, nickname and consent."""
+    mails = len(live_server.mailer.sent)
+    worker.start()
+    qtbot.waitUntil(lambda: rec.states[-1:] == ["signed_out"], timeout=WAIT_MS)
+    worker.begin_sign_in(email, live_server.invite(email))
+    qtbot.waitUntil(lambda: len(live_server.mailer.sent) > mails, timeout=WAIT_MS)
+    worker.verify(live_server.last_code())
+    qtbot.waitUntil(lambda: rec.states[-1:] == ["connected"], timeout=WAIT_MS)
+    worker.set_nickname(nickname)
+    qtbot.waitUntil(lambda: rec.nickname == nickname, timeout=WAIT_MS)
+    worker.set_consent(consent)
+    qtbot.waitUntil(lambda: rec.consent == consent, timeout=WAIT_MS)
 
 
 def _protected_payloads() -> list[dict[str, Any]]:
@@ -467,3 +511,85 @@ def test_scanner_sees_a_canary_in_each_outbound_and_server_channel(
     }
     # And nothing is reported when the canary is absent.
     assert find_leaks(channels, ["never-sent-0xC0FFEE"]) == []
+
+
+# --- M4: a full search -> match -> end between two real workers ---
+
+
+def test_no_protected_string_leaves_during_search_match_and_end(
+    qtbot: QtBot,
+    server_factory: Callable[..., LiveServer],
+    capture: Capture,
+    worker_factory: Callable[[int], tuple[RemoteWorker, Recorder]],
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    live_server = server_factory(match_sweep_interval_s=0.05)
+    proxy = RecordingProxy(live_server.port, capture)
+    try:
+        a, rec_a = worker_factory(proxy.port)
+        b, rec_b = worker_factory(proxy.port)
+        sign_in_worker(
+            qtbot, live_server, a, rec_a, "ada@example.com", "ada_l", ALL_CONSENT
+        )
+        sign_in_worker(
+            qtbot, live_server, b, rec_b, "bob@example.com", "bobby", ALL_CONSENT
+        )
+
+        def presence() -> Any:
+            return build_presence(
+                ALL_CONSENT,
+                task_category="other",
+                stack_tags=["python", "docker"],
+                remaining_time_bucket="unknown",
+            )
+
+        # Hook traffic full of canaries reaches the companion while it searches.
+        events = _reduced_events()
+        sock_dir = Path(tempfile.mkdtemp(dir="/tmp"))
+        sock_dir.chmod(0o700)
+        ipc = IpcWorker(
+            sock_dir / "s", StatusReply(kind="status", version=3, invitation="idle")
+        )
+        sink = EventSink(ipc)
+        ipc.start()
+        try:
+            a.join_queue(presence())
+            qtbot.waitUntil(lambda: rec_a.phase == "searching", timeout=WAIT_MS)
+            for event in events:
+                assert send_event(event, socket_path=ipc.socket_path, timeout=2.0)
+            qtbot.waitUntil(lambda: len(sink.events) == len(events), timeout=WAIT_MS)
+            b.join_queue(presence())
+            qtbot.waitUntil(
+                lambda: rec_a.phase == "matched" and rec_b.phase == "matched",
+                timeout=WAIT_MS,
+            )
+            a.end_match()
+            qtbot.waitUntil(
+                lambda: rec_a.phase == "ended" and rec_b.phase == "ended",
+                timeout=WAIT_MS,
+            )
+        finally:
+            ipc.stop()
+            sock_dir.joinpath("s").unlink(missing_ok=True)
+            sock_dir.rmdir()
+
+        # Sanity: the capture saw the break conversation.
+        http = capture.channels()["http"]
+        assert any(b"POST http://127.0.0.1" in h and b"/v1/queue" in h for h in http)
+        assert any(b"/end" in h for h in http)
+
+        local_only = [e.local_session_key for e in events] + [
+            str(e.event_id) for e in events
+        ]
+        logs = [caplog.text.encode("utf-8")]
+        out = capfd.readouterr()
+        logs += [out.out.encode("utf-8"), out.err.encode("utf-8")]
+        channels = (
+            capture.channels() | {"server_logs": logs} | dump_database(live_server)
+        )
+        assert channels["db.queue_entries"], "no queue rows were written"
+        assert find_leaks(channels, CANARIES + local_only) == []
+    finally:
+        proxy.close()
