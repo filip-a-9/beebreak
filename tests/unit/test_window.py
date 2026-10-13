@@ -7,11 +7,12 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
-from breakroom_companion.app import initial_status, wire
+from breakroom_companion.app import initial_status, setup_remote, wire
 from breakroom_companion.config import TriggerConfig
 from breakroom_companion.controller import Controller
 from breakroom_companion.window import CompanionWindow
 from breakroom_companion.worker import IpcWorker
+from breakroom_shared.api import Consent, Me
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import InvitationState
 from breakroom_shared.presence import RemainingTimeBucket
@@ -290,3 +291,170 @@ def test_status_snapshot_carries_activity_and_estimate(qtbot: QtBot) -> None:
     assert snap.activity == "active"
     assert snap.estimate == "unknown"  # no task evidence in this run
     assert window.estimate_label.isHidden()
+
+
+# --- account row (M3-05b) ---
+
+ACCOUNT_TEXT = {
+    "signed_out": "Not signed in",
+    "signing_in": "Signing in\N{HORIZONTAL ELLIPSIS}",
+    "connecting": "Connecting\N{HORIZONTAL ELLIPSIS}",
+    "offline": "Offline \N{EN DASH} retrying",
+}
+FULL_ME = Me(
+    nickname="ada_l",
+    consent=Consent(version=1),
+    consented_at=datetime(2026, 10, 13, tzinfo=UTC),
+)
+
+
+@pytest.mark.parametrize(("state", "text"), list(ACCOUNT_TEXT.items()))
+def test_account_row_fixed_text_per_state(
+    window: CompanionWindow, state: str, text: str
+) -> None:
+    window.set_remote_state(state)
+    assert window.account_label.text() == text
+
+
+def test_account_row_connected_shows_the_nickname(window: CompanionWindow) -> None:
+    window.set_remote_state("connected")
+    window.set_me(FULL_ME)
+    assert window.account_label.text() == "Connected as ada_l"
+
+
+@pytest.mark.parametrize(
+    "nickname", ["<b>x</b>", "a b", "x" * 40, "\N{CYRILLIC SMALL LETTER A}bc", "ab\n"]
+)
+def test_hostile_nickname_is_never_rendered(
+    window: CompanionWindow, nickname: str
+) -> None:
+    window.set_remote_state("connected")
+    window.set_me(
+        Me.model_construct(nickname=nickname, consent=None, consented_at=None)
+    )
+    assert window.account_label.text() == "Connected as ?"
+    assert window.account_label.textFormat() == Qt.TextFormat.PlainText
+
+
+def test_account_note_is_plain_text(window: CompanionWindow) -> None:
+    assert window.account_note.textFormat() == Qt.TextFormat.PlainText
+
+
+def _visible(window: CompanionWindow) -> set[str]:
+    named = {
+        "sign_in": window.sign_in_button,
+        "settings": window.settings_button,
+        "sign_out": window.sign_out_button,
+        "finish": window.finish_setup_button,
+    }
+    return {name for name, button in named.items() if button.isVisibleTo(window)}
+
+
+def test_buttons_follow_the_state(window: CompanionWindow) -> None:
+    assert _visible(window) == {"sign_in"}
+    window.set_remote_state("signing_in")
+    assert _visible(window) == {"sign_out"}
+    window.set_remote_state("connecting")
+    window.set_me(FULL_ME)
+    assert _visible(window) == {"settings", "sign_out"}
+    window.set_remote_state("offline")
+    assert _visible(window) == {"settings", "sign_out"}
+    window.set_remote_state("connected")
+    assert _visible(window) == {"settings", "sign_out"}
+    window.set_remote_state("signed_out")
+    window.set_me(None)
+    assert _visible(window) == {"sign_in"}
+
+
+@pytest.mark.parametrize(
+    "me",
+    [
+        Me(nickname=None, consent=Consent(version=1), consented_at=None),
+        Me(nickname="ada_l", consent=None, consented_at=None),
+    ],
+)
+def test_finish_setup_when_nickname_or_consent_missing(
+    window: CompanionWindow, me: Me
+) -> None:
+    window.set_remote_state("connected")
+    window.set_me(me)
+    assert _visible(window) == {"finish", "sign_out"}
+
+
+def test_button_clicks_emit(window: CompanionWindow, qtbot: QtBot) -> None:
+    window.show()
+    with qtbot.waitSignal(window.sign_in_requested, timeout=1000):
+        window.sign_in_button.click()
+    window.set_remote_state("connected")
+    window.set_me(FULL_ME)
+    with qtbot.waitSignal(window.settings_requested, timeout=1000):
+        window.settings_button.click()
+    with qtbot.waitSignal(window.sign_out_requested, timeout=1000):
+        window.sign_out_button.click()
+
+
+def test_account_buttons_take_no_focus(window: CompanionWindow) -> None:
+    for button in (
+        window.sign_in_button,
+        window.settings_button,
+        window.sign_out_button,
+        window.finish_setup_button,
+    ):
+        assert button.focusPolicy() == Qt.FocusPolicy.NoFocus
+
+
+def test_unencrypted_note_only_when_signed_in_without_encryption(
+    window: CompanionWindow,
+) -> None:
+    window.show()
+    window.set_store_encrypted(False)
+    assert window.account_note.isHidden()  # nothing stored while signed out
+    window.set_remote_state("connected")
+    assert window.account_note.isVisible()
+    assert window.account_note.text() == "Stored unencrypted"
+    window.set_store_encrypted(True)
+    assert window.account_note.isHidden()
+
+
+def test_unavailable_account_row_stays_disabled(window: CompanionWindow) -> None:
+    window.show()
+    window.set_remote_unavailable()
+    assert window.account_label.text() == "Server address not allowed"
+    window.set_remote_state("connected")
+    window.set_me(FULL_ME)
+    assert window.account_label.text() == "Server address not allowed"
+    assert _visible(window) == set()
+
+
+def test_invitation_area_still_works_with_the_account_row(
+    window: CompanionWindow,
+) -> None:
+    window.show()
+    window.set_state("suggested", "5_10m")
+    assert window.accept_button.isVisible() and window.estimate_label.isVisible()
+    assert window.accept_button.focusPolicy() == Qt.FocusPolicy.NoFocus
+
+
+def test_refused_server_url_leaves_the_companion_running(
+    window: CompanionWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BREAKROOM_SERVER_URL", "http://example.com")
+    assert setup_remote(window) is None
+    assert window.account_label.text() == "Server address not allowed"
+    window.set_state("idle")  # the rest of the window keeps working
+    assert window.status_label.text() != ""
+
+
+def test_allowed_server_url_builds_a_worker_and_wires_the_row(
+    window: CompanionWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BREAKROOM_SERVER_URL", "http://127.0.0.1:9")
+    worker = setup_remote(window)
+    assert worker is not None
+    worker.state_changed.emit("connecting")
+    assert window.account_label.text() == ACCOUNT_TEXT["connecting"]
+    worker.me_changed.emit(FULL_ME)
+    worker.state_changed.emit("connected")
+    assert window.account_label.text() == "Connected as ada_l"
+    assert worker.state == "signed_out"  # nothing started, no network
+    worker.stop()
