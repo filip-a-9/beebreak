@@ -1,17 +1,44 @@
 """Fail-open IPC client used by the hook and the MCP server.
 
-Neither function may raise or exceed its timeout: a missing, stale, or hung
-companion is reported as False / None. Nothing is ever printed or logged.
+No function here may raise or exceed its timeout: a missing, stale, or hung
+companion is reported as False / None (request_leave_queue: see its docstring).
+Nothing is ever printed or logged. This module only reads status and cancels a
+search; it has no way to start one.
 """
 
 import socket
 import time
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import MAX_FRAME_BYTES, EventFrame, StatusReply, StatusRequest
+from breakroom_shared.ipc import (
+    MAX_FRAME_BYTES,
+    ActivityState,
+    EventFrame,
+    InvitationState,
+    LeaveQueueReply,
+    LeaveQueueRequest,
+    LeaveResult,
+    StatusReply,
+    StatusRequest,
+)
+from breakroom_shared.presence import RemainingTimeBucket
+
+
+class LegacyStatusReply(BaseModel):
+    """A version 2 StatusReply from a companion that predates the queue field."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["status"]
+    version: Literal[2]
+    invitation: InvitationState
+    last_event_at: AwareDatetime | None = None
+    activity: ActivityState = "unknown"
+    estimate: RemainingTimeBucket | None = None
 
 
 def _connect(path: Path, deadline: float) -> socket.socket:
@@ -52,22 +79,63 @@ def send_event(
         return False
 
 
-def request_status(*, socket_path: Path, timeout: float = 0.5) -> StatusReply | None:
-    """Send a StatusRequest and return the reply, or None on any failure."""
+def _read_line(sock: socket.socket, deadline: float) -> bytes | None:
+    """One reply line (without the newline), or None if missing or oversize."""
+    buf = b""
+    while b"\n" not in buf and len(buf) <= MAX_FRAME_BYTES:
+        sock.settimeout(_remaining(deadline))
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        buf += chunk
+    line, sep, _ = buf.partition(b"\n")
+    if not sep or len(line) > MAX_FRAME_BYTES:
+        return None
+    return line
+
+
+def request_status(
+    *, socket_path: Path, timeout: float = 0.5
+) -> StatusReply | LegacyStatusReply | None:
+    """Send a StatusRequest and return the reply, or None on any failure.
+
+    A version 2 reply (old companion) comes back as LegacyStatusReply.
+    """
     try:
         deadline = time.monotonic() + timeout
         with _connect(socket_path, deadline) as sock:
             _send_frame(sock, StatusRequest(kind="status_request"), deadline)
-            buf = b""
-            while b"\n" not in buf and len(buf) <= MAX_FRAME_BYTES:
-                sock.settimeout(_remaining(deadline))
-                chunk = sock.recv(4096)
-                if not chunk:
-                    break
-                buf += chunk
-        line, sep, _ = buf.partition(b"\n")
-        if not sep or len(line) > MAX_FRAME_BYTES:
+            line = _read_line(sock, deadline)
+        if line is None:
             return None
-        return StatusReply.model_validate_json(line)
+        try:
+            return StatusReply.model_validate_json(line)
+        except ValueError:
+            return LegacyStatusReply.model_validate_json(line)
     except Exception:
         return None
+
+
+def request_leave_queue(
+    *, socket_path: Path, timeout: float = 0.5
+) -> LeaveResult | None:
+    """Ask the companion to cancel the user's break-partner search.
+
+    None: nobody answers on the socket (companion not running). Once connected,
+    any failure, timeout or malformed reply is "unavailable". An old companion
+    that does not know the frame drops it, which also reads as "unavailable".
+    """
+    try:
+        deadline = time.monotonic() + timeout
+        sock = _connect(socket_path, deadline)
+    except Exception:
+        return None
+    try:
+        with sock:
+            _send_frame(sock, LeaveQueueRequest(kind="leave_queue"), deadline)
+            line = _read_line(sock, deadline)
+        if line is None:
+            return "unavailable"
+        return LeaveQueueReply.model_validate_json(line).result
+    except Exception:
+        return "unavailable"

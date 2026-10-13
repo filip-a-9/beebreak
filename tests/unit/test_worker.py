@@ -9,10 +9,14 @@ from pathlib import Path
 import pytest
 from pytestqt.qtbot import QtBot
 
-from breakroom_agent_bridge.ipc_client import request_status, send_event
+from breakroom_agent_bridge.ipc_client import (
+    request_leave_queue,
+    request_status,
+    send_event,
+)
 from breakroom_companion.worker import IpcWorker
 from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import StatusReply
+from breakroom_shared.ipc import LeaveResult, StatusReply
 
 
 def make_event() -> NormalizedEvent:
@@ -87,3 +91,79 @@ def test_second_worker_on_same_path_raises(sock_path: Path) -> None:
         assert request_status(socket_path=sock_path, timeout=1.0) is not None
     finally:
         first.stop()
+
+
+# --- M4-07: leave_queue through IpcWorker ----------------------------------------
+
+
+def test_leave_queue_callback_is_called_off_the_main_thread(sock_path: Path) -> None:
+    threads: list[int] = []
+
+    def leave() -> LeaveResult:
+        threads.append(threading.get_ident())
+        return "cancelled"
+
+    worker = IpcWorker(sock_path, status("idle"), leave)
+    worker.start()
+    try:
+        assert request_leave_queue(socket_path=sock_path, timeout=1.0) == "cancelled"
+    finally:
+        worker.stop()
+    assert len(threads) == 1 and threads[0] != threading.get_ident()
+
+
+@pytest.mark.parametrize("outcome", ["not_searching", "unavailable"])
+def test_leave_queue_outcomes_pass_through_the_worker(
+    sock_path: Path, outcome: LeaveResult
+) -> None:
+    worker = IpcWorker(sock_path, status("idle"), lambda: outcome)
+    worker.start()
+    try:
+        assert request_leave_queue(socket_path=sock_path, timeout=1.0) == outcome
+    finally:
+        worker.stop()
+
+
+def test_worker_without_a_leave_callback_answers_unavailable(sock_path: Path) -> None:
+    worker = IpcWorker(sock_path, status("idle"))
+    worker.start()
+    try:
+        assert request_leave_queue(socket_path=sock_path, timeout=1.0) == "unavailable"
+    finally:
+        worker.stop()
+
+
+def test_hanging_leave_callback_neither_blocks_status_nor_stop(
+    sock_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BREAKROOM_IPC_READ_TIMEOUT_S", "0.3")
+    release = threading.Event()
+
+    def hang() -> LeaveResult:
+        release.wait(10)
+        return "cancelled"
+
+    worker = IpcWorker(sock_path, status("idle"), hang)
+    worker.start()
+    try:
+        assert request_leave_queue(socket_path=sock_path, timeout=1.0) == "unavailable"
+        assert request_status(socket_path=sock_path, timeout=1.0) is not None
+    finally:
+        release.set()
+        worker.stop()
+    assert not sock_path.exists()
+
+
+def test_status_carries_the_queue_state(sock_path: Path) -> None:
+    worker = IpcWorker(sock_path, status("idle"))
+    worker.start()
+    try:
+        first = request_status(socket_path=sock_path, timeout=1.0)
+        assert isinstance(first, StatusReply) and first.queue == "none"
+        worker.set_status(
+            StatusReply(kind="status", version=3, invitation="idle", queue="searching")
+        )
+        second = request_status(socket_path=sock_path, timeout=1.0)
+        assert isinstance(second, StatusReply) and second.queue == "searching"
+    finally:
+        worker.stop()

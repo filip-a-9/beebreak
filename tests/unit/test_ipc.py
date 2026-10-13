@@ -8,16 +8,21 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
-from breakroom_agent_bridge.ipc_client import request_status, send_event
+from breakroom_agent_bridge.ipc_client import (
+    LegacyStatusReply,
+    request_leave_queue,
+    request_status,
+    send_event,
+)
 from breakroom_companion.ipc_server import IpcServer
 from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import MAX_FRAME_BYTES, StatusReply
+from breakroom_shared.ipc import MAX_FRAME_BYTES, LeaveResult, StatusReply
 
 
 def make_event() -> NormalizedEvent:
@@ -65,7 +70,7 @@ def test_event_round_trip(sock_path: Path) -> None:
 
 
 def test_status_round_trip(sock_path: Path) -> None:
-    async def scenario() -> StatusReply | None:
+    async def scenario() -> StatusReply | LegacyStatusReply | None:
         server = make_server(sock_path, [])
         await server.start()
         try:
@@ -94,7 +99,7 @@ def test_stale_socket_file_is_replaced(sock_path: Path) -> None:
     stale.close()  # file remains, nobody listening
     assert sock_path.exists()
 
-    async def scenario() -> StatusReply | None:
+    async def scenario() -> StatusReply | LegacyStatusReply | None:
         server = make_server(sock_path, [])
         await server.start()
         try:
@@ -108,7 +113,7 @@ def test_stale_socket_file_is_replaced(sock_path: Path) -> None:
 def test_regular_file_at_path_is_replaced(sock_path: Path) -> None:
     sock_path.write_text("x")
 
-    async def scenario() -> StatusReply | None:
+    async def scenario() -> StatusReply | LegacyStatusReply | None:
         server = make_server(sock_path, [])
         await server.start()
         try:
@@ -120,7 +125,7 @@ def test_regular_file_at_path_is_replaced(sock_path: Path) -> None:
 
 
 def test_second_server_on_live_socket_raises(sock_path: Path) -> None:
-    async def scenario() -> StatusReply | None:
+    async def scenario() -> StatusReply | LegacyStatusReply | None:
         first = make_server(sock_path, [])
         await first.start()
         try:
@@ -213,7 +218,7 @@ def test_silent_connection_times_out_and_server_keeps_serving(
 ) -> None:
     monkeypatch.setenv("BREAKROOM_IPC_READ_TIMEOUT_S", "0.2")
 
-    async def scenario() -> StatusReply | None:
+    async def scenario() -> StatusReply | LegacyStatusReply | None:
         server = make_server(sock_path, [])
         await server.start()
         idle = socket.socket(socket.AF_UNIX)
@@ -238,7 +243,7 @@ def test_callback_exception_does_not_stop_server(sock_path: Path) -> None:
         calls.append(1)
         raise ValueError("callback failure")
 
-    async def scenario() -> StatusReply | None:
+    async def scenario() -> StatusReply | LegacyStatusReply | None:
         server = IpcServer(sock_path, on_event=boom, status=lambda: STATUS)
         await server.start()
         try:
@@ -250,3 +255,228 @@ def test_callback_exception_does_not_stop_server(sock_path: Path) -> None:
 
     assert asyncio.run(scenario()) == STATUS
     assert calls == [1]
+
+
+# --- M4-07: leave_queue over IPC -------------------------------------------------
+
+
+def serve_leave(
+    path: Path,
+    callback: Callable[[], LeaveResult] | None,
+    *,
+    timeout: float = 1.0,
+) -> LeaveResult | None:
+    async def scenario() -> LeaveResult | None:
+        server = IpcServer(
+            path, on_event=lambda _e: None, status=lambda: STATUS, leave_queue=callback
+        )
+        await server.start()
+        try:
+            return await asyncio.to_thread(
+                request_leave_queue, socket_path=path, timeout=timeout
+            )
+        finally:
+            await server.close()
+
+    return asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("outcome", ["cancelled", "not_searching", "unavailable"])
+def test_leave_queue_round_trip_for_each_outcome(
+    sock_path: Path, outcome: LeaveResult
+) -> None:
+    calls: list[int] = []
+
+    def callback() -> LeaveResult:
+        calls.append(1)
+        return outcome
+
+    assert serve_leave(sock_path, callback) == outcome
+    assert calls == [1]
+
+
+def test_leave_queue_without_callback_is_unavailable(sock_path: Path) -> None:
+    assert serve_leave(sock_path, None) == "unavailable"
+
+
+def test_leave_queue_callback_that_raises_is_unavailable_and_server_survives(
+    sock_path: Path,
+) -> None:
+    def boom() -> LeaveResult:
+        raise ValueError("callback failure")
+
+    async def scenario() -> tuple[LeaveResult | None, object]:
+        server = IpcServer(
+            sock_path,
+            on_event=lambda _e: None,
+            status=lambda: STATUS,
+            leave_queue=boom,
+        )
+        await server.start()
+        try:
+            left = await asyncio.to_thread(request_leave_queue, socket_path=sock_path)
+            status = await asyncio.to_thread(request_status, socket_path=sock_path)
+            return left, status
+        finally:
+            await server.close()
+
+    assert asyncio.run(scenario()) == ("unavailable", STATUS)
+
+
+def test_hanging_leave_callback_answers_unavailable_within_the_timeout(
+    sock_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BREAKROOM_IPC_READ_TIMEOUT_S", "0.2")
+    release = threading.Event()
+
+    def hang() -> LeaveResult:
+        release.wait(5)
+        return "cancelled"
+
+    start = time.monotonic()
+    try:
+        assert serve_leave(sock_path, hang, timeout=1.0) == "unavailable"
+        # the server answered (0.2 s bound); the client did not have to give up
+        assert time.monotonic() - start < 0.9
+    finally:
+        release.set()
+
+
+def test_hanging_leave_callback_does_not_block_other_requests(
+    sock_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BREAKROOM_IPC_READ_TIMEOUT_S", "0.5")
+    release = threading.Event()
+
+    def hang() -> LeaveResult:
+        release.wait(5)
+        return "cancelled"
+
+    async def scenario() -> object:
+        server = IpcServer(
+            sock_path,
+            on_event=lambda _e: None,
+            status=lambda: STATUS,
+            leave_queue=hang,
+        )
+        await server.start()
+        try:
+            pending = asyncio.create_task(
+                asyncio.to_thread(request_leave_queue, socket_path=sock_path)
+            )
+            await asyncio.sleep(0.1)
+            status = await asyncio.to_thread(
+                request_status, socket_path=sock_path, timeout=0.3
+            )
+            assert await pending == "unavailable"
+            return status
+        finally:
+            await server.close()
+
+    try:
+        assert asyncio.run(scenario()) == STATUS
+    finally:
+        release.set()
+
+
+def test_leave_client_gives_up_within_its_own_timeout(sock_path: Path) -> None:
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(str(sock_path))
+    listener.listen(1)
+    start = time.monotonic()
+    try:
+        assert request_leave_queue(socket_path=sock_path, timeout=0.2) == "unavailable"
+        assert time.monotonic() - start < 0.5
+    finally:
+        listener.close()
+
+
+def test_leave_client_without_socket_reports_none(sock_path: Path) -> None:
+    assert request_leave_queue(socket_path=sock_path) is None
+
+
+def _serve_raw(path: Path, payload: bytes) -> tuple[threading.Thread, socket.socket]:
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(str(path))
+    listener.listen(1)
+
+    def answer() -> None:
+        conn, _ = listener.accept()
+        with conn:
+            conn.recv(1024)
+            conn.sendall(payload)
+
+    t = threading.Thread(target=answer)
+    t.start()
+    return t, listener
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [b"garbage\n", b'{"kind":"leave_queue_result","result":"x"}\n', b""],
+    ids=["garbage", "unknown-result", "closed"],
+)
+def test_leave_client_maps_a_bad_reply_to_unavailable(
+    sock_path: Path, reply: bytes
+) -> None:
+    t, listener = _serve_raw(sock_path, reply)
+    try:
+        assert request_leave_queue(socket_path=sock_path, timeout=1.0) == "unavailable"
+    finally:
+        t.join()
+        listener.close()
+
+
+def test_leave_request_bad_frames_never_reach_the_callback(sock_path: Path) -> None:
+    calls: list[int] = []
+
+    def callback() -> LeaveResult:
+        calls.append(1)
+        return "cancelled"
+
+    async def scenario() -> None:
+        server = IpcServer(
+            sock_path,
+            on_event=lambda _e: None,
+            status=lambda: STATUS,
+            leave_queue=callback,
+        )
+        await server.start()
+        try:
+            big = b'{"kind":"leave_queue","x":"' + b"x" * 40000 + b'"}\n'
+            await asyncio.to_thread(raw_send, sock_path, big)
+            extra = b'{"kind":"leave_queue","extra":1}\n'
+            await asyncio.to_thread(raw_send, sock_path, extra)
+            await asyncio.to_thread(raw_send, sock_path, b'{"kind":"leave_queue"')
+        finally:
+            await server.close()
+
+    asyncio.run(scenario())
+    assert calls == []
+
+
+def test_status_client_accepts_a_v2_reply_from_an_old_companion(
+    sock_path: Path,
+) -> None:
+    t, listener = _serve_raw(
+        sock_path,
+        b'{"kind":"status","version":2,"invitation":"idle","activity":"active"}\n',
+    )
+    try:
+        reply = request_status(socket_path=sock_path, timeout=1.0)
+    finally:
+        t.join()
+        listener.close()
+    assert isinstance(reply, LegacyStatusReply)
+    assert (reply.invitation, reply.activity) == ("idle", "active")
+
+
+def test_status_client_rejects_an_unknown_version(sock_path: Path) -> None:
+    t, listener = _serve_raw(
+        sock_path, b'{"kind":"status","version":9,"invitation":"idle"}\n'
+    )
+    try:
+        assert request_status(socket_path=sock_path, timeout=1.0) is None
+    finally:
+        t.join()
+        listener.close()

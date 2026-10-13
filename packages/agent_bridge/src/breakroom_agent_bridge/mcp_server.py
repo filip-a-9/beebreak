@@ -1,8 +1,9 @@
-"""Breakroom MCP server: one read-only tool, ``breakroom_status``.
+"""Breakroom MCP server: ``breakroom_status`` (read-only) and ``breakroom_leave_queue``.
 
 Everything returned here enters Claude's context, so the result has a fixed,
 tiny shape (THREAT_MODEL T9). No tool changes consent or accepts invitations
-(T10); accepting is a GUI click only.
+(T10); accepting is a GUI click only. ``breakroom_leave_queue`` can only cancel
+a search the user started; no tool starts a search or ends a match (rule 14).
 """
 
 from collections.abc import Callable
@@ -11,8 +12,18 @@ from typing import Literal, TypedDict
 from mcp.server import MCPServer
 
 from breakroom_agent_bridge.config import McpSettings
-from breakroom_agent_bridge.ipc_client import request_status
-from breakroom_shared.ipc import ActivityState, InvitationState, StatusReply
+from breakroom_agent_bridge.ipc_client import (
+    LegacyStatusReply,
+    request_leave_queue,
+    request_status,
+)
+from breakroom_shared.ipc import (
+    ActivityState,
+    InvitationState,
+    LeaveResult,
+    QueueState,
+    StatusReply,
+)
 from breakroom_shared.paths import UnsafeRuntimeDir, socket_path
 from breakroom_shared.presence import RemainingTimeBucket
 
@@ -23,9 +34,24 @@ class BreakroomStatus(TypedDict):
     last_event_at: str | None
     activity: ActivityState | None
     estimate: RemainingTimeBucket | None
+    queue: QueueState | None
 
 
-def build_server(status_provider: Callable[[], StatusReply | None]) -> MCPServer:
+class LeaveQueueResult(TypedDict):
+    result: LeaveResult | Literal["companion_not_running"]
+
+
+StatusProvider = Callable[[], StatusReply | LegacyStatusReply | None]
+LeaveProvider = Callable[[], LeaveResult | None]
+
+
+def _no_companion() -> LeaveResult | None:
+    return None
+
+
+def build_server(
+    status_provider: StatusProvider, leave_provider: LeaveProvider = _no_companion
+) -> MCPServer:
     server = MCPServer("breakroom")
 
     @server.tool(
@@ -46,6 +72,7 @@ def build_server(status_provider: Callable[[], StatusReply | None]) -> MCPServer
                 "last_event_at": None,
                 "activity": None,
                 "estimate": None,
+                "queue": None,
             }
         return {
             "companion": "running",
@@ -55,12 +82,24 @@ def build_server(status_provider: Callable[[], StatusReply | None]) -> MCPServer
             ),
             "activity": reply.activity,
             "estimate": reply.estimate,
+            "queue": reply.queue if isinstance(reply, StatusReply) else None,
         }
+
+    @server.tool(
+        name="breakroom_leave_queue",
+        description=(
+            "Cancel the break-partner search the user started in the Breakroom "
+            "app. It cannot start a search and never ends a conversation."
+        ),
+    )
+    def breakroom_leave_queue() -> LeaveQueueResult:
+        result = leave_provider()
+        return {"result": "companion_not_running" if result is None else result}
 
     return server
 
 
-def query_companion(timeout_s: float) -> StatusReply | None:
+def query_companion(timeout_s: float) -> StatusReply | LegacyStatusReply | None:
     """Ask the companion for its status; None (not running) on any failure."""
     try:
         path = socket_path()
@@ -69,9 +108,21 @@ def query_companion(timeout_s: float) -> StatusReply | None:
     return request_status(socket_path=path, timeout=timeout_s)
 
 
+def leave_queue_companion(timeout_s: float) -> LeaveResult | None:
+    """Ask the companion to cancel a search; None when it is not running."""
+    try:
+        path = socket_path()
+    except (UnsafeRuntimeDir, OSError):
+        return None
+    return request_leave_queue(socket_path=path, timeout=timeout_s)
+
+
 def main() -> None:
     timeout_s = McpSettings.from_env().status_timeout_s
-    build_server(lambda: query_companion(timeout_s)).run("stdio")
+    build_server(
+        lambda: query_companion(timeout_s),
+        lambda: leave_queue_companion(timeout_s),
+    ).run("stdio")
 
 
 if __name__ == "__main__":

@@ -26,7 +26,8 @@ class IpcWorker(QObject):
         leave_queue: Callable[[], LeaveResult] | None = None,
     ) -> None:
         """`leave_queue` answers an agent's LeaveQueueRequest (M4-07); it is
-        called on the IPC thread and must be thread-safe. None: "unavailable"."""
+        called on a helper thread (never the Qt thread), bounded by the IPC read
+        timeout, and must be thread-safe. None or a hang: "unavailable"."""
         super().__init__()
         self.socket_path = socket_path
         self._status = initial_status
@@ -90,7 +91,10 @@ class IpcWorker(QObject):
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
         server = IpcServer(
-            self.socket_path, on_event=self._on_event, status=self._get_status
+            self.socket_path,
+            on_event=self._on_event,
+            status=self._get_status,
+            leave_queue=self._leave_queue,
         )
         try:
             await server.start()

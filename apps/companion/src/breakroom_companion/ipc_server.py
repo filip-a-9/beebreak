@@ -6,6 +6,7 @@ import logging
 import os
 import socket
 import stat
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,6 +16,9 @@ from breakroom_shared.ipc import (
     MAX_FRAME_BYTES,
     ClientFrame,
     EventFrame,
+    LeaveQueueReply,
+    LeaveQueueRequest,
+    LeaveResult,
     StatusReply,
 )
 
@@ -51,7 +55,10 @@ def _claim_path(path: Path) -> None:
 class IpcServer:
     """Serves the breakroom_shared.ipc protocol on a 0600 Unix socket.
 
-    Callbacks run on the server's event-loop thread and must not block.
+    The event and status callbacks run on the server's event-loop thread and
+    must not block. `leave_queue` runs on its own daemon thread and is bounded
+    by the IPC read timeout: a callback that hangs or raises is answered with
+    "unavailable" and never stalls the server. None means "unavailable".
     """
 
     def __init__(
@@ -60,10 +67,12 @@ class IpcServer:
         *,
         on_event: Callable[[NormalizedEvent], None],
         status: Callable[[], StatusReply],
+        leave_queue: Callable[[], LeaveResult] | None = None,
     ) -> None:
         self.socket_path = socket_path
         self._on_event = on_event
         self._status = status
+        self._leave_queue = leave_queue
         self._server: asyncio.Server | None = None
 
     async def start(self) -> None:
@@ -125,10 +134,45 @@ class IpcServer:
             except Exception as exc:
                 log.warning("on_event callback failed: %s", type(exc).__name__)
             return
-        try:
-            reply = self._status()
-        except Exception as exc:
-            log.warning("status callback failed: %s", type(exc).__name__)
-            return
+        reply: StatusReply | LeaveQueueReply
+        if isinstance(frame, LeaveQueueRequest):
+            reply = LeaveQueueReply(
+                kind="leave_queue_result", result=await self._leave()
+            )
+        else:
+            try:
+                reply = self._status()
+            except Exception as exc:
+                log.warning("status callback failed: %s", type(exc).__name__)
+                return
         writer.write((reply.model_dump_json() + "\n").encode())
         await asyncio.wait_for(writer.drain(), ipc_read_timeout_s())
+
+    async def _leave(self) -> LeaveResult:
+        callback = self._leave_queue
+        if callback is None:
+            return "unavailable"
+        loop = asyncio.get_running_loop()
+        done: asyncio.Future[LeaveResult] = loop.create_future()
+
+        def deliver(result: LeaveResult | None) -> None:
+            if not done.done():
+                done.set_result(result if result is not None else "unavailable")
+
+        def run() -> None:
+            result: LeaveResult | None = None
+            try:
+                result = callback()
+            except Exception as exc:
+                log.warning("leave_queue callback failed: %s", type(exc).__name__)
+            with contextlib.suppress(RuntimeError):  # loop already closed
+                loop.call_soon_threadsafe(deliver, result)
+
+        # A plain daemon thread, not the loop's executor: a hung callback must
+        # not keep the loop (or the process) from shutting down.
+        threading.Thread(target=run, name="breakroom-leave", daemon=True).start()
+        try:
+            return await asyncio.wait_for(done, ipc_read_timeout_s())
+        except TimeoutError:
+            log.warning("leave_queue callback timed out")
+            return "unavailable"
