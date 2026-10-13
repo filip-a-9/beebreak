@@ -45,7 +45,7 @@ def _create(path: str, out: "multiprocessing.Queue[bytes]") -> None:
 
 
 def test_concurrent_creation_yields_one_salt(tmp_path: Path) -> None:
-    ctx = multiprocessing.get_context("fork")
+    ctx = multiprocessing.get_context("spawn")
     out: multiprocessing.Queue[bytes] = ctx.Queue()
     path = str(tmp_path / "salt")
     procs = [ctx.Process(target=_create, args=(path, out)) for _ in range(8)]

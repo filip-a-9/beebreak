@@ -20,7 +20,8 @@ def new_token(prefix: Literal["bra_", "brr_"]) -> str:
 
 
 def hash_token(token: str) -> bytes:
-    return hashlib.sha256(token.encode()).digest()
+    # surrogatepass: a lone surrogate in client input hashes to a miss, not a 500.
+    return hashlib.sha256(token.encode("utf-8", "surrogatepass")).digest()
 
 
 def new_code() -> str:

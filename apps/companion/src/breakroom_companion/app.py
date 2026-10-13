@@ -105,13 +105,18 @@ def wire_remote(window: CompanionWindow, worker: RemoteWorker, encrypted: bool) 
 
 def setup_remote(window: CompanionWindow) -> RemoteWorker | None:
     """Build the server connection from the environment, or None if the
-    configured address is refused (the account row then stays disabled)."""
+    configured address is refused or there is no private place to keep a login
+    (the account row then stays disabled)."""
     try:
         config = RemoteConfig.from_env()
     except EndpointRefused:
         window.set_remote_unavailable()
         return None
-    store = default_credential_store(config.server_url)
+    try:
+        store = default_credential_store(config.server_url)
+    except (UnsafeRuntimeDir, OSError):  # the state dir is not private or usable
+        window.set_remote_unavailable()
+        return None
     worker = RemoteWorker(config, store)
     wire_remote(window, worker, store.encrypted)
     return worker

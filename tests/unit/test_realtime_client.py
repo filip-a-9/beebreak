@@ -297,3 +297,50 @@ def test_oversized_inbound_frame_closes_the_socket() -> None:
             await client.close()
 
     run(with_fake_server(handler, scenario))
+
+
+def test_a_redirect_is_never_followed_and_the_token_goes_nowhere_else() -> None:
+    received: list[bytes] = []
+
+    async def elsewhere(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        received.append(b"connected")
+        received.append(await reader.read(65536))
+        writer.close()
+
+    async def scenario() -> None:
+        other = await asyncio.start_server(elsewhere, "127.0.0.1", 0)
+        other_port = other.sockets[0].getsockname()[1]
+
+        async def redirector(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ) -> None:
+            await reader.readuntil(b"\r\n\r\n")
+            writer.write(
+                b"HTTP/1.1 302 Found\r\n"
+                b"Location: ws://127.0.0.1:%d/v1/realtime\r\n"
+                b"Content-Length: 0\r\nConnection: close\r\n\r\n" % other_port
+            )
+            await writer.drain()
+            writer.close()
+
+        first = await asyncio.start_server(redirector, "127.0.0.1", 0)
+        client = RealtimeClient(
+            f"http://127.0.0.1:{first.sockets[0].getsockname()[1]}",
+            TIMEOUT_S,
+            FAST_PING_S,
+        )
+        try:
+            with pytest.raises(RealtimeError) as info:
+                await client.connect("bra_secret-token")
+            assert info.value.code is None
+        finally:
+            await client.close()
+            first.close()
+            other.close()
+
+    run(scenario())
+
+    # connect() has returned: a followed redirect would already have arrived.
+    assert received == []

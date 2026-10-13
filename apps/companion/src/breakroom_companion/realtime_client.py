@@ -1,6 +1,6 @@
 """WebSocket client for `/v1/realtime`. Owned by M3-05a.
 
-No Origin header and no extra headers. M3 carries no product events: the
+No Origin header, no extra headers and no redirects. M3 carries no product events: the
 client authenticates, pings, and re-authenticates with a fresh access token.
 The token is sent only in the first frame, never in the URL.
 """
@@ -10,7 +10,8 @@ import contextlib
 import logging
 
 from pydantic import ValidationError
-from websockets.asyncio.client import ClientConnection, connect
+from websockets.asyncio.client import ClientConnection
+from websockets.asyncio.client import connect as _connect
 from websockets.exceptions import ConnectionClosed
 
 from breakroom_shared.api import (
@@ -25,6 +26,20 @@ _log = logging.getLogger(__name__)
 
 # Our own close when the server sends something we do not understand.
 CLOSE_PROTOCOL_ERROR = 1002
+
+# On shutdown the Qt thread waits for this; a dead peer must not hold it.
+SHUTDOWN_CLOSE_TIMEOUT_S = 0.5
+
+
+class connect(_connect):
+    """`websockets` connect() that never follows a redirect.
+
+    The first frame carries the access token; a 3xx must not send it to
+    another host (or from wss to ws).
+    """
+
+    def process_redirect(self, exc: Exception) -> Exception | str:
+        return exc
 
 
 class RealtimeError(Exception):
@@ -110,6 +125,7 @@ class RealtimeClient:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks = []
         if ws is not None:
+            ws.close_timeout = SHUTDOWN_CLOSE_TIMEOUT_S
             with contextlib.suppress(Exception):
                 await ws.close()
         self._finish(None)

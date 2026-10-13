@@ -141,7 +141,8 @@ class RecordingProxy:
         self._open: list[socket.socket] = []
         self._lock = threading.Lock()
         self._closed = False
-        threading.Thread(target=self._accept, daemon=True).start()
+        self._acceptor = threading.Thread(target=self._accept, daemon=True)
+        self._acceptor.start()
 
     def _accept(self) -> None:
         while True:
@@ -180,7 +181,11 @@ class RecordingProxy:
         with self._lock:
             self._closed = True
             socks = list(self._open)
+        # close() alone leaves a blocked accept() running; shutdown wakes it.
+        with contextlib.suppress(OSError):
+            self._listener.shutdown(socket.SHUT_RDWR)
         self._listener.close()
+        self._acceptor.join(timeout=2)
         for sock in socks:
             sock.close()
 

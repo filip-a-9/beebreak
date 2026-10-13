@@ -148,7 +148,7 @@ def test_subprocess_speaks_mcp_over_stdio() -> None:
     finally:
         timer.cancel()
         proc.kill()
-        proc.wait()
+        proc.communicate()  # reaps it and closes the pipes
     assert [t["name"] for t in replies[2]["result"]["tools"]] == ["breakroom_status"]
     assert replies[3]["result"]["structuredContent"]["companion"] == "not_running"
 

@@ -246,9 +246,13 @@ def verify_challenge(
     code = normalize_code(raw_code)
     given = hmac_code(config.secret, code if code is not None else "")
     if code is None or not hmac.compare_digest(challenge.code_hmac, given):
+        # The cap is part of the UPDATE, so parallel guesses cannot pass it.
         session.execute(
             update(AuthChallenge)
-            .where(AuthChallenge.id == challenge.id)
+            .where(
+                AuthChallenge.id == challenge.id,
+                AuthChallenge.attempts < config.code_max_attempts,
+            )
             .values(attempts=AuthChallenge.attempts + 1)
         )
         session.commit()
@@ -257,7 +261,11 @@ def verify_challenge(
     # Single use: whoever flips consumed_at first wins.
     consumed = session.execute(
         update(AuthChallenge)
-        .where(AuthChallenge.id == challenge.id, AuthChallenge.consumed_at.is_(None))
+        .where(
+            AuthChallenge.id == challenge.id,
+            AuthChallenge.consumed_at.is_(None),
+            AuthChallenge.attempts < config.code_max_attempts,
+        )
         .values(consumed_at=now)
     )
     if consumed.rowcount != 1:  # type: ignore[attr-defined]

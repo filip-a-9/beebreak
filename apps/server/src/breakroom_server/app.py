@@ -109,6 +109,37 @@ class BodyLimitMiddleware:
             await _error(400, "invalid_request")(scope, receive, send)
 
 
+class UnhandledErrorMiddleware:
+    """Turns an unexpected exception into a bare 500.
+
+    Logs a fixed string: an exception's text can carry an email, a code or a
+    token from the request, so neither it nor a traceback is written.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        except Exception:
+            _log.error("unhandled error in request handler")
+            if started:
+                raise
+            await _error(500, "invalid_request")(scope, receive, send)
+
+
 class AccessLogMiddleware:
     """One line per request: method, route template, status, duration, ids.
 
@@ -200,6 +231,7 @@ def create_app(
     app.state.limiters = limiters
 
     app.add_middleware(BodyLimitMiddleware, max_bytes=MAX_BODY_BYTES)
+    app.add_middleware(UnhandledErrorMiddleware)
     app.add_middleware(AccessLogMiddleware)
 
     @app.exception_handler(ApiError)

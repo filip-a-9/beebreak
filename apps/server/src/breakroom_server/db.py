@@ -26,9 +26,13 @@ def make_engine(url: str) -> Engine:
     if parsed.drivername == "postgresql":
         parsed = parsed.set(drivername="postgresql+psycopg")
     if parsed.get_backend_name() != "sqlite":
-        return create_engine(parsed, pool_pre_ping=True)
+        return create_engine(parsed, pool_pre_ping=True, hide_parameters=True)
 
-    kwargs: dict[str, Any] = {"connect_args": {"check_same_thread": False}}
+    # hide_parameters keeps emails and tokens out of DBAPI error messages.
+    kwargs: dict[str, Any] = {
+        "connect_args": {"check_same_thread": False},
+        "hide_parameters": True,
+    }
     if parsed.database in (None, "", ":memory:"):
         kwargs["poolclass"] = StaticPool
     engine = create_engine(parsed, **kwargs)

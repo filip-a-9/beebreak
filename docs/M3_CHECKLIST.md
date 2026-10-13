@@ -121,8 +121,11 @@ shows two `open` invites and shows only `*@example.com`, never a full address.
 
 Expect: the window shows `Not signed in` and a Sign in button. Before you
 sign in, nothing has reached the server:
-`docker compose logs server | grep -c "/v1/"` prints 0 apart from the health
-check from M3-C02 (the line count does not grow while the window sits idle).
+`docker compose logs server | grep breakroom_server.access | grep -vc "/v1/health"`
+prints 0, so only health checks are logged (the line count does not grow while
+the window sits idle). The server writes one `breakroom_server.access` line per
+request (method, route, status, timing, opaque ids), so a non-zero count here
+is a real request.
 
 Click Sign in. Enter `filip@example.com` and INVITE1, continue. Open Mailpit,
 read the code from the newest message, type it. Choose the nickname `Filip`.
@@ -137,9 +140,21 @@ On the privacy page:
   empty or null with all boxes off), and a list of what is never shared. No
   project name, path, prompt or command appears.
 
-Save with all boxes off. Expect: the dialog finishes; the window shows
+Save with all boxes off. Expect: the dialog shows "You are all set." with a
+Close button (it does not close by itself); click Close. The window shows
 `Connecting…` then `Connected as Filip`. If the window shows `Finish setup`
 instead, the nickname or privacy page was skipped.
+
+Now the server log shows the sign-in as access lines, and nothing else:
+
+```
+docker compose logs server | grep breakroom_server.access | grep -E "POST /v1/auth/(start|verify)|PATCH /v1/me|PUT /v1/me/consent"
+docker compose logs server | grep -cE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|\?|bra_|brr_|filip@"
+```
+
+Expect: the first command lists the start, verify, nickname and consent
+requests; the second prints 0 (no client address, query string, token or email
+in any server log line; WebSocket connections are not logged).
 
 **M3-C05 — Companion B: separate directories and one consent box.** In T3:
 
@@ -150,8 +165,15 @@ XDG_RUNTIME_DIR="$B_ROOT/run" XDG_STATE_HOME="$B_ROOT/state" .venv/bin/breakroom
 ```
 
 Expect: a second window opens (no "already running" message). Sign in with
-`bea@example.com` and INVITE2, code from Mailpit, nickname `Bea`. On the
-privacy page tick **only** "stack tags" and open "Show what is shared".
+`bea@example.com` and INVITE2, code from Mailpit. On the nickname page, check
+the skeleton rule first, in this order (the page stays open after each error):
+
+- `fi1ip`: rejected with "That nickname is already taken." (it collides with
+  `Filip` once `1` becomes `l` and `i` becomes `l`);
+- `admin`: rejected with "That nickname is not allowed.";
+- `Bea`: accepted.
+
+On the privacy page tick **only** "stack tags" and open "Show what is shared".
 Expect: the preview shows stack tags and no task category or time remaining
 (those are null or empty). Untick it, tick it again: the preview follows. Save.
 Expect: `Connected as Bea`.
@@ -241,10 +263,9 @@ attempt with the same command. Expect: five rejections (`400`, or `429` if a
 rate limit trips first) and the sixth, with the **correct** code, also
 rejected: the challenge is locked. No tokens in any response.
 
-(c) Nickname skeleton. In companion B open Settings and try to change the
-nickname to `fi1ip`. Expect: rejected as already taken (it collides with
-`Filip` after `1` becomes `l` and `i` becomes `l`); the window keeps
-`Connected as Bea`. Also try `admin`: rejected as reserved.
+(c) Nickname skeleton: checked during M3-C05 (`fi1ip` taken, `admin` not
+allowed). Settings cannot change an existing nickname, so there is nothing more
+to try here. Companion B still says `Connected as Bea`.
 
 **M3-C10 — Sign out.** In companion B click Sign out.
 
@@ -266,7 +287,8 @@ docker compose exec server breakroom-admin user disable Filip
 Expect: within about 30 s companion A drops to `Not signed in` (the server
 closes the session on the next frame; the companion's own keep-alive is 25 s)
 and its stored credential is removed; `breakroom-admin devices` no longer
-lists Filip. A new sign-in as Filip is refused.
+lists Filip. Starting a new sign-in as Filip (`POST /v1/auth/start` with
+`filip@example.com`) still returns `202`, but no email arrives in Mailpit.
 
 ## Privacy and report
 
@@ -296,7 +318,9 @@ Breakroom checkout:
 
 ```
 PATTERN="ZEBRA-7731|sk-test-DO-NOT-LEAK|m3-canary-project|$HOME"
+echo "access lines (must be > 0): $(docker compose logs server 2>&1 | grep -c breakroom_server.access)"
 echo "server logs: $(docker compose logs server 2>&1 | grep -ciE "$PATTERN")"
+echo "addresses/queries/tokens: $(docker compose logs server 2>&1 | grep -cE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|\?|bra_|brr_")"
 echo "pg_dump:     $(docker compose exec -T postgres pg_dump -U breakroom breakroom | grep -ciE "$PATTERN")"
 echo "mailpit:     $(for id in $(curl -s http://127.0.0.1:8025/api/v1/messages | python3 -c "import json,sys; print(' '.join(m['ID'] for m in json.load(sys.stdin)['messages']))"); do curl -s http://127.0.0.1:8025/api/v1/message/$id; done | grep -ciE "$PATTERN")"
 ```
@@ -305,12 +329,13 @@ echo "mailpit:     $(for id in $(curl -s http://127.0.0.1:8025/api/v1/messages |
 names, the database name and the role. The unique project directory name stands
 in for it.)
 
-Expect: all three counts are `0`. If `$HOME` is short (for example `/root`)
+Expect: the access-line count is above `0` (otherwise the other log counts
+prove nothing) and every other count is `0`. If `$HOME` is short (for example `/root`)
 and a count is non-zero, inspect the matching lines before judging: only a
 line carrying prompt text, command text, a path from the session, or the
 project name is a hit. Any real hit is a `fail`: keep the logs, do not commit
 them, and report it. Also read a few `docker compose logs server` lines by eye:
-only method, path, status, timing and opaque IDs.
+only method, route, status, timing and opaque IDs.
 
 **M3-C13 — Report.**
 

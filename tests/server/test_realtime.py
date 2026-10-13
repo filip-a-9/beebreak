@@ -1,4 +1,5 @@
 import dataclasses
+import time
 import uuid
 from collections.abc import Iterator
 from datetime import timedelta
@@ -62,6 +63,18 @@ def connected_at(factory: SessionFactory, device_id: uuid.UUID) -> Any:
         device = session.get(Device, device_id)
         assert device is not None
         return device.connected_at
+
+
+def wait_disconnected(factory: SessionFactory, device_id: uuid.UUID) -> None:
+    """Wait (bounded) for the server to clear connected_at.
+
+    The test client leaves the `with` block as soon as the socket closes, but
+    the server clears the column in a shielded thread job that may still run.
+    """
+    deadline = time.monotonic() + 2.0
+    while connected_at(factory, device_id) is not None:
+        assert time.monotonic() < deadline, "connected_at was never cleared"
+        time.sleep(0.01)
 
 
 def build_app(
@@ -137,7 +150,7 @@ def test_happy_path(
         assert pong.version == 1
         assert pong.server_time == clock()
         assert pong.event_id != ready.event_id
-    assert connected_at(session_factory, account.device_id) is None
+    wait_disconnected(session_factory, account.device_id)
     assert client.app.state.hub.connected_count() == 0  # type: ignore[attr-defined]
     assert account.token not in caplog.text
 
@@ -149,6 +162,12 @@ def test_nickname_may_be_unset(
     with client.websocket_connect("/v1/realtime") as ws:
         ws.send_json(auth_frame(account.token))
         assert ws.receive_json()["nickname"] is None
+
+
+def test_lone_surrogate_token_is_a_bad_frame(client: TestClient) -> None:
+    with client.websocket_connect("/v1/realtime") as ws:
+        ws.send_text('{"type":"auth","version":1,"access_token":"bra_\\ud800"}')
+        assert close_code(ws) == WS_CLOSE["bad_frame"]
 
 
 def test_no_auth_frame_in_time_closes_4408(client: TestClient) -> None:
@@ -265,7 +284,7 @@ def test_second_connection_replaces_first(
             second.send_json(PING)
             assert second.receive_json()["type"] == "pong"
             assert client.app.state.hub.connected_count() == 1  # type: ignore[attr-defined]
-    assert connected_at(session_factory, account.device_id) is None
+    wait_disconnected(session_factory, account.device_id)
 
 
 def test_reauth_with_fresh_token_keeps_socket(

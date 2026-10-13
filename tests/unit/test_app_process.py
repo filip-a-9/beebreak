@@ -61,7 +61,7 @@ def test_signal_quits_cleanly_and_removes_socket(
         assert proc.wait(timeout=5) == 0
     finally:
         proc.kill()
-        proc.wait()
+        proc.communicate()  # reaps it and closes the pipes
     assert not sock.exists()
 
 
@@ -70,10 +70,11 @@ def test_second_instance_exits_already_running(runtime: Path) -> None:
     try:
         _wait_running(runtime / "breakroom" / "companion.sock")
         second = _spawn(runtime)
-        assert second.wait(timeout=START_WAIT_S) == 2
+        second.communicate(timeout=START_WAIT_S)
+        assert second.returncode == 2
     finally:
         first.kill()
-        first.wait()
+        first.communicate()
 
 
 def test_unusable_socket_path_is_not_reported_as_already_running(
@@ -84,8 +85,8 @@ def test_unusable_socket_path_is_not_reported_as_already_running(
     (runtime / "breakroom").mkdir(mode=0o700)
     (runtime / "breakroom" / "companion.sock").mkdir()
     proc = _spawn(runtime)
-    code = proc.wait(timeout=START_WAIT_S)
-    assert code not in (0, 2)
+    proc.communicate(timeout=START_WAIT_S)
+    assert proc.returncode not in (0, 2)
 
 
 def test_unsafe_runtime_dir_exits_1_with_one_fixed_stderr_line(
@@ -107,3 +108,19 @@ def test_invalid_config_exits_1_with_one_fixed_stderr_line(runtime: Path) -> Non
     assert proc.returncode == 1
     assert len(err.decode().strip().splitlines()) == 1
     assert "Traceback" not in err.decode()
+
+
+def test_unsafe_state_dir_still_starts_with_the_account_row_disabled(
+    runtime: Path,
+) -> None:
+    state = runtime / "state" / "breakroom"
+    state.mkdir(mode=0o700, parents=True)
+    state.chmod(0o755)
+    proc = _spawn(runtime)
+    try:
+        _wait_running(runtime / "breakroom" / "companion.sock")
+        assert proc.poll() is None
+    finally:
+        proc.kill()
+        _, err = proc.communicate()
+    assert b"Traceback" not in err

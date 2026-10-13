@@ -35,6 +35,13 @@ def test_reserved_nicknames_are_rejected(raw: str) -> None:
     assert exc.value.code == "nickname_reserved"
 
 
+@pytest.mark.parametrize("raw", ["---", "___", "-_-", "_-_-_"])
+def test_separator_only_nicknames_are_rejected(raw: str) -> None:
+    with pytest.raises(NicknameError) as exc:
+        validate_nickname(raw)
+    assert exc.value.code == "nickname_reserved"
+
+
 def test_error_message_does_not_contain_the_input() -> None:
     with pytest.raises(NicknameError) as exc:
         validate_nickname("bad name!")

@@ -56,6 +56,7 @@ def validate_nickname(raw: str) -> str:
     nickname = unicodedata.normalize("NFKC", raw).strip()
     if _PATTERN.fullmatch(nickname) is None:
         raise NicknameError("invalid_request")
-    if _is_reserved(nickname):
+    # Only separators ("---", "_-_") would skeleton to nothing and collide.
+    if _is_reserved(nickname) or not skeleton(nickname):
         raise NicknameError("nickname_reserved")
     return nickname

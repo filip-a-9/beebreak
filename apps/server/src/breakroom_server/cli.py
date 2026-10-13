@@ -3,10 +3,38 @@
 import argparse
 import os
 import sys
+from typing import Any
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 APP_FACTORY = "breakroom_server.app:app_from_env"
+
+# uvicorn logs client addresses and WebSocket query strings at INFO, so its
+# loggers stay at WARNING; the app writes its own access lines (breakroom_server).
+LOG_CONFIG: dict[str, Any] = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "plain": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+    },
+    "handlers": {
+        "stderr": {
+            "class": "logging.StreamHandler",
+            "formatter": "plain",
+            "stream": "ext://sys.stderr",
+        },
+    },
+    "loggers": {
+        "uvicorn": {"handlers": ["stderr"], "level": "WARNING", "propagate": False},
+        "uvicorn.error": {"level": "WARNING"},
+        "uvicorn.access": {"handlers": [], "level": "CRITICAL", "propagate": False},
+        "breakroom_server": {
+            "handlers": ["stderr"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -42,13 +70,15 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
-    # The app writes its own access line; uvicorn's would carry client addresses.
     uvicorn.run(
         APP_FACTORY,
         factory=True,
         host=args.host,
         port=args.port,
         access_log=False,
+        log_config=LOG_CONFIG,
+        # No proxy in M3: a forwarded address would let a client pick its limiter key.
+        proxy_headers=False,
     )
     return 0
 

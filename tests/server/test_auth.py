@@ -1,4 +1,5 @@
 import dataclasses
+import threading
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -6,9 +7,10 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 
 from breakroom_server.app import app_from_env, create_app
+from breakroom_server.auth import ApiError, verify_challenge
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
 from breakroom_server.mailer import RecordingMailer
@@ -173,6 +175,54 @@ def test_wrong_code_five_times_locks_out_even_the_right_code(
     assert (response.status_code, response.json()) == (400, {"error": "invalid_code"})
     with session_factory() as s:
         assert s.scalars(select(AuthChallenge)).all()[-1].attempts == 5
+
+
+def test_attempt_cap_holds_under_parallel_guesses(
+    client: TestClient,
+    server_config: ServerConfig,
+    session_factory: SessionFactory,
+    mailer: RecordingMailer,
+) -> None:
+    sign_in(client, session_factory, mailer)
+    challenge_id = UUID(start(client).json()["challenge_id"])
+    right = mailer.sent[-1][2]
+    wrong = "0" * 8 if right != "0" * 8 else "1" * 8
+    cap = server_config.code_max_attempts
+    with session_factory() as s:
+        challenge = s.get(AuthChallenge, challenge_id)
+        assert challenge is not None
+        challenge.attempts = cap - 1
+        s.commit()
+
+    guessers = 8
+    barrier = threading.Barrier(guessers)
+    outcomes: list[str] = []
+
+    def guess() -> None:
+        barrier.wait(timeout=5)
+        with session_factory() as s:
+            try:
+                verify_challenge(
+                    s,
+                    server_config,
+                    START_TIME,
+                    challenge_id=challenge_id,
+                    raw_code=wrong,
+                    device_name="laptop",
+                )
+            except ApiError as error:
+                outcomes.append(error.code)
+
+    threads = [threading.Thread(target=guess) for _ in range(guessers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert outcomes == ["invalid_code"] * guessers
+    with session_factory() as s:
+        locked = s.get(AuthChallenge, challenge_id)
+        assert locked is not None and locked.attempts == cap
+    assert verify(client, str(challenge_id), right).json() == {"error": "invalid_code"}
 
 
 def test_malformed_code_counts_as_an_attempt(
@@ -510,3 +560,19 @@ def test_logs_contain_no_email_code_or_token(
     assert "bra_" not in text and "brr_" not in text
     assert "testclient" not in text  # the client address
     assert session["tokens"]["access_token"] not in text
+
+
+def test_unexpected_error_is_a_bare_500_without_leaking_input(
+    app: FastAPI,
+    engine: Engine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    AuthChallenge.__table__.drop(engine)  # type: ignore[attr-defined]
+    with TestClient(app, raise_server_exceptions=False) as client:
+        response = start(client, "leaky.person@example.com")
+    assert (response.status_code, response.json()) == (
+        500,
+        {"error": "invalid_request"},
+    )
+    assert "leaky.person" not in caplog.text and "example.com" not in caplog.text
+    assert "unhandled error" in caplog.text

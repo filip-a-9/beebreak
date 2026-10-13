@@ -10,7 +10,7 @@ import pytest
 import pytestqt.exceptions
 from PySide6.QtCore import QObject, Slot
 from pytestqt.qtbot import QtBot
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from breakroom_companion.api_client import ApiClient, ApiError
 from breakroom_companion.credentials import FileCredentialStore
@@ -285,6 +285,13 @@ def test_refresh_delay_is_sixty_seconds_early_or_half_for_short_lifetimes() -> N
     assert refresh_delay_s(2) == 1
 
 
+@pytest.mark.parametrize("skew_s", [-3600, -901, 0, 600, 1800, 86_400])
+def test_refresh_delay_survives_clock_skew(skew_s: float) -> None:
+    # A real 15 minute token seen through a clock that is off by skew_s.
+    delay = refresh_delay_s(900 + skew_s)
+    assert 30 <= delay <= 840
+
+
 # --- losing and regaining the server ---
 
 
@@ -301,6 +308,30 @@ def test_server_stopped_goes_offline_and_restart_reconnects(
 
     wait_state(qtbot, client, "connected")
     assert client.store.load() is not None
+
+
+def test_backoff_starts_over_after_a_successful_reconnect(
+    qtbot: QtBot, live_server: LiveServer, make_client: Callable[..., Client]
+) -> None:
+    client = make_client(live_server)
+    attempts: list[int] = []
+    backoff = client.worker._backoff_s
+
+    def recording(attempt: int) -> float:
+        attempts.append(attempt)
+        return backoff(attempt)
+
+    client.worker._backoff_s = recording  # type: ignore[method-assign]
+    sign_in(qtbot, live_server, client, "ada@example.com")
+    live_server.stop()
+    wait_for(qtbot, lambda: len(attempts) >= 3)
+    live_server.restart()
+    wait_state(qtbot, client, "connected")
+    before = len(attempts)
+
+    live_server.stop()
+    wait_for(qtbot, lambda: len(attempts) > before)
+    assert attempts[before] == 0
 
 
 def test_start_with_credentials_while_server_is_down_is_offline_not_signed_out(
@@ -379,6 +410,26 @@ def test_sign_out_revokes_the_login_and_clears_everything(
         return "accepted"
 
     assert asyncio.run(spent()) == "unauthorized"
+
+
+def test_sign_out_with_an_expired_access_token_still_revokes_the_device(
+    qtbot: QtBot, live_server: LiveServer, make_client: Callable[..., Client]
+) -> None:
+    client = make_client(live_server)
+    sign_in(qtbot, live_server, client, "ada@example.com")
+    with live_server.session_factory() as s:
+        s.execute(
+            update(Device).values(access_expires_at=datetime(2020, 1, 1, tzinfo=UTC))
+        )
+        s.commit()
+
+    client.worker.sign_out()
+
+    wait_state(qtbot, client, "signed_out")
+    wait_for(qtbot, lambda: client.rec.events[-1] == ("me", None))
+    assert client.store.load() is None
+    with live_server.session_factory() as s:
+        assert [d.revoked_at is not None for d in s.scalars(select(Device))] == [True]
 
 
 # --- several instances ---

@@ -288,3 +288,13 @@ def test_refresh_is_limited_per_device(
         assert int(blocked.headers["Retry-After"]) > 0
         clock.advance(901)
         assert refresh(client, tokens["refresh_token"]).status_code == 200
+
+
+def test_lone_surrogate_in_a_token_is_401_not_500(client: TestClient) -> None:
+    # json.loads accepts the escape; the server must not crash encoding it.
+    response = client.post(
+        "/v1/auth/refresh",
+        content=b'{"refresh_token": "brr_\\ud800"}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert (response.status_code, response.json()) == (401, {"error": "unauthorized"})

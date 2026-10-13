@@ -85,6 +85,7 @@ class LiveServer:
             log_level="warning",
             timeout_graceful_shutdown=1,
             access_log=False,
+            proxy_headers=False,
         )
         server = uvicorn.Server(config)
         self._server = server

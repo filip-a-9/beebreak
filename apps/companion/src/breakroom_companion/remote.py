@@ -38,6 +38,8 @@ _log = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 REFRESH_LEAD_S = 60.0
+# The server's default access lifetime; the fallback when our clock disagrees.
+NOMINAL_ACCESS_TTL_S = 900.0
 MIN_REFRESH_DELAY_S = 0.05
 _BAD_DEVICE_CHARS = re.compile(r"[^A-Za-z0-9 ._-]")
 
@@ -52,7 +54,14 @@ def _device_name() -> str:
 
 def refresh_delay_s(ttl_s: float) -> float:
     """Seconds after receiving a token to refresh it: 60 s before expiry, or at
-    half the lifetime when the lifetime is short."""
+    half the lifetime when the lifetime is short.
+
+    `ttl_s` is the server's expiry minus our clock, so clock skew can make it
+    negative or longer than any real lifetime; either would mean a refresh
+    storm or a missed expiry, so it is replaced by the nominal lifetime.
+    """
+    if ttl_s <= 0 or ttl_s > NOMINAL_ACCESS_TTL_S:
+        ttl_s = NOMINAL_ACCESS_TTL_S
     return max(MIN_REFRESH_DELAY_S, ttl_s - REFRESH_LEAD_S, ttl_s / 2)
 
 
@@ -330,11 +339,14 @@ class RemoteWorker(QObject):
             self._challenge_id = None
             self._set_state("signed_out")
             return
-        access, api = self._access, self._api
+        api = self._api
         await self._cancel_connection()
-        if access is not None and api is not None:
+        if api is not None:
             with contextlib.suppress(ApiError):  # best effort, bounded by timeout
-                await api.logout(access)
+                if self._access is None:
+                    await self._refresh(stale=None)
+                # A 401 refreshes once, so an expired access token still revokes.
+                await self._authed(lambda token: api.logout(token))
         await self._drop_session()
 
     # --- connection ---
@@ -379,6 +391,7 @@ class RemoteWorker(QObject):
                     self._rt = rt
                     assert self._access is not None
                     await rt.connect(self._access)
+                    attempt = 0  # a good connection ends the backoff
                     code = await self._hold(rt)
                     after_4401 = False
                 except RealtimeError as exc:

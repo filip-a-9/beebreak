@@ -13,6 +13,7 @@ from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 
+from breakroom_server.cli import LOG_CONFIG
 from breakroom_server.cli import main as cli_main
 from breakroom_server.db import alembic_config, make_engine, upgrade_head
 from breakroom_server.models import Base
@@ -93,7 +94,14 @@ def test_serve_runs_uvicorn_factory_on_loopback(
     assert calls == [
         (
             ("breakroom_server.app:app_from_env",),
-            {"factory": True, "host": "127.0.0.1", "port": 8000, "access_log": False},
+            {
+                "factory": True,
+                "host": "127.0.0.1",
+                "port": 8000,
+                "access_log": False,
+                "log_config": LOG_CONFIG,
+                "proxy_headers": False,
+            },
         )
     ]
 
