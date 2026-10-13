@@ -125,6 +125,7 @@ CHANGES: dict[tuple[BreakPhase, str], BreakState] = {
     ("joining", "queue_joined_other"): BreakState(phase="searching", entry=OTHER_ENTRY),
     ("searching", "queue_ended_expired"): BreakState(phase="nobody_available"),
     ("searching", "queue_ended_cancelled"): NONE,
+    ("none", "match_created"): MATCHED,  # another device's queue.joined was missed
     ("searching", "match_created"): MATCHED,
     ("joining", "match_created"): MATCHED,
     ("matched", "match_ended_current"): BreakState(phase="ended", match=MATCH),

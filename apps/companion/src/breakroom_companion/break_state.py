@@ -150,7 +150,7 @@ def _frame(
                 BreakState(phase="nobody_available") if reason == "expired" else _NONE
             )
         case WsMatchCreated(match=match_view):
-            if state.phase in ("searching", "joining"):
+            if state.phase in ("none", "searching", "joining"):
                 return BreakState(phase="matched", match=match_view)
             return state
         case WsMatchEnded(match_id=match_id):

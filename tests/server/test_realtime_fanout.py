@@ -5,11 +5,13 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
 
 from breakroom_server.db import SessionFactory
+from breakroom_server.mailer import RecordingMailer
 from breakroom_server.models import Device
 from breakroom_server.realtime import Hub, make_frame
 from breakroom_server.tokens import hash_token, new_token
@@ -19,7 +21,7 @@ from breakroom_shared.api import (
     WsMatchEnded,
     WsQueueEnded,
 )
-from tests.server.conftest import FixedClock, SeededUser, add_ready_user
+from tests.server.conftest import FixedClock, SeededUser, add_ready_user, ready_user
 from tests.server.test_realtime import (
     PING,
     auth_frame,
@@ -220,3 +222,56 @@ def test_outbound_frames_do_not_count_towards_the_flood_limit(
         assert pushed == 30
         ws.send_json(PING)
         assert read(ws).type == "pong"
+
+
+# --- end to end with the real matchmaker -------------------------------------
+
+
+@pytest.mark.parametrize("action", ["end", "block"])
+def test_join_match_and_end_reach_both_sockets(
+    app: FastAPI,
+    client: TestClient,
+    session_factory: SessionFactory,
+    mailer: RecordingMailer,
+    action: str,
+) -> None:
+    ada = ready_user(client, session_factory, mailer, "ada@example.com", "Ada")
+    bob = ready_user(client, session_factory, mailer, "bob@example.com", "Bob")
+    ada_token = ada.session["tokens"]["access_token"]
+    bob_token = bob.session["tokens"]["access_token"]
+    presence = {
+        "schema_version": 1,
+        "presence_id": str(uuid.uuid4()),
+        "status": "available",
+    }
+    with (
+        client.websocket_connect("/v1/realtime") as wa,
+        client.websocket_connect("/v1/realtime") as wb,
+    ):
+        sign_on(wa, ada_token)
+        sign_on(wb, bob_token)
+        for user in (ada, bob):
+            body = {"idempotency_key": str(uuid.uuid4()), "presence": presence}
+            posted = client.post("/v1/queue", json=body, headers=user.headers)
+            assert posted.status_code == 201
+        assert len(app.state.matchmaker.run_once()) == 1
+
+        created = {}
+        for name, ws, peer in (("ada", wa, "Bob"), ("bob", wb, "Ada")):
+            joined = read(ws)
+            assert joined.type == "queue.joined"
+            frame = read(ws)
+            assert frame.type == "match.created"
+            assert frame.entry_id == joined.entry.entry_id
+            assert frame.match.peer_nickname == peer
+            created[name] = frame
+        match_id = created["ada"].match.match_id
+        assert created["bob"].match.match_id == match_id
+
+        ended = client.post(f"/v1/matches/{match_id}/{action}", headers=ada.headers)
+        assert ended.status_code == 204
+        for ws in (wa, wb):
+            gone = read(ws)
+            assert gone.type == "match.ended"
+            assert gone.match_id == match_id
+            assert gone.reason == "ended"
