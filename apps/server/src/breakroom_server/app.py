@@ -17,7 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from breakroom_server import profile
+from breakroom_server import profile, realtime
 from breakroom_server.auth import (
     ApiError,
     CurrentPrincipal,
@@ -283,8 +283,9 @@ def create_app(
         await _notify_hub(request, principal.device_id)
         return Response(status_code=204)
 
-    # --- routers (M3-03 adds its realtime router below this line) ---
+    # --- routers ---
     app.include_router(profile.router)
+    realtime.install(app)
 
     return app
 

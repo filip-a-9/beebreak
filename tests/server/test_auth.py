@@ -385,7 +385,7 @@ def test_app_state_exposes_what_realtime_needs(app: FastAPI, clock: FixedClock) 
     assert app.state.clock is clock
     with app.state.session_factory() as s:
         assert s.scalars(select(User)).all() == []
-    assert getattr(app.state, "hub", None) is None
+    assert app.state.hub.connected_count() == 0
 
 
 def test_mailer_selection_from_env(
