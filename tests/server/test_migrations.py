@@ -27,6 +27,14 @@ TABLES = {
     "refresh_tokens",
     "user_preferences",
 }
+M4_TABLES = {"queue_entries", "matches", "match_participants", "blocks"}
+M4_INDEXES = {
+    "queue_entries": {
+        "uq_queue_entries_user_queued",
+        "ix_queue_entries_status_expires",
+    },
+    "match_participants": {"uq_match_participants_user_active"},
+}
 
 
 def _diff(url: str) -> list[object]:
@@ -46,9 +54,29 @@ def test_single_head_and_models_match_migration_on_sqlite(tmp_path: Path) -> Non
 
     upgrade_head(url)
     engine = make_engine(url)
-    assert set(inspect(engine).get_table_names()) >= TABLES
+    assert set(inspect(engine).get_table_names()) >= TABLES | M4_TABLES
+    for table, names in M4_INDEXES.items():
+        assert names <= {i["name"] for i in inspect(engine).get_indexes(table)}
     engine.dispose()
     assert _diff(url) == []
+
+
+def test_sqlite_upgrades_from_0001_and_downgrades_back(tmp_path: Path) -> None:
+    from alembic import command
+
+    url = f"sqlite:///{tmp_path / 'step.db'}"
+    config = alembic_config(url)
+    command.upgrade(config, "0001")
+    engine = make_engine(url)
+    try:
+        assert not M4_TABLES & set(inspect(engine).get_table_names())
+        command.upgrade(config, "head")
+        assert set(inspect(engine).get_table_names()) >= M4_TABLES
+        command.downgrade(config, "0001")
+        tables = set(inspect(engine).get_table_names())
+        assert tables >= TABLES and not M4_TABLES & tables
+    finally:
+        engine.dispose()
 
 
 def test_cli_migrate_uses_database_url_env(
@@ -115,7 +143,7 @@ def test_postgres_upgrade_matches_models_and_downgrades() -> None:
         conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
     try:
         upgrade_head(TEST_DATABASE_URL)
-        assert set(inspect(engine).get_table_names()) >= TABLES
+        assert set(inspect(engine).get_table_names()) >= TABLES | M4_TABLES
         assert _diff(TEST_DATABASE_URL) == []
 
         # Real timestamptz columns, not naive timestamps.
@@ -133,8 +161,16 @@ def test_postgres_upgrade_matches_models_and_downgrades() -> None:
 
         from alembic import command
 
-        command.downgrade(alembic_config(TEST_DATABASE_URL), "base")
-        assert not TABLES & set(inspect(engine).get_table_names())
+        config = alembic_config(TEST_DATABASE_URL)
+        command.downgrade(config, "0001")
+        tables = set(inspect(engine).get_table_names())
+        assert tables >= TABLES and not M4_TABLES & tables
+        command.upgrade(config, "head")
+        assert set(inspect(engine).get_table_names()) >= M4_TABLES
+        assert _diff(TEST_DATABASE_URL) == []
+
+        command.downgrade(config, "base")
+        assert not (TABLES | M4_TABLES) & set(inspect(engine).get_table_names())
     finally:
         Base.metadata.drop_all(engine)
         with engine.begin() as conn:

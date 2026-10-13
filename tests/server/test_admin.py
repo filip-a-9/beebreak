@@ -8,9 +8,25 @@ from sqlalchemy import select
 from breakroom_server.admin import main
 from breakroom_server.db import SessionFactory
 from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import BetaInvite, Device, User
+from breakroom_server.models import (
+    BetaInvite,
+    Block,
+    Device,
+    Match,
+    MatchParticipant,
+    QueueEntry,
+    User,
+)
 from breakroom_server.tokens import hmac_code, normalize_code
-from tests.server.conftest import START_TIME, TEST_SECRET, FixedClock
+from tests.server.conftest import (
+    START_TIME,
+    TEST_SECRET,
+    FixedClock,
+    SeededUser,
+    add_ready_user,
+    seed_match,
+    seed_queued,
+)
 
 EMAIL = "Jane.Doe@Example.org"
 LOCAL = "jane.doe"
@@ -312,3 +328,201 @@ def test_no_output_contains_a_full_email_address(
     _ = run(["devices"], clock)
     captured = capsys.readouterr()
     assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", captured.out + captured.err)
+
+
+# --- M4-01: queue, matches, blocks -------------------------------------------
+
+
+def _seed_pair(
+    session_factory: SessionFactory,
+) -> tuple[SeededUser, SeededUser]:
+    return (
+        add_ready_user(session_factory, "Ada"),
+        add_ready_user(session_factory, "Bob"),
+    )
+
+
+def test_queue_list_prints_field_names_never_values(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ada, bob = _seed_pair(session_factory)
+    cara = add_ready_user(session_factory, "Cara")
+    seed_queued(
+        session_factory,
+        ada,
+        task_category="backend",
+        stack_tags=["python", "rust"],
+        bucket="5_10m",
+    )
+    seed_queued(session_factory, bob, now=START_TIME + timedelta(seconds=5))
+    ended = seed_queued(session_factory, cara)
+    with session_factory() as s:
+        entry = s.get(QueueEntry, ended)
+        assert entry is not None
+        entry.status = "cancelled"
+        s.commit()
+
+    assert run(["queue", "list"], clock) == 0
+    lines = [ln.split("\t") for ln in capsys.readouterr().out.strip().splitlines()]
+    assert [ln[0] for ln in lines] == ["Ada", "Bob"]
+    assert lines[0][1:4] == [
+        "queued",
+        START_TIME.isoformat(),
+        (START_TIME + timedelta(seconds=90)).isoformat(),
+    ]
+    assert lines[0][4] == (
+        "fields=presence_id,task_category,stack_tags,remaining_time_bucket"
+    )
+    assert lines[1][4] == "fields=presence_id"
+    out = "\t".join("\t".join(ln) for ln in lines)
+    for value in ("python", "rust", "backend", "5_10m"):
+        assert value not in out
+
+
+def test_queue_list_with_none_prints_nothing(
+    clock: FixedClock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run(["queue", "list"], clock) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_queue_list_shows_dash_when_presence_was_cleared(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ada = add_ready_user(session_factory, "Ada")
+    entry_id = seed_queued(session_factory, ada, stack_tags=["python"])
+    with session_factory() as s:
+        entry = s.get(QueueEntry, entry_id)
+        assert entry is not None
+        entry.presence_id = entry.stack_tags = None
+        s.commit()
+    assert run(["queue", "list"], clock) == 0
+    assert capsys.readouterr().out.strip().endswith("fields=-")
+
+
+def test_matches_lists_active_matches_only(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ada, bob = _seed_pair(session_factory)
+    cara = add_ready_user(session_factory, "Cara")
+    dan = add_ready_user(session_factory, "Dan")
+    seed_match(session_factory, bob, ada, shared_tags=["python"])
+    ended = seed_match(session_factory, cara, dan)
+    with session_factory() as s:
+        match = s.get(Match, ended)
+        assert match is not None
+        match.status = "ended"
+        for part in s.scalars(select(MatchParticipant)):
+            if part.match_id == ended:
+                part.active = False
+        s.commit()
+
+    assert run(["matches"], clock) == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert [ln.split("\t") for ln in lines] == [
+        [
+            "Ada",
+            "Bob",
+            START_TIME.isoformat(),
+            (START_TIME + timedelta(seconds=900)).isoformat(),
+        ]
+    ]
+    assert "python" not in lines[0]
+
+
+def test_block_list_and_remove(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ada, bob = _seed_pair(session_factory)
+    cara = add_ready_user(session_factory, "Cara")
+    with session_factory() as s:
+        s.add_all(
+            [
+                Block(
+                    blocker_id=ada.user_id,
+                    blocked_id=cara.user_id,
+                    created_at=START_TIME,
+                ),
+                Block(
+                    blocker_id=ada.user_id,
+                    blocked_id=bob.user_id,
+                    created_at=START_TIME,
+                ),
+                Block(
+                    blocker_id=bob.user_id,
+                    blocked_id=ada.user_id,
+                    created_at=START_TIME,
+                ),
+            ]
+        )
+        s.commit()
+
+    assert run(["block", "list", "Ada"], clock) == 0
+    assert capsys.readouterr().out.splitlines() == ["Bob", "Cara"]
+    assert run(["block", "list", "Cara"], clock) == 0
+    assert capsys.readouterr().out == ""
+
+    assert run(["block", "remove", "Ada", "Bob"], clock) == 0
+    assert capsys.readouterr().out == ""
+    with session_factory() as s:
+        pairs = {(b.blocker_id, b.blocked_id) for b in s.scalars(select(Block))}
+    assert pairs == {
+        (ada.user_id, cara.user_id),
+        (bob.user_id, ada.user_id),  # the reverse block is untouched
+    }
+
+    assert run(["block", "remove", "Ada", "Bob"], clock) == 1  # already gone
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err.strip() != ""
+
+
+@pytest.mark.parametrize(
+    ("argv", "code"),
+    [
+        (["block", "list", "Nobody"], 1),
+        (["block", "remove", "Ada", "Nobody"], 1),
+        (["block", "remove", "Nobody", "Ada"], 1),
+        (["block", "list", "x"], 2),
+        (["block", "remove", "Ada"], 2),
+        (["block"], 2),
+        (["queue"], 2),
+    ],
+)
+def test_block_and_queue_bad_input(
+    argv: list[str],
+    code: int,
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    add_ready_user(session_factory, "Ada")
+    assert run(argv, clock) == code
+    assert capsys.readouterr().out == ""
+
+
+def test_new_subcommands_print_no_email_address(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ada, bob = _seed_pair(session_factory)
+    seed_queued(session_factory, ada, stack_tags=["python"])
+    seed_match(session_factory, ada, bob)
+    with session_factory() as s:
+        s.add(
+            Block(blocker_id=ada.user_id, blocked_id=bob.user_id, created_at=START_TIME)
+        )
+        s.commit()
+    for argv in (["queue", "list"], ["matches"], ["block", "list", "Ada"]):
+        assert run(argv, clock) == 0
+    captured = capsys.readouterr()
+    assert "@" not in captured.out + captured.err
+    assert "example.com" not in captured.out

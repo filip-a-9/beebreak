@@ -1,4 +1,7 @@
-"""`breakroom-admin`: invites, users, devices. Owned by M3-01.
+"""`breakroom-admin`: invites, users, devices, queue, matches, blocks.
+
+Owned by M3-01 and M4-01.
+
 
 Exit codes: 0 success, 2 bad input, 1 anything else. Expected errors print one
 fixed line to stderr, never a traceback, and never an email address. The only
@@ -12,14 +15,23 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import make_engine
 from breakroom_server.mailer import Mailer, RecordingMailer, SmtpMailer
-from breakroom_server.models import BetaInvite, Device, User, email_canonical
+from breakroom_server.models import (
+    BetaInvite,
+    Block,
+    Device,
+    Match,
+    MatchParticipant,
+    QueueEntry,
+    User,
+    email_canonical,
+)
 from breakroom_server.tokens import hmac_code, new_code
 
 Clock = Callable[[], datetime]
@@ -73,6 +85,20 @@ def _parser() -> argparse.ArgumentParser:
         user.add_parser(name).add_argument("nickname")
 
     sub.add_parser("devices", help="active devices")
+
+    queue = sub.add_parser("queue", help="matchmaking queue").add_subparsers(
+        dest="action", required=True
+    )
+    queue.add_parser("list", help="queued entries (presence field names only)")
+    sub.add_parser("matches", help="active matches")
+
+    block = sub.add_parser("block", help="blocks between users").add_subparsers(
+        dest="action", required=True
+    )
+    block.add_parser("list", help="nicknames a user blocked").add_argument("nickname")
+    remove = block.add_parser("remove", help="remove a block")
+    remove.add_argument("blocker")
+    remove.add_argument("blocked")
     return parser
 
 
@@ -200,6 +226,76 @@ def _devices(session: Session) -> None:
         print(f"{nickname or '-'}\t{device.name}\tconnected={connected}\t{last_seen}")
 
 
+# Presence columns of a queue entry. Only these NAMES are ever printed.
+_PRESENCE_FIELDS = (
+    "presence_id",
+    "task_category",
+    "stack_tags",
+    "remaining_time_bucket",
+)
+
+
+def _queue_list(session: Session) -> None:
+    rows = session.execute(
+        select(User.nickname, QueueEntry)
+        .join(QueueEntry, QueueEntry.user_id == User.id)
+        .where(QueueEntry.status == "queued")
+        .order_by(QueueEntry.admitted_at, QueueEntry.id)
+    )
+    for nickname, entry in rows:
+        present = [f for f in _PRESENCE_FIELDS if getattr(entry, f) is not None]
+        print(
+            f"{nickname or '-'}\t{entry.status}\t{entry.admitted_at.isoformat()}\t"
+            f"{entry.expires_at.isoformat()}\tfields={','.join(present) or '-'}"
+        )
+
+
+def _matches(session: Session) -> None:
+    for match in session.scalars(
+        select(Match)
+        .where(Match.status == "active")
+        .order_by(Match.created_at, Match.id)
+    ):
+        nicknames = sorted(
+            nickname or "-"
+            for nickname in session.scalars(
+                select(User.nickname)
+                .join(MatchParticipant, MatchParticipant.user_id == User.id)
+                .where(MatchParticipant.match_id == match.id)
+            )
+        )
+        print(
+            "\t".join(
+                [*nicknames, match.created_at.isoformat(), match.ends_at.isoformat()]
+            )
+        )
+
+
+def _block_list(session: Session, nickname: str) -> None:
+    user = _find_user(session, nickname)
+    names = session.scalars(
+        select(User.nickname)
+        .join(Block, Block.blocked_id == User.id)
+        .where(Block.blocker_id == user.id)
+        .order_by(User.nickname)
+    )
+    for name in names:
+        print(name or "-")
+
+
+def _block_remove(session: Session, blocker: str, blocked: str) -> None:
+    blocker_user = _find_user(session, blocker)
+    blocked_user = _find_user(session, blocked)
+    result = session.execute(
+        delete(Block).where(
+            Block.blocker_id == blocker_user.id, Block.blocked_id == blocked_user.id
+        )
+    )
+    if result.rowcount == 0:  # type: ignore[attr-defined]
+        raise AdminError("no such block")
+    session.commit()
+
+
 def _run(args: argparse.Namespace, clock: Clock, mailer: Mailer | None) -> None:
     try:
         config = ServerConfig.from_env()
@@ -222,6 +318,14 @@ def _run(args: argparse.Namespace, clock: Clock, mailer: Mailer | None) -> None:
                     _user_set_status(session, args.nickname, "active", now)
                 case ("devices", _):
                     _devices(session)
+                case ("queue", "list"):
+                    _queue_list(session)
+                case ("matches", _):
+                    _matches(session)
+                case ("block", "list"):
+                    _block_list(session, args.nickname)
+                case ("block", "remove"):
+                    _block_remove(session, args.blocker, args.blocked)
     finally:
         engine.dispose()
 
