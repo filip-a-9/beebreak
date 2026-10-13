@@ -1,0 +1,52 @@
+# Local development stack: Postgres, Mailpit (catches sign-in email) and the
+# server. Every published port is bound to 127.0.0.1 only.
+#
+#   cp .env.example .env   # then fill in the secrets
+#   docker compose up --build
+#   docker compose exec server breakroom-admin invite create you@example.com
+#
+# Mailpit web UI: http://127.0.0.1:8025
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: breakroom
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: breakroom
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U breakroom -d breakroom"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    environment:
+      BREAKROOM_DATABASE_URL: postgresql+psycopg://breakroom:${POSTGRES_PASSWORD}@postgres:5432/breakroom
+      BREAKROOM_SERVER_SECRET: ${BREAKROOM_SERVER_SECRET:?set BREAKROOM_SERVER_SECRET in .env}
+      BREAKROOM_SMTP_HOST: mailpit
+      BREAKROOM_SMTP_PORT: "1025"
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
