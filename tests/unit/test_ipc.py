@@ -480,3 +480,59 @@ def test_status_client_rejects_an_unknown_version(sock_path: Path) -> None:
     finally:
         t.join()
         listener.close()
+
+
+@pytest.mark.parametrize("queue", ["none", "searching", "chatting"])
+def test_status_v4_round_trips_each_queue_value(sock_path: Path, queue: str) -> None:
+    status = StatusReply.model_validate(
+        {"kind": "status", "version": 4, "invitation": "idle", "queue": queue}
+    )
+
+    async def scenario() -> StatusReply | LegacyStatusReply | None:
+        server = IpcServer(sock_path, on_event=lambda _e: None, status=lambda: status)
+        await server.start()
+        try:
+            return await asyncio.to_thread(
+                request_status, socket_path=sock_path, timeout=1.0
+            )
+        finally:
+            await server.close()
+
+    assert asyncio.run(scenario()) == status
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("none", "none"), ("searching", "searching"), ("matched", "chatting")],
+)
+def test_status_client_maps_a_v3_reply_to_v4(
+    sock_path: Path, raw: str, expected: str
+) -> None:
+    t, listener = _serve_raw(
+        sock_path,
+        (
+            '{"kind":"status","version":3,"invitation":"idle","activity":"active",'
+            f'"queue":"{raw}"}}\n'
+        ).encode(),
+    )
+    try:
+        reply = request_status(socket_path=sock_path, timeout=1.0)
+    finally:
+        t.join()
+        listener.close()
+    assert isinstance(reply, StatusReply)
+    assert (reply.version, reply.queue, reply.activity) == (4, expected, "active")
+
+
+def test_status_client_rejects_a_v3_reply_with_an_unknown_queue(
+    sock_path: Path,
+) -> None:
+    t, listener = _serve_raw(
+        sock_path,
+        b'{"kind":"status","version":3,"invitation":"idle","queue":"chatting"}\n',
+    )
+    try:
+        assert request_status(socket_path=sock_path, timeout=1.0) is None
+    finally:
+        t.join()
+        listener.close()

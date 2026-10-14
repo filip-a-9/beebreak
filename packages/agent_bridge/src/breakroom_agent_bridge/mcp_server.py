@@ -60,7 +60,9 @@ def build_server(
             "Report local Breakroom status: whether the companion app is running, "
             "its invitation state, the aggregate agent activity state and, while "
             "an invitation is showing, a coarse remaining-time bucket. "
-            "Read-only, no side effects."
+            "queue is none, searching (looking for a break partner) or chatting "
+            "(the user is in a break chat; Claude cannot see or take part in the "
+            "chat). Read-only, no side effects."
         ),
     )
     def breakroom_status() -> BreakroomStatus:
@@ -89,7 +91,9 @@ def build_server(
         name="breakroom_leave_queue",
         description=(
             "Cancel the break-partner search the user started in the Breakroom "
-            "app. It cannot start a search and never ends a conversation."
+            "app. It cannot start a search and never ends a conversation: "
+            "while the user is chatting it does nothing. Claude cannot see or "
+            "take part in the chat."
         ),
     )
     def breakroom_leave_queue() -> LeaveQueueResult:

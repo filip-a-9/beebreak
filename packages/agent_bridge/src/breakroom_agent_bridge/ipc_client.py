@@ -41,6 +41,31 @@ class LegacyStatusReply(BaseModel):
     estimate: RemainingTimeBucket | None = None
 
 
+class _V3StatusReply(BaseModel):
+    """A version 3 StatusReply (M4 companion): `matched` is today's `chatting`."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["status"]
+    version: Literal[3]
+    invitation: InvitationState
+    last_event_at: AwareDatetime | None = None
+    activity: ActivityState = "unknown"
+    estimate: RemainingTimeBucket | None = None
+    queue: Literal["none", "searching", "matched"] = "none"
+
+    def upgrade(self) -> StatusReply:
+        return StatusReply(
+            kind="status",
+            version=4,
+            invitation=self.invitation,
+            last_event_at=self.last_event_at,
+            activity=self.activity,
+            estimate=self.estimate,
+            queue="chatting" if self.queue == "matched" else self.queue,
+        )
+
+
 def _connect(path: Path, deadline: float) -> socket.socket:
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -99,7 +124,8 @@ def request_status(
 ) -> StatusReply | LegacyStatusReply | None:
     """Send a StatusRequest and return the reply, or None on any failure.
 
-    A version 2 reply (old companion) comes back as LegacyStatusReply.
+    A version 3 reply (M4 companion) comes back as a version 4 StatusReply with
+    `matched` mapped to `chatting`; a version 2 reply as LegacyStatusReply.
     """
     try:
         deadline = time.monotonic() + timeout
@@ -110,6 +136,10 @@ def request_status(
             return None
         try:
             return StatusReply.model_validate_json(line)
+        except ValueError:
+            pass
+        try:
+            return _V3StatusReply.model_validate_json(line).upgrade()
         except ValueError:
             return LegacyStatusReply.model_validate_json(line)
     except Exception:

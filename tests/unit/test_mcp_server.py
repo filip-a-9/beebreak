@@ -363,3 +363,105 @@ def test_bridge_never_references_the_queue_start_path() -> None:
             elif isinstance(node, ast.Constant) and isinstance(node.value, str):
                 names.update(node.value.replace("(", " ").split())
         assert not names & forbidden, module.__name__
+
+
+# --- M5-07: chatting ---------------------------------------------------------------
+
+
+def test_chatting_status_keys_are_exactly_the_m4_keys() -> None:
+    out = _call(
+        StatusReply(kind="status", version=4, invitation="idle", queue="chatting")
+    )
+    assert set(out) == STATUS_KEYS
+    assert out["queue"] == "chatting"
+
+
+def test_descriptions_say_claude_cannot_see_or_join_the_chat() -> None:
+    async def run() -> dict[str, str]:
+        async with Client(build_server(lambda: None)) as client:
+            tools = (await client.list_tools()).tools
+            return {t.name: (t.description or "").lower() for t in tools}
+
+    texts = asyncio.run(run())
+    for name in TOOLS:
+        assert "cannot see or take part in the chat" in texts[name], name
+    assert "chatting" in texts["breakroom_status"]
+
+
+def test_leave_queue_while_chatting_is_not_searching_and_never_leaves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio as aio
+
+    from breakroom_companion.app import BreakTracker
+    from breakroom_companion.ipc_server import IpcServer
+
+    class FakeRemote:
+        def __init__(self) -> None:
+            self.left = 0
+
+        def leave_queue(self) -> None:
+            self.left += 1
+
+    remote = FakeRemote()
+    tracker = BreakTracker()
+    tracker.attach(remote)  # type: ignore[arg-type]
+    tracker.set_connected(True)
+    tracker.set_phase("matched")
+    assert tracker.queue_state() == "chatting"
+
+    with tempfile.TemporaryDirectory(dir="/tmp") as d:
+        sock = Path(d) / "breakroom" / "companion.sock"
+        sock.parent.mkdir(mode=0o700)
+        monkeypatch.setenv("XDG_RUNTIME_DIR", d)
+
+        async def scenario() -> tuple[object, object]:
+            server = IpcServer(
+                sock,
+                on_event=lambda _e: None,
+                status=lambda: StatusReply(
+                    kind="status",
+                    version=4,
+                    invitation="idle",
+                    queue=tracker.queue_state(),
+                ),
+                leave_queue=tracker.leave_queue,
+            )
+            await server.start()
+            try:
+                st = await aio.to_thread(query_companion, 1.0)
+                lv = await aio.to_thread(mcp_server.leave_queue_companion, 1.0)
+                return st, lv
+            finally:
+                await server.close()
+
+        status, leave = aio.run(scenario())
+    assert isinstance(status, StatusReply) and status.queue == "chatting"
+    assert leave == "not_searching"
+    assert remote.left == 0
+
+
+def test_bridge_never_references_chat_content_or_peer_names() -> None:
+    forbidden = {
+        "send_message",
+        "MessageView",
+        "ChatState",
+        "ReportRequest",
+        "peer_nickname",
+    }
+    for module in (mcp_server, ipc_client):
+        assert module.__file__ is not None
+        tree = ast.parse(Path(module.__file__).read_text())
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            elif isinstance(node, ast.alias):
+                names.add(node.name.split(".")[-1])
+            elif isinstance(node, ast.FunctionDef | ast.ClassDef):
+                names.add(node.name)
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                names.update(node.value.replace("(", " ").split())
+        assert not names & forbidden, module.__name__
