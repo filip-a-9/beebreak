@@ -286,7 +286,7 @@ def test_break_changes_drive_window_controller_and_status(rig: Rig) -> None:
     rig.remote.push_break(BreakState(phase="searching", entry=_entry()))
     assert rig.status_queue() == "searching"
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
-    assert rig.window.break_label.text() == "Matched with bob_b"
+    assert rig.window.break_label.text() == "Chatting with bob_b"
     assert rig.status_queue() == "chatting"
     rig.remote.push_break(BreakState(phase="ended"))
     assert rig.controller._break_active is False
@@ -309,8 +309,7 @@ def test_buttons_call_the_worker(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> N
     rig.window.cancel_button.click()
     assert rig.remote.calls.leaves == 1
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
-    rig.window.end_button.click()
-    assert rig.remote.calls.ends == 1
+    rig.remote.push_break(BreakState(phase="ended", match=_match()))
     monkeypatch.setattr(
         QMessageBox, "question", lambda *a: QMessageBox.StandardButton.No
     )

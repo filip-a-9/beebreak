@@ -51,9 +51,9 @@ _ACCOUNT_LABELS: dict[str, str] = {
 FIND = "Find a break partner"
 SEARCHING = "Looking for a break partner\N{HORIZONTAL ELLIPSIS}"
 CANCEL = "Cancel"
-MATCHED_WITH = "Matched with"
+CHATTING_WITH = "Chatting with"
+OPEN_CHAT = "Open chat"
 IN_COMMON = "In common:"
-END = "End"
 BLOCK = "Block"
 OK = "OK"
 NOBODY = "Nobody is around right now. Try again later."
@@ -126,9 +126,9 @@ class CompanionWindow(QWidget):
     sign_out_requested = Signal()
     find_requested = Signal()
     cancel_requested = Signal()
-    end_requested = Signal()
     block_requested = Signal()
     dismiss_requested = Signal()
+    open_chat_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -175,16 +175,17 @@ class CompanionWindow(QWidget):
         self.shared_label.setWordWrap(True)
         self.find_button = QPushButton(FIND)
         self.cancel_button = QPushButton(CANCEL)
-        self.end_button = QPushButton(END)
         self.block_button = QPushButton(BLOCK)
         self.ok_button = QPushButton(OK)
+        self.open_chat_button = QPushButton(OPEN_CHAT)
         self._break_buttons = (
             self.find_button,
             self.cancel_button,
-            self.end_button,
+            self.open_chat_button,
             self.block_button,
             self.ok_button,
         )
+        self._unread = 0
         for button in self._break_buttons:
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._break = BreakState()
@@ -224,9 +225,9 @@ class CompanionWindow(QWidget):
 
         self.find_button.clicked.connect(self.find_requested)
         self.cancel_button.clicked.connect(self.cancel_requested)
-        self.end_button.clicked.connect(self.end_requested)
         self.block_button.clicked.connect(self._on_block_clicked)
         self.ok_button.clicked.connect(self.dismiss_requested)
+        self.open_chat_button.clicked.connect(self.open_chat_requested)
 
         self.sign_in_button.clicked.connect(self.sign_in_requested)
         self.finish_setup_button.clicked.connect(self.settings_requested)
@@ -278,6 +279,11 @@ class CompanionWindow(QWidget):
             self.show()
             self.raise_()
 
+    def set_unread(self, count: int) -> None:
+        """Peer messages since the chat window was last active."""
+        self._unread = max(0, count)
+        self._render_break()
+
     def _render_break(self) -> None:
         phase = self._break.phase
         text = ""
@@ -287,7 +293,7 @@ class CompanionWindow(QWidget):
         elif phase == "matched":
             match = self._break.match
             peer = safe_nickname(match.peer_nickname if match else None)
-            text = f"{MATCHED_WITH} {peer}"
+            text = f"{CHATTING_WITH} {peer}"
             if match is not None:
                 labels = shared_labels(match.shared_tags, match.shared_category)
                 if labels:
@@ -303,11 +309,13 @@ class CompanionWindow(QWidget):
         find = self._ready and phase in ("none", "nobody_available")
         self.find_button.setVisible(find)
         self.cancel_button.setVisible(phase in ("joining", "searching"))
-        self.end_button.setVisible(phase == "matched")
-        # After the peer ended it, Block is still offered while the match is known.
-        can_block = phase == "matched" or (
-            phase == "ended" and self._break.match is not None
+        self.open_chat_button.setText(
+            f"{OPEN_CHAT} ({self._unread})" if self._unread else OPEN_CHAT
         )
+        self.open_chat_button.setVisible(phase == "matched")
+        # End and Block live in the chat window while chatting (M5-06). After
+        # the peer ended it, Block is still offered while the match is known.
+        can_block = phase == "ended" and self._break.match is not None
         self.block_button.setVisible(can_block)
         self.ok_button.setVisible(phase in ("nobody_available", "ended"))
 

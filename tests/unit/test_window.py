@@ -494,7 +494,7 @@ def _break_visible(window: CompanionWindow) -> set[str]:
     named = {
         "find": window.find_button,
         "cancel": window.cancel_button,
-        "end": window.end_button,
+        "open_chat": window.open_chat_button,
         "block": window.block_button,
         "ok": window.ok_button,
         "text": window.break_label,
@@ -524,7 +524,7 @@ def test_searching_shows_text_and_cancel_only(
     assert window.break_label.text().startswith("Looking for a break partner")
 
 
-def test_matched_shows_nickname_shared_labels_end_and_block(
+def test_matched_shows_nickname_shared_labels_and_open_chat(
     window: CompanionWindow,
 ) -> None:
     window.show()
@@ -535,8 +535,8 @@ def test_matched_shows_nickname_shared_labels_end_and_block(
             match=_match(tags=("python", "csharp"), category="backend"),
         )
     )
-    assert _break_visible(window) == {"text", "shared", "end", "block"}
-    assert window.break_label.text() == "Matched with bob_b"
+    assert _break_visible(window) == {"text", "shared", "open_chat"}
+    assert window.break_label.text() == "Chatting with bob_b"
     assert "Python" in window.shared_label.text()
     assert "C#" in window.shared_label.text()
     assert "Backend" in window.shared_label.text()
@@ -547,7 +547,7 @@ def test_matched_without_shared_values_hides_the_shared_line(
 ) -> None:
     window.show()
     window.set_break(BreakState(phase="matched", match=_match()))
-    assert _break_visible(window) == {"text", "end", "block"}
+    assert _break_visible(window) == {"text", "open_chat"}
 
 
 @pytest.mark.parametrize(
@@ -557,7 +557,7 @@ def test_a_peer_nickname_failing_the_pattern_shows_a_question_mark(
     window: CompanionWindow, nickname: str
 ) -> None:
     window.set_break(BreakState(phase="matched", match=_match(nickname)))
-    assert window.break_label.text() == "Matched with ?"
+    assert window.break_label.text() == "Chatting with ?"
     assert nickname not in window.break_label.text()
 
 
@@ -623,8 +623,8 @@ def test_buttons_emit_their_signals(window: CompanionWindow, qtbot: QtBot) -> No
     with qtbot.waitSignal(window.cancel_requested, timeout=1000):
         window.cancel_button.click()
     window.set_break(BreakState(phase="matched", match=_match()))
-    with qtbot.waitSignal(window.end_requested, timeout=1000):
-        window.end_button.click()
+    with qtbot.waitSignal(window.open_chat_requested, timeout=1000):
+        window.open_chat_button.click()
     window.set_break(BreakState(phase="ended"))
     with qtbot.waitSignal(window.dismiss_requested, timeout=1000):
         window.ok_button.click()
@@ -647,7 +647,7 @@ def test_block_emits_only_after_confirmation(
     window: CompanionWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     window.show()
-    window.set_break(BreakState(phase="matched", match=_match()))
+    window.set_break(BreakState(phase="ended", match=_match()))
     asked = _answer(monkeypatch, QMessageBox.StandardButton.No)
     with qtbot.assertNotEmitted(window.block_requested):
         window.block_button.click()
@@ -661,7 +661,7 @@ def test_every_break_button_refuses_keyboard_focus(window: CompanionWindow) -> N
     for button in (
         window.find_button,
         window.cancel_button,
-        window.end_button,
+        window.open_chat_button,
         window.block_button,
         window.ok_button,
     ):
@@ -686,7 +686,7 @@ def test_space_and_enter_after_a_state_change_emit_nothing(
     signals = [
         window.find_requested,
         window.cancel_requested,
-        window.end_requested,
+        window.open_chat_requested,
         window.block_requested,
         window.dismiss_requested,
         window.accepted,
@@ -761,17 +761,33 @@ def test_block_on_the_ended_screen_needs_confirmation_too(
         window.block_button.click()
 
 
-def test_confirmed_block_emits_even_if_the_peer_ended_while_asking(
-    window: CompanionWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+# --- M5-06: chat entry point in the break area ---
+
+
+def test_matched_offers_open_chat_without_a_count_by_default(
+    window: CompanionWindow,
 ) -> None:
     window.show()
-    match = _match()
-    window.set_break(BreakState(phase="matched", match=match))
+    window.set_break(BreakState(phase="matched", match=_match()))
+    assert window.open_chat_button.text() == "Open chat"
+    assert not window.block_button.isVisibleTo(window)
+    assert not hasattr(window, "end_button")
 
-    def question(*args: object) -> object:
-        window.set_break(BreakState(phase="ended", match=match))  # peer ended
-        return QMessageBox.StandardButton.Yes
 
-    monkeypatch.setattr(QMessageBox, "question", question)
-    with qtbot.waitSignal(window.block_requested, timeout=1000):
-        window.block_button.click()
+def test_open_chat_shows_the_unread_count(window: CompanionWindow) -> None:
+    window.show()
+    window.set_break(BreakState(phase="matched", match=_match()))
+    window.set_unread(3)
+    assert window.open_chat_button.text() == "Open chat (3)"
+    window.set_unread(0)
+    assert window.open_chat_button.text() == "Open chat"
+    window.set_unread(-5)
+    assert window.open_chat_button.text() == "Open chat"
+
+
+def test_open_chat_is_only_offered_while_matched(window: CompanionWindow) -> None:
+    window.show()
+    window.set_ready(True)
+    for phase in ("none", "searching", "nobody_available", "ended"):
+        window.set_break(BreakState(phase=phase, entry=_entry()))
+        assert not window.open_chat_button.isVisibleTo(window)

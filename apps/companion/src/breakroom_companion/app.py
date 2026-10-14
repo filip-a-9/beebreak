@@ -3,6 +3,7 @@
 import signal
 import sys
 import threading
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -10,14 +11,17 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
 from breakroom_companion.break_state import BreakPhase, BreakState
+from breakroom_companion.chat_state import ChatState
+from breakroom_companion.chat_window import ChatWindow
 from breakroom_companion.controller import Controller
 from breakroom_companion.credentials import default_credential_store
+from breakroom_companion.desktop_notify import DesktopNotifier
 from breakroom_companion.endpoint import EndpointRefused
 from breakroom_companion.ipc_server import CompanionAlreadyRunning
 from breakroom_companion.onboarding import OnboardingDialog
 from breakroom_companion.remote import RemoteWorker
 from breakroom_companion.remote_config import RemoteConfig
-from breakroom_companion.window import CompanionWindow
+from breakroom_companion.window import CompanionWindow, safe_nickname, shared_labels
 from breakroom_companion.worker import IpcWorker
 from breakroom_shared.api import Me
 from breakroom_shared.events import NormalizedEvent
@@ -29,6 +33,8 @@ from breakroom_shared.presence import RemainingTimeBucket, build_presence
 TICK_INTERVAL_MS = 1000
 EXIT_START_FAILED = 1
 EXIT_ALREADY_RUNNING = 2
+NOTIFY_TITLE = "Breakroom"
+NOTIFY_INTERVAL_S = 10.0  # at most one notification per chat in this time
 
 
 class BreakTracker:
@@ -223,11 +229,111 @@ def wire_break(
     remote.break_changed.connect(on_break)
     window.find_requested.connect(lambda: send("unknown"))
     window.cancel_requested.connect(remote.leave_queue)
-    window.end_requested.connect(remote.end_match)
     window.block_requested.connect(remote.block_peer)
     window.dismiss_requested.connect(remote.dismiss_break)
     on_state(remote.state)
     return send
+
+
+def wire_chat(
+    window: CompanionWindow,
+    chat_window: ChatWindow,
+    remote: RemoteWorker | None,
+    notifier: DesktopNotifier,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+    is_active: Callable[[], bool] | None = None,
+) -> None:
+    """Connect the chat window: state in, intents out, unread count, notices.
+
+    The window opens, without taking focus, once per new match id. A new peer
+    message while the window is not active raises one notification per chat per
+    `NOTIFY_INTERVAL_S` that names the nickname only (rule 16).
+    """
+    if remote is None:
+        return
+
+    active = is_active or (
+        lambda: chat_window.isVisible() and chat_window.isActiveWindow()
+    )
+    seen: dict[str, object] = {"match": None, "opened": None, "notified": None}
+    # Highest peer seq counted, and highest peer seq the user has had in view.
+    known = {"seq": 0, "read": 0}
+    peer_seqs: list[int] = []
+
+    def show_unread() -> None:
+        window.set_unread(sum(1 for seq in peer_seqs if seq > known["read"]))
+
+    def read_all() -> None:
+        known["read"] = known["seq"]
+        show_unread()
+
+    def open_chat() -> None:
+        chat_window.open_for_user()
+        read_all()
+
+    def notify(nickname: str) -> None:
+        last = seen["notified"]
+        now = clock()
+        if isinstance(last, float) and now - last < NOTIFY_INTERVAL_S:
+            return
+        seen["notified"] = now
+        notifier.notify(NOTIFY_TITLE, f"New message from {safe_nickname(nickname)}")
+
+    def on_chat(state: object) -> None:
+        if not isinstance(state, ChatState):
+            return
+        chat_window.set_chat(state)
+        if state.match_id != seen["match"]:
+            seen["match"] = state.match_id
+            seen["notified"] = None
+            known.update(seq=0, read=0)
+        peer_seqs[:] = [m.seq for m in state.messages if not m.mine]
+        newest = max(peer_seqs, default=0)
+        fresh = newest > known["seq"]
+        known["seq"] = max(known["seq"], newest)
+        if state.match_id is None:
+            show_unread()
+            return
+        if state.match_id != seen["opened"]:
+            seen["opened"] = state.match_id
+            chat_window.show()
+            chat_window.raise_()
+        if active():
+            known["read"] = known["seq"]
+        elif fresh:
+            notify(state.peer_nickname)
+        show_unread()
+
+    def on_break(state: object) -> None:
+        match = state.match if isinstance(state, BreakState) else None
+        if match is not None:
+            chat_window.set_shared(
+                shared_labels(match.shared_tags, match.shared_category)
+            )
+
+    def on_activity(is_active_now: bool) -> None:
+        if is_active_now:
+            read_all()
+
+    def on_state(state: str) -> None:
+        chat_window.set_connected(state == "connected")
+
+    window.open_chat_requested.connect(open_chat)
+    remote.chat_changed.connect(on_chat)
+    remote.break_changed.connect(on_break)
+    remote.state_changed.connect(on_state)
+    chat_window.activity_changed.connect(on_activity)
+    chat_window.send_requested.connect(remote.send_message)
+    chat_window.retry_requested.connect(remote.retry_message)
+    chat_window.extend_requested.connect(remote.request_extension)
+    chat_window.extension_answered.connect(remote.answer_extension)
+    chat_window.end_requested.connect(remote.end_match)
+    chat_window.block_requested.connect(remote.block_peer)
+    chat_window.report_requested.connect(remote.report_peer)
+    chat_window.close_requested.connect(remote.close_chat)
+    on_state(remote.state)
+    on_chat(remote.chat_state)
 
 
 def wire_remote(
@@ -347,6 +453,8 @@ def main() -> int:
         queue=tracker.queue_state,
         on_accepted=on_accepted,
     )
+    chat_window = ChatWindow()
+    wire_chat(window, chat_window, remote, DesktopNotifier(chat_window))
     try:
         worker.start()
     except CompanionAlreadyRunning:
