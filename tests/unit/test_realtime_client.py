@@ -19,7 +19,10 @@ from breakroom_companion.realtime_client import (
     ServerFrame,
 )
 from breakroom_shared.api import (
+    MAX_SERVER_FRAME_BYTES,
     MAX_WS_FRAME_BYTES,
+    WsChatMessage,
+    WsChatStatus,
     WsMatchCreated,
     WsMatchEnded,
     WsQueueEnded,
@@ -492,3 +495,122 @@ def test_a_malformed_product_frame_closes_the_socket_and_is_not_delivered() -> N
 
     assert got == []
     assert server_saw == [CLOSE_PROTOCOL_ERROR]
+
+
+# --- chat frames (M5-05) ---
+
+
+def _message_json(seq: int, body: str) -> dict[str, Any]:
+    return {
+        "seq": seq,
+        "mine": False,
+        "body": body,
+        "sent_at": "2026-10-14T12:00:01+00:00",
+        "client_message_id": None,
+    }
+
+
+def _chat_message_frame(seq: int, body: str) -> str:
+    return frame(
+        "chat.message", match_id=MATCH["match_id"], message=_message_json(seq, body)
+    )
+
+
+def _chat_status_frame(change: str) -> str:
+    status = chat_json(str(MATCH["match_id"]), "2026-10-14T12:15:00+00:00")
+    return frame("chat.status", status=status, change=change)
+
+
+def test_chat_frames_reach_on_frame_in_order() -> None:
+    got: list[ServerFrame] = []
+
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.send(ready_frame())
+        await ws.send(_chat_message_frame(1, "hello"))
+        await ws.send(_chat_status_frame("extension_requested"))
+        await ws.send(_chat_message_frame(2, "again"))
+        await ws.wait_closed()
+
+    async def scenario(origin: str) -> None:
+        done = asyncio.Event()
+
+        def on_frame(f: ServerFrame) -> None:
+            got.append(f)
+            if len(got) == 3:
+                done.set()
+
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S, on_frame)
+        try:
+            await client.connect("bra_x")
+            await asyncio.wait_for(done.wait(), TIMEOUT_S)
+        finally:
+            await client.close()
+
+    run(with_fake_server(handler, scenario))
+
+    assert [type(f).__name__ for f in got] == [
+        "WsChatMessage",
+        "WsChatStatus",
+        "WsChatMessage",
+    ]
+    first, second, third = got
+    assert isinstance(first, WsChatMessage) and first.message.body == "hello"
+    assert isinstance(second, WsChatStatus) and second.change == "extension_requested"
+    assert isinstance(third, WsChatMessage) and third.message.seq == 2
+
+
+def test_a_6_kib_frame_is_accepted() -> None:
+    got: list[ServerFrame] = []
+    raw = _chat_message_frame(1, "x" * (6 * 1024))
+    assert 6 * 1024 < len(raw) < 8 * 1024
+
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.send(ready_frame())
+        await ws.send(raw)
+        await ws.wait_closed()
+
+    async def scenario(origin: str) -> None:
+        done = asyncio.Event()
+
+        def on_frame(f: ServerFrame) -> None:
+            got.append(f)
+            done.set()
+
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S, on_frame)
+        try:
+            await client.connect("bra_x")
+            await asyncio.wait_for(done.wait(), TIMEOUT_S)
+        finally:
+            await client.close()
+
+    run(with_fake_server(handler, scenario))
+
+    (only,) = got
+    assert isinstance(only, WsChatMessage) and len(only.message.body) == 6 * 1024
+
+
+def test_a_9_kib_frame_closes_the_socket_and_is_not_delivered() -> None:
+    got: list[ServerFrame] = []
+    raw = _chat_message_frame(1, "x" * (9 * 1024))
+    assert len(raw) > MAX_SERVER_FRAME_BYTES
+
+    async def handler(ws: ServerConnection) -> None:
+        await ws.recv()
+        await ws.send(ready_frame())
+        await ws.send(raw)
+        await ws.wait_closed()
+
+    async def scenario(origin: str) -> None:
+        client = RealtimeClient(origin, TIMEOUT_S, FAST_PING_S, got.append)
+        try:
+            await client.connect("bra_x")
+            code = await asyncio.wait_for(client.wait_closed(), TIMEOUT_S)
+            assert code is None or code == 1009  # message too big
+        finally:
+            await client.close()
+
+    run(with_fake_server(handler, scenario))
+
+    assert got == []

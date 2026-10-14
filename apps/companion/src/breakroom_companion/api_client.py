@@ -20,6 +20,7 @@ from breakroom_shared.api import (
     Consent,
     ErrorResponse,
     ExtensionAction,
+    ExtensionRequest,
     Me,
     MessagePage,
     MessageView,
@@ -35,6 +36,8 @@ from breakroom_shared.api import (
 )
 
 MAX_RESPONSE_BYTES = 64 * 1024
+# A page of 100 messages of 1000 four-byte characters is ~400 KB.
+MAX_PAGE_BYTES = 1024 * 1024
 
 _M = TypeVar("_M", bound=BaseModel)
 
@@ -74,6 +77,7 @@ class ApiClient:
         model: type[_M] | None,
         body: BaseModel | None = None,
         access_token: str | None = None,
+        max_bytes: int = MAX_RESPONSE_BYTES,
     ) -> _M | None:
         headers = {"Authorization": f"Bearer {access_token}"} if access_token else {}
         try:
@@ -91,7 +95,7 @@ class ApiClient:
             content = response.content
         except Exception:  # httpx errors can quote the URL; keep none of it
             raise ApiError("network") from None
-        if len(content) > MAX_RESPONSE_BYTES:
+        if len(content) > max_bytes:
             raise ApiError("network")
         if 200 <= response.status_code < 300:
             if model is None:
@@ -221,20 +225,50 @@ class ApiClient:
         self, access_token: str, match_id: UUID, request: SendMessageRequest
     ) -> MessageView:
         """POST /v1/matches/{id}/messages (201 new, 200 replay)."""
-        raise NotImplementedError
+        reply = await self._call(
+            "POST",
+            f"/v1/matches/{match_id}/messages",
+            model=MessageView,
+            body=request,
+            access_token=access_token,
+        )
+        assert reply is not None
+        return reply
 
     async def list_messages(
         self, access_token: str, match_id: UUID, after_seq: int
     ) -> MessagePage:
         """GET /v1/matches/{id}/messages?after_seq=N, oldest first."""
-        raise NotImplementedError
+        reply = await self._call(
+            "GET",
+            f"/v1/matches/{match_id}/messages?after_seq={int(after_seq)}",
+            model=MessagePage,
+            access_token=access_token,
+            max_bytes=MAX_PAGE_BYTES,
+        )
+        assert reply is not None
+        return reply
 
     async def extension(
         self, access_token: str, match_id: UUID, action: ExtensionAction
     ) -> ChatStatus:
         """POST /v1/matches/{id}/extension."""
-        raise NotImplementedError
+        reply = await self._call(
+            "POST",
+            f"/v1/matches/{match_id}/extension",
+            model=ChatStatus,
+            body=ExtensionRequest(action=action),
+            access_token=access_token,
+        )
+        assert reply is not None
+        return reply
 
     async def report(self, access_token: str, request: ReportRequest) -> None:
         """POST /v1/reports (204)."""
-        raise NotImplementedError
+        await self._call(
+            "POST",
+            "/v1/reports",
+            model=None,
+            body=request,
+            access_token=access_token,
+        )

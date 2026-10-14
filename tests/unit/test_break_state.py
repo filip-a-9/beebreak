@@ -124,9 +124,10 @@ CHANGES: dict[tuple[BreakPhase, str], BreakState] = {
     ("joining", "sync_match"): MATCHED,
     ("searching", "sync_nothing"): NONE,
     ("searching", "sync_nothing_in_flight"): NONE,
-    ("matched", "sync_nothing_in_flight"): NONE,
+    # The match ended while this device was offline (M5-05).
+    ("matched", "sync_nothing_in_flight"): BreakState(phase="ended", match=MATCH),
     ("searching", "sync_match"): MATCHED,
-    ("matched", "sync_nothing"): NONE,
+    ("matched", "sync_nothing"): BreakState(phase="ended", match=MATCH),
     ("matched", "sync_queue"): SEARCHING,
     ("none", "queue_joined_current"): SEARCHING,
     ("joining", "queue_joined_current"): SEARCHING,

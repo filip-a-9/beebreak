@@ -137,6 +137,10 @@ def _sync(
         return BreakState(phase="searching", entry=queue)
     if state.phase == "joining" and in_flight:
         return state  # our own request is still outstanding
+    if state.phase == "matched" and state.match is not None:
+        # The match is gone (ended while this device was offline): the chat
+        # window shows how it ended; `Dismiss` clears it like a `match.ended`.
+        return BreakState(phase="ended", match=state.match)
     return _NONE
 
 

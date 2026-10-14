@@ -17,6 +17,8 @@ from breakroom_shared.api import (
     Consent,
     QueueEntryView,
     QueueJoinRequest,
+    ReportRequest,
+    SendMessageRequest,
     SessionResponse,
 )
 from breakroom_shared.presence import OutboundPresence
@@ -490,3 +492,276 @@ def test_current_queue_with_a_bad_body_is_network() -> None:
         return "no error"
 
     assert run(scenario()) == "network"
+
+
+# --- chat and reports (M5-05) ---
+
+CHAT_MATCH = UUID(int=700)
+CHAT_CLIENT_ID = UUID(int=701)
+_SENT_AT = datetime(2026, 10, 14, 12, 0, 5, tzinfo=UTC)
+
+
+def _message_json(seq: int, *, mine: bool = True) -> dict[str, Any]:
+    return {
+        "seq": seq,
+        "mine": mine,
+        "body": f"hello {seq}",
+        "sent_at": _SENT_AT.isoformat(),
+        "client_message_id": str(CHAT_CLIENT_ID) if mine else None,
+    }
+
+
+def _status_json(extension: str = "none") -> dict[str, Any]:
+    return {
+        "match_id": str(CHAT_MATCH),
+        "ends_at": "2026-10-14T12:15:00+00:00",
+        "grace_at": "2026-10-14T12:13:00+00:00",
+        "extensions_left": 2,
+        "extension_s": 600,
+        "extension": extension,
+        "peer_online": True,
+    }
+
+
+async def _capture[R](
+    reply: Callable[[httpx.Request], httpx.Response],
+    call: Callable[[ApiClient], Coroutine[Any, Any, R]],
+) -> tuple[R, list[httpx.Request]]:
+    api, seen = mock_api(reply)
+    try:
+        return await call(api), seen
+    finally:
+        await api.aclose()
+
+
+async def _code_of(
+    reply: Callable[[httpx.Request], httpx.Response],
+    call: Callable[[ApiClient], Coroutine[Any, Any, object]],
+) -> str:
+    api, _ = mock_api(reply)
+    try:
+        await call(api)
+    except ApiError as exc:
+        return exc.code
+    finally:
+        await api.aclose()
+    return "no error"
+
+
+@pytest.mark.parametrize("status", [200, 201])
+def test_send_message_posts_exactly_the_request(status: int) -> None:
+    body = SendMessageRequest(client_message_id=CHAT_CLIENT_ID, body="hello 7")
+
+    view, seen = run(
+        _capture(
+            lambda _r: httpx.Response(status, json=_message_json(7)),
+            lambda api: api.send_message("bra_tok", CHAT_MATCH, body),
+        )
+    )
+
+    assert view.seq == 7 and view.mine and view.client_message_id == CHAT_CLIENT_ID
+    (request,) = seen
+    assert (request.method, request.url.path) == (
+        "POST",
+        f"/v1/matches/{CHAT_MATCH}/messages",
+    )
+    assert request.headers["authorization"] == "Bearer bra_tok"
+    assert json.loads(request.content) == {
+        "client_message_id": str(CHAT_CLIENT_ID),
+        "body": "hello 7",
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (400, "invalid_request"),
+        (401, "unauthorized"),
+        (404, "not_found"),
+        (409, "chat_ended"),
+        (429, "rate_limited"),
+    ],
+)
+def test_send_message_error_codes_map(status: int, code: str) -> None:
+    body = SendMessageRequest(client_message_id=CHAT_CLIENT_ID, body="x")
+
+    assert (
+        run(
+            _code_of(
+                error_reply(status, code),
+                lambda api: api.send_message("bra_tok", CHAT_MATCH, body),
+            )
+        )
+        == code
+    )
+
+
+def test_list_messages_gets_after_seq_with_a_bearer_token() -> None:
+    page = {"messages": [_message_json(4), _message_json(5, mine=False)], "last_seq": 5}
+
+    result, seen = run(
+        _capture(
+            lambda _r: httpx.Response(200, json=page),
+            lambda api: api.list_messages("bra_tok", CHAT_MATCH, 3),
+        )
+    )
+
+    assert [m.seq for m in result.messages] == [4, 5] and result.last_seq == 5
+    (request,) = seen
+    assert (request.method, request.url.path) == (
+        "GET",
+        f"/v1/matches/{CHAT_MATCH}/messages",
+    )
+    assert request.url.params["after_seq"] == "3"
+    assert request.headers["authorization"] == "Bearer bra_tok"
+    assert request.content == b""
+
+
+def test_list_messages_accepts_a_full_page_of_large_messages() -> None:
+    big = {**_message_json(1), "body": "\U0001f600" * 1000}
+    messages = [{**big, "seq": seq} for seq in range(1, 101)]
+
+    result, _ = run(
+        _capture(
+            lambda _r: httpx.Response(
+                200, json={"messages": messages, "last_seq": 100}
+            ),
+            lambda api: api.list_messages("bra_tok", CHAT_MATCH, 0),
+        )
+    )
+
+    assert len(result.messages) == 100
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [(400, "invalid_request"), (401, "unauthorized"), (404, "not_found")],
+)
+def test_list_messages_error_codes_map(status: int, code: str) -> None:
+    assert (
+        run(
+            _code_of(
+                error_reply(status, code),
+                lambda api: api.list_messages("bra_tok", CHAT_MATCH, 0),
+            )
+        )
+        == code
+    )
+
+
+def test_list_messages_with_a_bad_body_is_network() -> None:
+    assert (
+        run(
+            _code_of(
+                lambda _r: httpx.Response(200, json={"messages": "no"}),
+                lambda api: api.list_messages("bra_tok", CHAT_MATCH, 0),
+            )
+        )
+        == "network"
+    )
+
+
+@pytest.mark.parametrize("action", ["request", "accept", "decline"])
+def test_extension_posts_the_action_and_returns_the_status(action: Any) -> None:
+    status, seen = run(
+        _capture(
+            lambda _r: httpx.Response(200, json=_status_json("requested_by_me")),
+            lambda api: api.extension("bra_tok", CHAT_MATCH, action),
+        )
+    )
+
+    assert status.extension == "requested_by_me" and status.match_id == CHAT_MATCH
+    (request,) = seen
+    assert (request.method, request.url.path) == (
+        "POST",
+        f"/v1/matches/{CHAT_MATCH}/extension",
+    )
+    assert request.headers["authorization"] == "Bearer bra_tok"
+    assert json.loads(request.content) == {"action": action}
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (404, "not_found"),
+        (409, "chat_ended"),
+        (409, "no_extensions_left"),
+        (409, "no_extension_request"),
+    ],
+)
+def test_extension_error_codes_map(status: int, code: str) -> None:
+    assert (
+        run(
+            _code_of(
+                error_reply(status, code),
+                lambda api: api.extension("bra_tok", CHAT_MATCH, "request"),
+            )
+        )
+        == code
+    )
+
+
+def test_report_posts_exactly_the_request_and_accepts_204() -> None:
+    model = ReportRequest(
+        match_id=CHAT_MATCH, reason="spam", note="again", message_seqs=(2, 5)
+    )
+
+    result, seen = run(
+        _capture(
+            lambda _r: httpx.Response(204),
+            lambda api: api.report("bra_tok", model),
+        )
+    )
+
+    assert result is None
+    (request,) = seen
+    assert (request.method, request.url.path) == ("POST", "/v1/reports")
+    assert request.headers["authorization"] == "Bearer bra_tok"
+    assert json.loads(request.content) == {
+        "match_id": str(CHAT_MATCH),
+        "reason": "spam",
+        "note": "again",
+        "message_seqs": [2, 5],
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        (400, "invalid_request"),
+        (404, "not_found"),
+        (409, "already_reported"),
+        (409, "report_window_closed"),
+        (429, "rate_limited"),
+    ],
+)
+def test_report_error_codes_map(status: int, code: str) -> None:
+    model = ReportRequest(match_id=CHAT_MATCH, reason="other")
+
+    assert (
+        run(
+            _code_of(
+                error_reply(status, code),
+                lambda api: api.report("bra_tok", model),
+            )
+        )
+        == code
+    )
+
+
+def test_chat_calls_never_leak_the_token_or_text_into_errors() -> None:
+    body = SendMessageRequest(client_message_id=CHAT_CLIENT_ID, body="secret words")
+
+    async def scenario() -> str:
+        api, _ = mock_api(lambda _r: httpx.Response(500, text="oops secret words"))
+        try:
+            await api.send_message("bra_secret", CHAT_MATCH, body)
+        except ApiError as exc:
+            return f"{exc!r} {exc}"
+        finally:
+            await api.aclose()
+        return ""
+
+    text = run(scenario())
+
+    assert text and "bra_secret" not in text and "secret words" not in text

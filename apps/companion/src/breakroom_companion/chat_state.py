@@ -5,7 +5,7 @@ send attempts into a `ChatState` and emits it on `chat_changed`. Messages are
 ordered by server sequence number only, never by time.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -130,6 +130,102 @@ ChatEvent = (
 )
 
 
+_NONE = ChatState()
+
+
 def reduce(state: ChatState, event: ChatEvent, now: datetime) -> ChatState:
-    """The next state. Events for another match id leave `state` unchanged."""
-    raise NotImplementedError
+    """The next state. Events for another match id leave `state` unchanged.
+
+    `now` is part of the contract for callers that need a clock; no rule uses
+    it (`ServerTime` carries its own local time).
+    """
+    del now
+    match event:
+        case SignedOut():
+            return _NONE
+        case ServerTime(server_time=server_time, local_now=local_now):
+            offset = (server_time - local_now).total_seconds()
+            return replace(state, server_offset_s=offset)
+        case Closed():
+            # Only an ended chat is forgotten; a live one stays.
+            return _NONE if state.ended is not None else state
+        case Matched(match=match):
+            return _matched(state, match)
+        case Messages(match_id=match_id, page=page):
+            if match_id != state.match_id:
+                return state
+            return _merge(state, page.messages)
+        case ChatFrame(frame=frame):
+            if frame.match_id != state.match_id:
+                return state
+            return _merge(state, (frame.message,))
+        case StatusEvent(status=status):
+            if status.match_id != state.match_id or state.ended is not None:
+                return state
+            return replace(state, status=status)
+        case Sending(client_message_id=cid, body=body):
+            return _sending(state, cid, body)
+        case SendFailed(client_message_id=cid):
+            return _send_failed(state, cid)
+        case Ended(match_id=match_id, reason=reason):
+            if state.match_id is None or state.ended is not None:
+                return state
+            if match_id is not None and match_id != state.match_id:
+                return state
+            failed = tuple(replace(p, status="failed") for p in state.pending)
+            return replace(state, ended=reason or "ended", pending=failed)
+        case Reported(match_id=match_id):
+            if match_id != state.match_id or state.reported:
+                return state
+            return replace(state, reported=True)
+    return state  # pragma: no cover
+
+
+def _matched(state: ChatState, match: MatchView) -> ChatState:
+    if match.match_id != state.match_id:
+        return ChatState(
+            match_id=match.match_id,
+            peer_nickname=match.peer_nickname,
+            status=match.chat,
+            server_offset_s=state.server_offset_s,
+        )
+    if state.ended is not None:
+        return state  # an ended chat never comes back to life
+    return replace(state, peer_nickname=match.peer_nickname, status=match.chat)
+
+
+def _merge(state: ChatState, incoming: tuple[MessageView, ...]) -> ChatState:
+    """Add messages by seq (the first copy of a seq wins) and drop the pending
+    entries their echoes confirm. Sorted by seq only, never by time."""
+    by_seq = {m.seq: m for m in state.messages}
+    for message in incoming:
+        by_seq.setdefault(message.seq, message)
+    confirmed = {
+        m.client_message_id
+        for m in incoming
+        if m.mine and m.client_message_id is not None
+    }
+    pending = tuple(p for p in state.pending if p.client_message_id not in confirmed)
+    messages = tuple(by_seq[seq] for seq in sorted(by_seq))
+    if messages == state.messages and pending == state.pending:
+        return state
+    return replace(state, messages=messages, pending=pending)
+
+
+def _sending(state: ChatState, cid: UUID, body: str) -> ChatState:
+    if state.match_id is None or state.ended is not None:
+        return state
+    mine = PendingMessage(cid, body, "sending")
+    for index, existing in enumerate(state.pending):
+        if existing.client_message_id == cid:  # a retry keeps its place
+            pending = (*state.pending[:index], mine, *state.pending[index + 1 :])
+            return replace(state, pending=pending)
+    return replace(state, pending=(*state.pending, mine))
+
+
+def _send_failed(state: ChatState, cid: UUID) -> ChatState:
+    pending = tuple(
+        replace(p, status="failed") if p.client_message_id == cid else p
+        for p in state.pending
+    )
+    return state if pending == state.pending else replace(state, pending=pending)

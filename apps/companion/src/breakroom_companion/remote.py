@@ -36,7 +36,22 @@ from breakroom_companion.break_state import (
     Sync,
     reduce,
 )
-from breakroom_companion.chat_state import ChatState
+from breakroom_companion.chat_state import (
+    ChatEvent,
+    ChatFrame,
+    ChatState,
+    Closed,
+    Ended,
+    Matched,
+    Messages,
+    Reported,
+    SendFailed,
+    Sending,
+    ServerTime,
+    StatusEvent,
+)
+from breakroom_companion.chat_state import SignedOut as ChatSignedOut
+from breakroom_companion.chat_state import reduce as chat_reduce
 from breakroom_companion.config import worker_start_timeout_s, worker_stop_timeout_s
 from breakroom_companion.credentials import CredentialStore, StoredCredentials
 from breakroom_companion.realtime_client import (
@@ -48,16 +63,26 @@ from breakroom_companion.remote_config import RemoteConfig
 from breakroom_shared.api import (
     WS_CLOSE,
     Consent,
+    ExtensionAction,
+    MatchView,
     Me,
+    MessagePage,
+    MessageView,
     QueueJoinRequest,
     ReportReason,
+    ReportRequest,
+    SendMessageRequest,
     TokenPair,
+    WsChatMessage,
+    WsChatStatus,
     WsMatchCreated,
     WsMatchEnded,
     WsQueueEnded,
     WsQueueJoined,
+    WsReady,
     WsSync,
 )
+from breakroom_shared.chat import MAX_NOTE_CHARS, normalize_text
 from breakroom_shared.presence import OutboundPresence
 
 ConnectionState = Literal[
@@ -130,6 +155,10 @@ class RemoteWorker(QObject):
         self._join_in_flight = False
         self._frames_seen = 0  # bumped per applied queue/match/sync frame
         self._chat = ChatState()
+        self._gap_tasks: dict[UUID, asyncio.Task[None]] = {}
+        self._gap_target: dict[UUID, int] = {}
+        self._resend_task: asyncio.Task[None] | None = None
+        self._inflight: set[UUID] = set()  # client message ids being POSTed
 
     # --- public, thread-safe ---
 
@@ -184,24 +213,30 @@ class RemoteWorker(QObject):
     def send_message(self, text: str) -> None:
         """Normalize and send `text` to the current chat; no-op if it
         normalizes to nothing or no chat is live."""
+        self._submit(self._send_message(text))
 
     def retry_message(self, client_message_id: UUID) -> None:
         """Resend a `failed` pending message with the same id."""
+        self._submit(self._retry_message(client_message_id))
 
     def request_extension(self) -> None:
         """Ask for (or, if the peer asked, accept) one more extension."""
+        self._submit(self._extension("request"))
 
     def answer_extension(self, accept: bool) -> None:
         """Accept or decline the pending request (declining also cancels
         one's own)."""
+        self._submit(self._extension("accept" if accept else "decline"))
 
     def report_peer(
         self, reason: ReportReason, note: str | None, message_seqs: tuple[int, ...]
     ) -> None:
         """Report the peer of the current or just-ended chat."""
+        self._submit(self._report_peer(reason, note, message_seqs))
 
     def close_chat(self) -> None:
         """Forget an ended chat (its window was closed); no-op while live."""
+        self._submit(self._close_chat())
 
     def stop(self) -> None:
         """Close the socket and client, join the thread (bounded wait)."""
@@ -275,6 +310,7 @@ class RemoteWorker(QObject):
             self._emit_error("network")
 
     async def _shutdown(self) -> None:
+        await self._cancel_chat_tasks()
         await self._cancel_connection()
         if self._api is not None:
             await self._api.aclose()
@@ -304,17 +340,236 @@ class RemoteWorker(QObject):
             with contextlib.suppress(RuntimeError):  # Qt object already deleted
                 self.break_changed.emit(new)
 
+    def _apply_sync(
+        self, queue: Any, match: Any, in_flight: bool, *, from_frame: bool
+    ) -> None:
+        self._apply(Sync(queue, match, in_flight))
+        if match is not None:
+            self._on_matched(match)
+        elif from_frame and self._chat.match_id is not None:
+            # A sync without our match: it ended while this device was offline.
+            self._apply_chat(Ended(None, None))
+
     def _on_frame(self, frame: ServerFrame) -> None:
+        self._note_server_time(frame.server_time)
         if isinstance(
             frame, WsSync | WsQueueJoined | WsQueueEnded | WsMatchCreated | WsMatchEnded
         ):
             self._frames_seen += 1
         if isinstance(frame, WsSync):
-            self._apply(Sync(frame.queue, frame.match, self._join_in_flight))
-        elif isinstance(
-            frame, WsQueueJoined | WsQueueEnded | WsMatchCreated | WsMatchEnded
-        ):
+            self._apply_sync(
+                frame.queue, frame.match, self._join_in_flight, from_frame=True
+            )
+        elif isinstance(frame, WsMatchCreated):
             self._apply(Frame(frame))
+            self._on_matched(frame.match)
+        elif isinstance(frame, WsMatchEnded):
+            self._apply(Frame(frame))
+            self._apply_chat(Ended(frame.match_id, frame.reason))
+        elif isinstance(frame, WsQueueJoined | WsQueueEnded):
+            self._apply(Frame(frame))
+        elif isinstance(frame, WsChatMessage):
+            self._apply_chat(ChatFrame(frame))
+            if frame.match_id == self._chat.match_id:
+                self._check_gap(frame.message.seq)
+        elif isinstance(frame, WsChatStatus):
+            self._apply_chat(StatusEvent(frame.status))
+
+    # --- chat (loop thread) ---
+
+    def _apply_chat(self, event: ChatEvent) -> None:
+        new = chat_reduce(self._chat, event, datetime.now(UTC))
+        if new != self._chat:
+            self._chat = new
+            with contextlib.suppress(RuntimeError):  # Qt object already deleted
+                self.chat_changed.emit(new)
+
+    def _note_server_time(self, server_time: datetime) -> None:
+        """Refresh the clock offset from a frame. Not emitted on its own: every
+        emitted state carries the newest offset, and a countdown needs no push
+        for a few milliseconds of jitter."""
+        now = datetime.now(UTC)
+        self._chat = chat_reduce(self._chat, ServerTime(server_time, now), now)
+
+    def _on_matched(self, match: MatchView) -> None:
+        self._apply_chat(Matched(match))
+        self._check_gap(match.last_seq)
+
+    def _contiguous(self) -> int:
+        """The highest seq n such that messages 1..n are all known."""
+        known = 0
+        for message in self._chat.messages:
+            if message.seq == known + 1:
+                known += 1
+            elif message.seq > known + 1:
+                break
+        return known
+
+    def _check_gap(self, target: int) -> None:
+        """Start (or extend) the one fetch per match that fills a gap up to
+        `target`."""
+        match_id = self._chat.match_id
+        if match_id is None or self._chat.ended is not None or not self._signed_in:
+            return
+        if target <= self._contiguous():
+            return
+        self._gap_target[match_id] = max(self._gap_target.get(match_id, 0), target)
+        if match_id not in self._gap_tasks:
+            self._gap_tasks[match_id] = asyncio.create_task(self._fill_gap(match_id))
+
+    async def _fill_gap(self, match_id: UUID) -> None:
+        api = self._api
+        assert api is not None
+        try:
+            while self._chat.match_id == match_id and self._chat.ended is None:
+                known = self._contiguous()
+                if known >= self._gap_target.get(match_id, 0):
+                    return
+                page = await self._fetch_page(api, match_id, known)
+                self._apply_chat(Messages(match_id, page))
+                self._gap_target[match_id] = max(
+                    self._gap_target.get(match_id, 0), page.last_seq
+                )
+                if self._contiguous() <= known:
+                    return  # no progress; the next frame or sync tries again
+        except ApiError:
+            _log.warning("chat gap fill failed")
+        finally:
+            self._gap_tasks.pop(match_id, None)
+            self._gap_target.pop(match_id, None)
+
+    async def _fetch_page(
+        self, api: ApiClient, match_id: UUID, after_seq: int
+    ) -> MessagePage:
+        return await self._authed(
+            lambda token: api.list_messages(token, match_id, after_seq)
+        )
+
+    def _live_chat(self) -> UUID | None:
+        if not self._signed_in or self._chat.ended is not None:
+            return None
+        return self._chat.match_id
+
+    async def _send_message(self, text: str) -> None:
+        body = normalize_text(text)
+        match_id = self._live_chat()
+        if body is None or match_id is None:
+            return
+        cid = uuid4()
+        self._apply_chat(Sending(cid, body))
+        await self._post_message(match_id, cid, body, only_if_connected=True)
+
+    async def _retry_message(self, cid: UUID) -> None:
+        match_id = self._live_chat()
+        if match_id is None or cid in self._inflight:
+            return
+        for pending in self._chat.pending:
+            if pending.client_message_id == cid:
+                self._apply_chat(Sending(cid, pending.body))
+                await self._post_message(
+                    match_id, cid, pending.body, only_if_connected=False
+                )
+                return
+
+    async def _post_message(
+        self, match_id: UUID, cid: UUID, body: str, *, only_if_connected: bool
+    ) -> None:
+        """POST one pending message. A network failure (or being offline) leaves
+        it `sending`: it is resent with the same id after the next
+        `session.ready`. Any HTTP error marks it `failed`."""
+        api = self._api
+        assert api is not None
+        if only_if_connected and self.state != "connected":
+            return
+        request = SendMessageRequest(client_message_id=cid, body=body)
+        self._inflight.add(cid)
+        try:
+            view = await self._authed(
+                lambda token: api.send_message(token, match_id, request)
+            )
+        except ApiError as exc:
+            if exc.code != "network" and self._signed_in:
+                self._apply_chat(SendFailed(cid))
+            return
+        finally:
+            self._inflight.discard(cid)
+        self._confirm(match_id, view)
+
+    def _confirm(self, match_id: UUID, view: MessageView) -> None:
+        page = MessagePage(messages=(view,), last_seq=view.seq)
+        self._apply_chat(Messages(match_id, page))
+        self._check_gap(view.seq)
+
+    def _on_ready(self, frame: WsReady) -> None:
+        """A session is up: resend what the last one could not deliver."""
+        self._note_server_time(frame.server_time)
+        if self._resend_task is None or self._resend_task.done():
+            self._resend_task = asyncio.create_task(self._resend_pending())
+
+    async def _resend_pending(self) -> None:
+        for pending in self._chat.pending:
+            match_id = self._live_chat()
+            if match_id is None:
+                return
+            if (
+                pending.status == "sending"
+                and pending.client_message_id not in self._inflight
+            ):
+                await self._post_message(
+                    match_id,
+                    pending.client_message_id,
+                    pending.body,
+                    only_if_connected=False,
+                )
+
+    async def _extension(self, action: ExtensionAction) -> None:
+        api = self._api
+        match_id = self._live_chat()
+        if api is None or match_id is None:
+            return
+        status = await self._authed(
+            lambda token: api.extension(token, match_id, action)
+        )
+        self._apply_chat(StatusEvent(status))
+
+    async def _report_peer(
+        self, reason: ReportReason, note: str | None, message_seqs: tuple[int, ...]
+    ) -> None:
+        api = self._api
+        match_id = self._chat.match_id
+        if api is None or not self._signed_in or match_id is None:
+            return
+        text: str | None = None
+        if note is not None and note.strip():
+            text = normalize_text(note, max_chars=MAX_NOTE_CHARS)
+            if text is None:
+                self._emit_error("invalid_request")
+                return
+        try:
+            request = ReportRequest(
+                match_id=match_id, reason=reason, note=text, message_seqs=message_seqs
+            )
+        except ValueError:
+            self._emit_error("invalid_request")
+            return
+        await self._authed(lambda token: api.report(token, request))
+        self._apply_chat(Reported(match_id))
+
+    async def _close_chat(self) -> None:
+        self._apply_chat(Closed())
+
+    async def _cancel_chat_tasks(self) -> None:
+        current = asyncio.current_task()
+        tasks = [*self._gap_tasks.values()]
+        if self._resend_task is not None:
+            tasks.append(self._resend_task)
+        self._gap_tasks.clear()
+        self._gap_target.clear()
+        self._resend_task = None
+        tasks = [t for t in tasks if t is not current]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def _synthetic(self) -> dict[str, Any]:
         return {"version": 1, "event_id": uuid4(), "server_time": datetime.now(UTC)}
@@ -355,7 +610,7 @@ class RemoteWorker(QObject):
             return
         if self._frames_seen != seen:
             return  # a newer frame arrived while the reply was in flight
-        self._apply(Sync(snapshot.queue, snapshot.match))
+        self._apply_sync(snapshot.queue, snapshot.match, False, from_frame=False)
 
     async def _leave_queue(self) -> None:
         api = self._api
@@ -402,6 +657,7 @@ class RemoteWorker(QObject):
                 )
             )
         )
+        self._apply_chat(Ended(match.match_id, "ended"))
 
     async def _dismiss_break(self) -> None:
         self._apply(Dismiss())
@@ -526,6 +782,8 @@ class RemoteWorker(QObject):
         self._signed_in = False
         await self._cancel_connection()
         self._apply(SignedOut())
+        await self._cancel_chat_tasks()
+        self._apply_chat(ChatSignedOut())
         self._access = None
         self._refresh_token = None
         await asyncio.to_thread(self.store.clear)
@@ -590,8 +848,9 @@ class RemoteWorker(QObject):
                     )
                     self._rt = rt
                     assert self._access is not None
-                    await rt.connect(self._access)
+                    ready = await rt.connect(self._access)
                     attempt = 0  # a good connection ends the backoff
+                    self._on_ready(ready)
                     code = await self._hold(rt)
                     after_4401 = False
                 except RealtimeError as exc:
