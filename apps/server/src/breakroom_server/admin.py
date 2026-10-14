@@ -15,9 +15,9 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import make_engine
@@ -29,6 +29,8 @@ from breakroom_server.models import (
     Match,
     MatchParticipant,
     QueueEntry,
+    Report,
+    ReportMessage,
     User,
     email_canonical,
 )
@@ -91,6 +93,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     queue.add_parser("list", help="queued entries (presence field names only)")
     sub.add_parser("matches", help="active matches")
+
+    report = sub.add_parser("report", help="user reports").add_subparsers(
+        dest="action", required=True
+    )
+    rlist = report.add_parser("list", help="reports, oldest first (no user content)")
+    rlist.add_argument("--all", action="store_true", help="include resolved reports")
+    report.add_parser(
+        "show", help="one report with its note and evidence"
+    ).add_argument("report_id")
+    resolve = report.add_parser("resolve", help="resolve an open report")
+    resolve.add_argument("report_id")
+    resolve.add_argument("outcome", choices=("dismiss", "disable"))
 
     block = sub.add_parser("block", help="blocks between users").add_subparsers(
         dest="action", required=True
@@ -203,6 +217,11 @@ def _user_set_status(
     session: Session, nickname: str, status: str, now: datetime
 ) -> None:
     user = _find_user(session, nickname)
+    _apply_status(session, user, status, now)
+    session.commit()
+
+
+def _apply_status(session: Session, user: User, status: str, now: datetime) -> None:
     user.status = status
     if status == "disabled":
         session.execute(
@@ -210,7 +229,6 @@ def _user_set_status(
             .where(Device.user_id == user.id, Device.revoked_at.is_(None))
             .values(revoked_at=now, access_hash=None, connected_at=None)
         )
-    session.commit()
 
 
 def _devices(session: Session) -> None:
@@ -264,11 +282,97 @@ def _matches(session: Session) -> None:
                 .where(MatchParticipant.match_id == match.id)
             )
         )
-        print(
-            "\t".join(
-                [*nicknames, match.created_at.isoformat(), match.ends_at.isoformat()]
+        messages = session.scalar(
+            select(func.coalesce(func.sum(MatchParticipant.messages_sent), 0)).where(
+                MatchParticipant.match_id == match.id
             )
         )
+        print(
+            "\t".join(
+                [
+                    *nicknames,
+                    match.created_at.isoformat(),
+                    match.ends_at.isoformat(),
+                    f"extensions_used={match.extensions_used}",
+                    f"messages={messages}",
+                ]
+            )
+        )
+
+
+def _find_report(session: Session, raw_id: str) -> Report:
+    report = session.get(Report, _parse_uuid(raw_id))
+    if report is None:
+        raise AdminError("no such report")
+    return report
+
+
+def _report_list(session: Session, include_all: bool) -> None:
+    reporter = aliased(User)
+    reported = aliased(User)
+    evidence = (
+        select(func.count())
+        .where(ReportMessage.report_id == Report.id)
+        .scalar_subquery()
+    )
+    query = (
+        select(Report, reporter.nickname, reported.nickname, evidence)
+        .join(reporter, reporter.id == Report.reporter_id)
+        .join(reported, reported.id == Report.reported_id)
+        .order_by(Report.created_at, Report.id)
+    )
+    if not include_all:
+        query = query.where(Report.status == "open")
+    # Never the note or any body here; `report show` prints them.
+    for row in session.execute(query):
+        report: Report = row[0]
+        reporter_name: str | None = row[1]
+        reported_name: str | None = row[2]
+        count: int = row[3]
+        print(
+            f"{report.id}\t{report.created_at.isoformat()}\t{report.reason}\t"
+            f"{reporter_name or '-'}\t{reported_name or '-'}\t{count}\t{report.status}"
+        )
+
+
+def _report_show(session: Session, raw_id: str) -> None:
+    report = _find_report(session, raw_id)
+    names = {
+        u.id: u.nickname or "-"
+        for u in session.scalars(
+            select(User).where(User.id.in_([report.reporter_id, report.reported_id]))
+        )
+    }
+    print("WARNING: the output below contains user-written content.")
+    print(f"id: {report.id}")
+    print(f"match: {report.match_id}")
+    print(f"created: {report.created_at.isoformat()}")
+    print(f"reason: {report.reason}")
+    print(f"reporter: {names.get(report.reporter_id, '-')}")
+    print(f"reported: {names.get(report.reported_id, '-')}")
+    print(f"status: {report.status}")
+    resolved = report.resolved_at.isoformat() if report.resolved_at else "-"
+    print(f"resolved: {resolved}")
+    print(f"note: {report.note if report.note is not None else '-'}")
+    for msg in session.scalars(
+        select(ReportMessage)
+        .where(ReportMessage.report_id == report.id)
+        .order_by(ReportMessage.seq)
+    ):
+        print(f"[{msg.seq}] {msg.author} {msg.sent_at.isoformat()}: {msg.body}")
+
+
+def _report_resolve(session: Session, raw_id: str, outcome: str, now: datetime) -> None:
+    report = _find_report(session, raw_id)
+    if report.status != "open":
+        raise AdminError("report already resolved")
+    report.status = "dismissed" if outcome == "dismiss" else "actioned"
+    report.resolved_at = now
+    if outcome == "disable":
+        user = session.get(User, report.reported_id)
+        if user is not None:
+            _apply_status(session, user, "disabled", now)
+    session.commit()
 
 
 def _block_list(session: Session, nickname: str) -> None:
@@ -322,6 +426,12 @@ def _run(args: argparse.Namespace, clock: Clock, mailer: Mailer | None) -> None:
                     _queue_list(session)
                 case ("matches", _):
                     _matches(session)
+                case ("report", "list"):
+                    _report_list(session, args.all)
+                case ("report", "show"):
+                    _report_show(session, args.report_id)
+                case ("report", "resolve"):
+                    _report_resolve(session, args.report_id, args.outcome, now)
                 case ("block", "list"):
                     _block_list(session, args.nickname)
                 case ("block", "remove"):

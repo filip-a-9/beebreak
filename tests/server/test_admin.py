@@ -1,4 +1,5 @@
 import re
+import uuid
 from datetime import timedelta
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from breakroom_server.models import (
     Match,
     MatchParticipant,
     QueueEntry,
+    Report,
     User,
 )
 from breakroom_server.tokens import hmac_code, normalize_code
@@ -25,7 +27,9 @@ from tests.server.conftest import (
     SeededUser,
     add_ready_user,
     seed_match,
+    seed_message,
     seed_queued,
+    seed_report,
 )
 
 EMAIL = "Jane.Doe@Example.org"
@@ -412,7 +416,12 @@ def test_matches_lists_active_matches_only(
     ada, bob = _seed_pair(session_factory)
     cara = add_ready_user(session_factory, "Cara")
     dan = add_ready_user(session_factory, "Dan")
-    seed_match(session_factory, bob, ada, shared_tags=["python"])
+    active = seed_match(
+        session_factory, bob, ada, shared_tags=["python"], extensions_used=1
+    )
+    seed_message(session_factory, active, ada, seq=1, body="canary-body-xyz")
+    seed_message(session_factory, active, ada, seq=2, body="canary-body-two")
+    seed_message(session_factory, active, bob, seq=3, body="canary-body-three")
     ended = seed_match(session_factory, cara, dan)
     with session_factory() as s:
         match = s.get(Match, ended)
@@ -431,9 +440,11 @@ def test_matches_lists_active_matches_only(
             "Bob",
             START_TIME.isoformat(),
             (START_TIME + timedelta(seconds=900)).isoformat(),
+            "extensions_used=1",
+            "messages=3",
         ]
     ]
-    assert "python" not in lines[0]
+    assert "python" not in lines[0] and "canary" not in lines[0]
 
 
 def test_block_list_and_remove(
@@ -526,3 +537,161 @@ def test_new_subcommands_print_no_email_address(
     captured = capsys.readouterr()
     assert "@" not in captured.out + captured.err
     assert "example.com" not in captured.out
+
+
+# --- M5-01: reports ----------------------------------------------------------
+
+NOTE = "canary-note-qrs"
+BODY_A = "canary-body-aaa"
+BODY_B = "canary-body-bbb"
+
+
+def _seed_reports(
+    session_factory: SessionFactory,
+) -> tuple[SeededUser, SeededUser, dict[str, uuid.UUID]]:
+    ada, bob = _seed_pair(session_factory)
+    ids = {}
+    for name, offset, status in (
+        ("open_late", 20, "open"),
+        ("open_early", 10, "open"),
+        ("done", 5, "dismissed"),
+    ):
+        match = seed_match(session_factory, ada, bob, status="ended")
+        ids[name] = seed_report(
+            session_factory,
+            ada,
+            bob,
+            match,
+            now=START_TIME + timedelta(seconds=offset),
+            note=NOTE,
+            status=status,
+            resolved_at=START_TIME if status != "open" else None,
+            evidence=[(1, "reporter", BODY_A), (2, "reported", BODY_B)],
+        )
+    return ada, bob, ids
+
+
+def test_report_list_open_only_oldest_first_without_content(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, _, ids = _seed_reports(session_factory)
+    assert run(["report", "list"], clock) == 0
+    out = capsys.readouterr().out
+    rows = [ln.split("\t") for ln in out.strip().splitlines()]
+    assert [r[0] for r in rows] == [str(ids["open_early"]), str(ids["open_late"])]
+    assert rows[0][2:] == ["harassment", "Ada", "Bob", "2", "open"]
+    assert NOTE not in out and "canary-body" not in out
+
+
+def test_report_list_all_shows_every_status(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, _, ids = _seed_reports(session_factory)
+    assert run(["report", "list", "--all"], clock) == 0
+    out = capsys.readouterr().out
+    rows = [ln.split("\t") for ln in out.strip().splitlines()]
+    assert [r[0] for r in rows] == [
+        str(ids["done"]),
+        str(ids["open_early"]),
+        str(ids["open_late"]),
+    ]
+    assert [r[-1] for r in rows] == ["dismissed", "open", "open"]
+    assert NOTE not in out and "canary-body" not in out
+
+
+def test_report_show_prints_note_and_evidence_with_warning(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, _, ids = _seed_reports(session_factory)
+    assert run(["report", "show", str(ids["open_early"])], clock) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert "user-written content" in lines[0]
+    assert f"note: {NOTE}" in lines
+    evidence = [ln for ln in lines if ln.startswith("[")]
+    assert len(evidence) == 2
+    assert evidence[0].startswith("[1] reporter ") and evidence[0].endswith(BODY_A)
+    assert evidence[1].startswith("[2] reported ") and evidence[1].endswith(BODY_B)
+    assert "reporter: Ada" in lines and "reported: Bob" in lines
+
+
+def test_report_dismiss_sets_status_and_resolved_at(
+    session_factory: SessionFactory, clock: FixedClock
+) -> None:
+    _, _, ids = _seed_reports(session_factory)
+    clock.advance(60)
+    assert run(["report", "resolve", str(ids["open_early"]), "dismiss"], clock) == 0
+    with session_factory() as s:
+        report = s.get(Report, ids["open_early"])
+        assert report is not None
+        assert report.status == "dismissed"
+        assert report.resolved_at == START_TIME + timedelta(seconds=60)
+        bob = s.scalars(select(User).where(User.nickname == "Bob")).one()
+        assert bob.status == "active"
+
+
+def test_report_disable_disables_account_and_revokes_devices(
+    session_factory: SessionFactory, clock: FixedClock
+) -> None:
+    _, bob, ids = _seed_reports(session_factory)
+    clock.advance(60)
+    assert run(["report", "resolve", str(ids["open_early"]), "disable"], clock) == 0
+    with session_factory() as s:
+        report = s.get(Report, ids["open_early"])
+        assert report is not None
+        assert report.status == "actioned"
+        assert report.resolved_at == START_TIME + timedelta(seconds=60)
+        user = s.get(User, bob.user_id)
+        assert user is not None and user.status == "disabled"
+        devices = list(s.scalars(select(Device).where(Device.user_id == bob.user_id)))
+    assert devices and all(d.revoked_at is not None for d in devices)
+
+
+def test_report_resolve_twice_and_unknown_id_exit_1(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, _, ids = _seed_reports(session_factory)
+    assert run(["report", "resolve", str(ids["open_late"]), "dismiss"], clock) == 0
+    assert run(["report", "resolve", str(ids["open_late"]), "disable"], clock) == 1
+    assert run(["report", "resolve", str(ids["done"]), "dismiss"], clock) == 1
+    assert run(["report", "resolve", str(uuid4()), "dismiss"], clock) == 1
+    assert run(["report", "show", str(uuid4())], clock) == 1
+    captured = capsys.readouterr()
+    assert NOTE not in captured.err and "canary-body" not in captured.err
+    with session_factory() as s:
+        # The failed second resolve did not disable anyone.
+        assert all(u.status == "active" for u in s.scalars(select(User)))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["report"], ["report", "resolve", "x", "dismiss"], ["report", "show", "nope"]],
+)
+def test_report_bad_input_exits_2(
+    argv: list[str], clock: FixedClock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run(argv, clock) == 2
+    assert capsys.readouterr().out == ""
+
+
+def test_report_resolve_rejects_unknown_outcome(clock: FixedClock) -> None:
+    assert run(["report", "resolve", str(uuid4()), "ban"], clock) == 2
+
+
+def test_admin_never_logs_report_content(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _, _, ids = _seed_reports(session_factory)
+    run(["report", "list", "--all"], clock)
+    run(["report", "show", str(ids["open_early"])], clock)
+    run(["report", "resolve", str(ids["open_early"]), "disable"], clock)
+    assert NOTE not in caplog.text and "canary-body" not in caplog.text
