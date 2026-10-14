@@ -30,14 +30,23 @@ from breakroom_server.models import (
     Block,
     Match,
     MatchParticipant,
+    Message,
     QueueEntry,
+    Report,
+    ReportMessage,
     User,
     join_tags,
     split_tags,
 )
 from breakroom_server.notify import Notifier, make_frame
-from breakroom_server.queue import match_view
-from breakroom_shared.api import WsMatchCreated, WsMatchEnded, WsQueueEnded
+from breakroom_server.queue import chat_status, match_view
+from breakroom_shared.api import (
+    ChatChange,
+    WsChatStatus,
+    WsMatchCreated,
+    WsMatchEnded,
+    WsQueueEnded,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -97,6 +106,8 @@ class Matchmaker:
         # for `nullcontext()` to prove the database alone keeps matches unique.
         self._pass_lock: AbstractContextManager[Any] = threading.Lock()
         self._last_purge: datetime | None = None
+        # False until this instance's first presence pass has run.
+        self._presence_primed = False
         self._kick_lock = threading.Lock()
         self._kicked = False
         self._wake: tuple[asyncio.AbstractEventLoop, asyncio.Event] | None = None
@@ -148,11 +159,13 @@ class Matchmaker:
     # --- one pass --------------------------------------------------------------
 
     def run_once(self) -> list[MatchCreated]:
-        """Expire, end, pair, purge; notify. Returns the matches created."""
+        """Expire, end, observe presence, pair, purge; notify. Returns the matches
+        created."""
         with self._pass_lock:
             now = self._clock()
             self._expire_entries(now)
             self._end_matches(now)
+            self._observe_presence(now)
             created = self._pair(now)
             self._purge(now)
         return created
@@ -267,6 +280,7 @@ class Matchmaker:
                         end_reason=reason,
                         shared_tags=None,
                         shared_category=None,
+                        extension_requested_by=None,
                     )
                     .returning(Match.id)
                     .execution_options(synchronize_session=False)
@@ -286,7 +300,7 @@ class Matchmaker:
                 session.execute(
                     update(MatchParticipant)
                     .where(MatchParticipant.match_id.in_(won))
-                    .values(active=False)
+                    .values(active=False, offline_since=None)
                     .execution_options(synchronize_session=False)
                 )
                 for match_id in won:
@@ -303,6 +317,132 @@ class Matchmaker:
                     )
             session.commit()
         return result
+
+    # 2b. presence ---------------------------------------------------------------
+
+    def _observe_presence(self, now: datetime) -> None:
+        """Hold chats through short disconnects; end them after `chat_disconnect_s`.
+
+        The first pass of this instance restarts every offline clock, so a server
+        restart never ends a chat by itself.
+        """
+        active = (
+            Match.status == "active",
+            MatchParticipant.active.is_(True),
+        )
+        if not self._presence_primed:
+            with self._factory() as session:
+                session.execute(
+                    update(MatchParticipant)
+                    .where(
+                        MatchParticipant.offline_since.is_not(None),
+                        MatchParticipant.match_id.in_(
+                            select(Match.id).where(Match.status == "active")
+                        ),
+                    )
+                    .values(offline_since=now)
+                    .execution_options(synchronize_session=False)
+                )
+                session.commit()
+            self._presence_primed = True
+
+        with self._factory() as session:
+            rows = session.execute(
+                select(
+                    MatchParticipant.match_id,
+                    MatchParticipant.user_id,
+                    MatchParticipant.offline_since,
+                )
+                .join(Match, Match.id == MatchParticipant.match_id)
+                .where(*active)
+            ).all()
+        peers: dict[UUID, dict[UUID, datetime | None]] = {}
+        for match_id, user_id, offline_since in rows:
+            peers.setdefault(match_id, {})[user_id] = offline_since
+
+        to_end: list[UUID] = []
+        n_offline = n_online = 0
+        for match_id, members in peers.items():
+            for user_id, offline_since in members.items():
+                connected = self._notifier.is_user_connected(user_id)
+                if connected and offline_since is not None:
+                    if self._flip(now, match_id, user_id, going_offline=False):
+                        n_online += 1
+                elif not connected and offline_since is None:
+                    if self._flip(now, match_id, user_id, going_offline=True):
+                        n_offline += 1
+                elif not connected and offline_since is not None:
+                    held = (now - offline_since).total_seconds()
+                    if held >= self._config.chat_disconnect_s:
+                        to_end.append(match_id)
+        ended = self._end_match_ids(now, list(dict.fromkeys(to_end)), "disconnected")
+        for match_id, users in ended:
+            for user_id in users:
+                self._send(
+                    user_id,
+                    make_frame(
+                        WsMatchEnded, now, match_id=match_id, reason="disconnected"
+                    ),
+                )
+        if n_offline or n_online or ended:
+            _log.info(
+                "presence offline=%d online=%d disconnected matches=%d",
+                n_offline,
+                n_online,
+                len(ended),
+            )
+
+    def _flip(
+        self, now: datetime, match_id: UUID, user_id: UUID, *, going_offline: bool
+    ) -> bool:
+        """Set or clear one participant's `offline_since`; tell the peer if it
+        changed here (the conditional update is what stops a double send)."""
+        with self._factory() as session:
+            column = MatchParticipant.offline_since
+            flipped = cast(
+                "CursorResult[Any]",
+                session.execute(
+                    update(MatchParticipant)
+                    .where(
+                        MatchParticipant.match_id == match_id,
+                        MatchParticipant.user_id == user_id,
+                        MatchParticipant.active.is_(True),
+                        column.is_(None) if going_offline else column.is_not(None),
+                    )
+                    .values(offline_since=now if going_offline else None)
+                    .execution_options(synchronize_session=False)
+                ),
+            ).rowcount
+            frame: BaseModel | None = None
+            peer_id: UUID | None = None
+            match = session.get(Match, match_id)
+            if flipped and match is not None and match.status == "active":
+                peer_id = session.scalars(
+                    select(MatchParticipant.user_id).where(
+                        MatchParticipant.match_id == match_id,
+                        MatchParticipant.user_id != user_id,
+                        MatchParticipant.active.is_(True),
+                    )
+                ).first()
+                if peer_id is not None:
+                    change: ChatChange = (
+                        "peer_offline" if going_offline else "peer_online"
+                    )
+                    frame = make_frame(
+                        WsChatStatus,
+                        now,
+                        status=chat_status(session, self._config, match, peer_id),
+                        change=change,
+                    )
+            session.commit()
+        # An offline peer cannot be told; it fetches the state on reconnect.
+        if (
+            frame is not None
+            and peer_id is not None
+            and self._notifier.is_user_connected(peer_id)
+        ):
+            self._send(peer_id, frame)
+        return bool(flipped)
 
     # 3. pair --------------------------------------------------------------------
 
@@ -516,7 +656,31 @@ class Matchmaker:
             return
         self._last_purge = now
         cutoff = now - timedelta(seconds=self._config.retention_s)
+        message_cutoff = now - timedelta(seconds=self._config.message_retention_s)
+        report_cutoff = now - timedelta(seconds=self._config.report_retention_s)
         with self._factory() as session:
+            msgs = cast(
+                "CursorResult[Any]",
+                session.execute(
+                    delete(Message).where(
+                        Message.match_id.in_(
+                            select(Match.id).where(
+                                Match.status == "ended", Match.ended_at < message_cutoff
+                            )
+                        )
+                    )
+                ),
+            ).rowcount
+            resolved = select(Report.id).where(
+                Report.resolved_at.is_not(None), Report.resolved_at < report_cutoff
+            )
+            session.execute(
+                delete(ReportMessage).where(ReportMessage.report_id.in_(resolved))
+            )
+            reports = cast(
+                "CursorResult[Any]",
+                session.execute(delete(Report).where(Report.id.in_(resolved))),
+            ).rowcount
             entries = cast(
                 "CursorResult[Any]",
                 session.execute(
@@ -530,6 +694,7 @@ class Matchmaker:
                 Match.ended_at < cutoff,
                 ~exists().where(QueueEntry.match_id == Match.id),
             )
+            session.execute(delete(Message).where(Message.match_id.in_(old)))
             session.execute(
                 delete(MatchParticipant).where(MatchParticipant.match_id.in_(old))
             )
@@ -538,5 +703,11 @@ class Matchmaker:
                 session.execute(delete(Match).where(Match.id.in_(old))),
             ).rowcount
             session.commit()
-        if entries or matches:
-            _log.info("purged entries=%d matches=%d", entries, matches)
+        if entries or matches or msgs or reports:
+            _log.info(
+                "purged entries=%d matches=%d messages=%d reports=%d",
+                entries,
+                matches,
+                msgs,
+                reports,
+            )
