@@ -127,6 +127,11 @@ class QueueEntryView(_Model):
 
 # Chat (M5). The chat is the match: its status rides on MatchView.
 
+# Message sequence numbers are 32-bit in the database; larger values are
+# rejected at the edge instead of overflowing the driver.
+MAX_SEQ = 2**31 - 1
+Seq = Annotated[int, Field(ge=1, le=MAX_SEQ)]
+
 # Per viewer, so no frame carries an account ID.
 ExtensionState = Literal["none", "requested_by_me", "requested_by_peer"]
 
@@ -186,7 +191,7 @@ class ReportRequest(_Model):
     reason: ReportReason
     # Normalized by the server, at most MAX_NOTE_CHARS after normalization.
     note: str | None = Field(default=None, max_length=2000)
-    message_seqs: tuple[int, ...] = Field(default=(), max_length=50)
+    message_seqs: tuple[Seq, ...] = Field(default=(), max_length=50)
 
 
 class QueueSnapshot(_Model):

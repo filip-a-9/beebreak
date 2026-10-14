@@ -8,10 +8,10 @@ unknown match. Nothing here logs a message body (rule 16).
 """
 
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from breakroom_server.models import Match, MatchParticipant, Message
 from breakroom_server.notify import make_frame
 from breakroom_server.queue import chat_status
 from breakroom_shared.api import (
+    MAX_SEQ,
     ChatChange,
     ChatStatus,
     ExtensionAction,
@@ -340,7 +341,8 @@ def get_messages(
     request: Request,
     match_id: UUID,
     principal: CurrentPrincipal,
-    after_seq: int = 0,
+    # Negative values are the operation's 400; too-large ones FastAPI's.
+    after_seq: Annotated[int, Query(le=MAX_SEQ)] = 0,
 ) -> MessagePage:
     state = request.app.state
     now: datetime = state.clock()

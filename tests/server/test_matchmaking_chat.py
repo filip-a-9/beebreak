@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
@@ -259,6 +259,7 @@ class _HttpEndsFirst(Matchmaker):
         reason: str,
         *,
         notify_active_only: bool = False,
+        only_if: tuple[ColumnElement[bool], ...] = (),
     ) -> list[tuple[uuid.UUID, list[uuid.UUID]]]:
         if reason == "disconnected":
             with self._factory() as s:
@@ -266,7 +267,11 @@ class _HttpEndsFirst(Matchmaker):
                     end_match(s, now, self.http_user, mid, block=False)
                 s.commit()
         return super()._end_match_ids(
-            now, match_ids, reason, notify_active_only=notify_active_only
+            now,
+            match_ids,
+            reason,
+            notify_active_only=notify_active_only,
+            only_if=only_if,
         )
 
 

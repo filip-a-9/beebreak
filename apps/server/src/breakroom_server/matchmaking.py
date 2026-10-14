@@ -20,7 +20,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import CursorResult, delete, exists, select, update
+from sqlalchemy import ColumnElement, CursorResult, delete, exists, select, update
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
@@ -207,7 +207,11 @@ class Matchmaker:
                     )
                 )
             )
-        expired_matches = self._end_match_ids(now, due, "expired")
+        # Re-checked in the UPDATE: an extension accepted after this read moved
+        # `ends_at`, and that chat must stay open.
+        expired_matches = self._end_match_ids(
+            now, due, "expired", only_if=(Match.ends_at <= now,)
+        )
         for match_id, users in expired_matches:
             for user_id in users:
                 self._send(
@@ -265,15 +269,17 @@ class Matchmaker:
         reason: str,
         *,
         notify_active_only: bool = False,
+        only_if: tuple[ColumnElement[bool], ...] = (),
     ) -> list[tuple[UUID, list[UUID]]]:
-        """End the still-active matches among `match_ids`; (match, users to tell)."""
+        """End the still-active matches among `match_ids` that also meet
+        `only_if`; (match, users to tell)."""
         if not match_ids:
             return []
         with self._factory() as session:
             won = list(
                 session.scalars(
                     update(Match)
-                    .where(Match.id.in_(match_ids), Match.status == "active")
+                    .where(Match.id.in_(match_ids), Match.status == "active", *only_if)
                     .values(
                         status="ended",
                         ended_at=now,
