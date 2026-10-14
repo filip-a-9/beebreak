@@ -15,11 +15,13 @@ appear anywhere. The `test_scanner_*` tests prove the capture and the scan do
 catch a canary in each channel.
 """
 
+import ast
 import asyncio
 import contextlib
 import copy
 import json
 import logging
+import re
 import socket
 import tempfile
 import threading
@@ -590,6 +592,170 @@ def test_no_protected_string_leaves_during_search_match_and_end(
             capture.channels() | {"server_logs": logs} | dump_database(live_server)
         )
         assert channels["db.queue_entries"], "no queue rows were written"
+        assert find_leaks(channels, CANARIES + local_only) == []
+    finally:
+        proxy.close()
+
+
+# --- M5: a chat and a report between two real workers ---
+
+CHAT_BODY_A = "hello from ada, chat canary 41c7"
+CHAT_BODY_B = "hello from bob, chat canary 9e02"
+REPORT_NOTE = "report note canary 5b3d"
+_MESSAGE_PATH = re.compile(r"^POST http://\S+/v1/matches/[0-9a-f-]{36}/messages$")
+
+
+def _requests(capture: Capture) -> list[tuple[str, dict[str, str], bytes]]:
+    """(method + url, headers, body) of every captured httpx request."""
+    out = []
+    for blob in capture.channels()["http"]:
+        head, headers, body = blob.split(b"\n", 2)
+        out.append(
+            (
+                head.decode("utf-8"),
+                {k.lower(): v for k, v in ast.literal_eval(headers.decode()).items()},
+                body,
+            )
+        )
+    return out
+
+
+def test_chat_and_report_requests_carry_only_chat_fields(
+    qtbot: QtBot,
+    server_factory: Callable[..., LiveServer],
+    capture: Capture,
+    worker_factory: Callable[[int], tuple[RemoteWorker, Recorder]],
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    live_server = server_factory(match_sweep_interval_s=0.05)
+    proxy = RecordingProxy(live_server.port, capture)
+    try:
+        a, rec_a = worker_factory(proxy.port)
+        b, rec_b = worker_factory(proxy.port)
+        sign_in_worker(
+            qtbot, live_server, a, rec_a, "ada@example.com", "ada_l", ALL_CONSENT
+        )
+        sign_in_worker(
+            qtbot, live_server, b, rec_b, "bob@example.com", "bobby", ALL_CONSENT
+        )
+        presence = build_presence(
+            ALL_CONSENT,
+            task_category="other",
+            stack_tags=["python", "docker"],
+            remaining_time_bucket="unknown",
+        )
+        a.join_queue(presence)
+        b.join_queue(presence)
+        qtbot.waitUntil(
+            lambda: rec_a.phase == "matched" and rec_b.phase == "matched",
+            timeout=WAIT_MS,
+        )
+
+        # Hook traffic full of canaries reaches the companion mid-chat.
+        events = _reduced_events()
+        sock_dir = Path(tempfile.mkdtemp(dir="/tmp"))
+        sock_dir.chmod(0o700)
+        ipc = IpcWorker(
+            sock_dir / "s", StatusReply(kind="status", version=4, invitation="idle")
+        )
+        sink = EventSink(ipc)
+        ipc.start()
+        try:
+            qtbot.waitUntil(
+                lambda: (
+                    a.chat_state.status is not None and b.chat_state.status is not None
+                ),
+                timeout=WAIT_MS,
+            )
+            a.send_message(CHAT_BODY_A)
+            for event in events:
+                assert send_event(event, socket_path=ipc.socket_path, timeout=2.0)
+            qtbot.waitUntil(lambda: len(sink.events) == len(events), timeout=WAIT_MS)
+            qtbot.waitUntil(lambda: len(b.chat_state.messages) == 1, timeout=WAIT_MS)
+            b.send_message(CHAT_BODY_B)
+            qtbot.waitUntil(lambda: len(a.chat_state.messages) == 2, timeout=WAIT_MS)
+            a.request_extension()
+            qtbot.waitUntil(
+                lambda: (
+                    b.chat_state.status is not None
+                    and b.chat_state.status.extension == "requested_by_peer"
+                ),
+                timeout=WAIT_MS,
+            )
+            b.answer_extension(False)
+            qtbot.waitUntil(
+                lambda: (
+                    a.chat_state.status is not None
+                    and a.chat_state.status.extension == "none"
+                ),
+                timeout=WAIT_MS,
+            )
+            a.report_peer("spam", REPORT_NOTE, (2,))
+            qtbot.waitUntil(
+                lambda: rec_a.phase == "ended" and rec_b.phase == "ended",
+                timeout=WAIT_MS,
+            )
+        finally:
+            ipc.stop()
+            sock_dir.joinpath("s").unlink(missing_ok=True)
+            sock_dir.rmdir()
+
+        sent = _requests(capture)
+        messages = [r for r in sent if _MESSAGE_PATH.match(r[0])]
+        assert len(messages) == 2
+        for _head, headers, body in messages:
+            assert set(json.loads(body)) == {"client_message_id", "body"}
+            assert headers["content-type"] == "application/json"
+        assert sorted(json.loads(m[2])["body"] for m in messages) == sorted(
+            [CHAT_BODY_A, CHAT_BODY_B]
+        )
+
+        (report,) = [r for r in sent if r[0].endswith("/v1/reports")]
+        assert set(json.loads(report[2])) == {
+            "match_id",
+            "reason",
+            "note",
+            "message_seqs",
+        }
+        extensions = [r for r in sent if r[0].endswith("/extension")]
+        assert len(extensions) == 2
+        for _head, _headers, body in extensions:
+            assert set(json.loads(body)) == {"action"}
+
+        # Every chat or report request is a bare API call: no query string on
+        # the POSTs, the bearer token the only credential, nothing custom.
+        allowed = {
+            "host",
+            "accept",
+            "accept-encoding",
+            "connection",
+            "user-agent",
+            "content-length",
+            "content-type",
+            "authorization",
+        }
+        for head, headers, _body in [*messages, report, *extensions]:
+            assert "?" not in head
+            assert set(headers) <= allowed
+            assert headers["authorization"].startswith("Bearer bra_")
+
+        # Sanity: the capture saw the chat, so "no hits" means something.
+        assert any(CHAT_BODY_A.encode() in blob for blob in capture.channels()["raw"])
+
+        local_only = [e.local_session_key for e in events] + [
+            str(e.event_id) for e in events
+        ]
+        logs = [caplog.text.encode("utf-8")]
+        out = capfd.readouterr()
+        logs += [out.out.encode("utf-8"), out.err.encode("utf-8")]
+        channels = (
+            capture.channels() | {"server_logs": logs} | dump_database(live_server)
+        )
+        assert channels["db.messages"], "no chat rows were written"
+        # No task metadata, path or hook field anywhere; the chat text itself
+        # is not in the canary list because it legitimately leaves.
         assert find_leaks(channels, CANARIES + local_only) == []
     finally:
         proxy.close()
