@@ -36,6 +36,7 @@ from breakroom_companion.break_state import (
     Sync,
     reduce,
 )
+from breakroom_companion.chat_state import ChatState
 from breakroom_companion.config import worker_start_timeout_s, worker_stop_timeout_s
 from breakroom_companion.credentials import CredentialStore, StoredCredentials
 from breakroom_companion.realtime_client import (
@@ -49,6 +50,7 @@ from breakroom_shared.api import (
     Consent,
     Me,
     QueueJoinRequest,
+    ReportReason,
     TokenPair,
     WsMatchCreated,
     WsMatchEnded,
@@ -100,6 +102,7 @@ class RemoteWorker(QObject):
     me_changed = Signal(object)  # Me | None
     error = Signal(str)  # ErrorCode, "network" or "replaced"
     break_changed = Signal(object)  # BreakState (M4-05)
+    chat_changed = Signal(object)  # ChatState (M5-05)
 
     def __init__(self, config: RemoteConfig, store: CredentialStore) -> None:
         super().__init__()
@@ -126,6 +129,7 @@ class RemoteWorker(QObject):
         self._break = BreakState()
         self._join_in_flight = False
         self._frames_seen = 0  # bumped per applied queue/match/sync frame
+        self._chat = ChatState()
 
     # --- public, thread-safe ---
 
@@ -169,6 +173,35 @@ class RemoteWorker(QObject):
     def dismiss_break(self) -> None:
         """Clear a finished result ("nobody available", "ended")."""
         self._submit(self._dismiss_break())
+
+    # --- chat (M5-05) ---
+
+    @property
+    def chat_state(self) -> ChatState:
+        """The last ChatState emitted on `chat_changed`."""
+        return self._chat
+
+    def send_message(self, text: str) -> None:
+        """Normalize and send `text` to the current chat; no-op if it
+        normalizes to nothing or no chat is live."""
+
+    def retry_message(self, client_message_id: UUID) -> None:
+        """Resend a `failed` pending message with the same id."""
+
+    def request_extension(self) -> None:
+        """Ask for (or, if the peer asked, accept) one more extension."""
+
+    def answer_extension(self, accept: bool) -> None:
+        """Accept or decline the pending request (declining also cancels
+        one's own)."""
+
+    def report_peer(
+        self, reason: ReportReason, note: str | None, message_seqs: tuple[int, ...]
+    ) -> None:
+        """Report the peer of the current or just-ended chat."""
+
+    def close_chat(self) -> None:
+        """Forget an ended chat (its window was closed); no-op while live."""
 
     def stop(self) -> None:
         """Close the socket and client, join the thread (bounded wait)."""

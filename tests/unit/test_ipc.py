@@ -37,7 +37,7 @@ def make_event() -> NormalizedEvent:
     )
 
 
-STATUS = StatusReply(kind="status", version=3, invitation="suggested")
+STATUS = StatusReply(kind="status", version=4, invitation="suggested")
 
 
 @pytest.fixture

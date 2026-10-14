@@ -53,7 +53,7 @@ async def _serve(path: Path, out_path: Path) -> None:
                     out.write(frame.event.model_dump_json() + "\n")
                     out.flush()
                 else:
-                    reply = StatusReply(kind="status", version=3, invitation="idle")
+                    reply = StatusReply(kind="status", version=4, invitation="idle")
                     writer.write(reply.model_dump_json().encode() + b"\n")
                     await writer.drain()
             except (ValidationError, TimeoutError, ConnectionError):

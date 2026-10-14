@@ -16,14 +16,20 @@ from breakroom_shared.api import (
     AuthStartRequest,
     AuthStartResponse,
     AuthVerifyRequest,
+    ChatStatus,
     Consent,
     ErrorResponse,
+    ExtensionAction,
     Me,
+    MessagePage,
+    MessageView,
     NicknameUpdate,
     QueueEntryView,
     QueueJoinRequest,
     QueueSnapshot,
     RefreshRequest,
+    ReportRequest,
+    SendMessageRequest,
     SessionResponse,
     TokenPair,
 )
@@ -208,3 +214,27 @@ class ApiClient:
         )
         assert reply is not None
         return reply
+
+    # --- chat and reports (M5-05) ---
+
+    async def send_message(
+        self, access_token: str, match_id: UUID, request: SendMessageRequest
+    ) -> MessageView:
+        """POST /v1/matches/{id}/messages (201 new, 200 replay)."""
+        raise NotImplementedError
+
+    async def list_messages(
+        self, access_token: str, match_id: UUID, after_seq: int
+    ) -> MessagePage:
+        """GET /v1/matches/{id}/messages?after_seq=N, oldest first."""
+        raise NotImplementedError
+
+    async def extension(
+        self, access_token: str, match_id: UUID, action: ExtensionAction
+    ) -> ChatStatus:
+        """POST /v1/matches/{id}/extension."""
+        raise NotImplementedError
+
+    async def report(self, access_token: str, request: ReportRequest) -> None:
+        """POST /v1/reports (204)."""
+        raise NotImplementedError

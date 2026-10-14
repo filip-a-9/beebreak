@@ -21,7 +21,8 @@ InvitationState = Literal["disabled", "idle", "suggested"]
 ActivityState = Literal["unknown", "active", "waiting_input", "idle"]
 
 # The only break information exposed to the agent side (rule 14): no peer data.
-QueueState = Literal["none", "searching", "matched"]
+# "chatting" (M5) replaces M4's "matched": the match is the chat.
+QueueState = Literal["none", "searching", "chatting"]
 
 LeaveResult = Literal["cancelled", "not_searching", "unavailable"]
 
@@ -43,7 +44,7 @@ class StatusReply(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     kind: Literal["status"]
-    version: Literal[3]
+    version: Literal[4]
     invitation: InvitationState
     last_event_at: AwareDatetime | None = None
     activity: ActivityState = "unknown"

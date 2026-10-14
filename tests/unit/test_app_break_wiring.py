@@ -287,7 +287,7 @@ def test_break_changes_drive_window_controller_and_status(rig: Rig) -> None:
     assert rig.status_queue() == "searching"
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
     assert rig.window.break_label.text() == "Matched with bob_b"
-    assert rig.status_queue() == "matched"
+    assert rig.status_queue() == "chatting"
     rig.remote.push_break(BreakState(phase="ended"))
     assert rig.controller._break_active is False
     assert rig.status_queue() == "none"
@@ -386,7 +386,7 @@ def test_the_status_reply_carries_only_the_fixed_queue_value(rig: Rig) -> None:
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
     dumped = rig.ipc._status.model_dump_json()
     assert "bob_b" not in dumped
-    assert rig.ipc._status.version == 3
+    assert rig.ipc._status.version == 4
 
 
 # --- review fixes ---

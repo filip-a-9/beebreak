@@ -414,7 +414,7 @@ def test_no_protected_string_leaves_the_machine(
     sock_dir.chmod(0o700)
     ipc = IpcWorker(
         sock_dir / "s",
-        StatusReply(kind="status", version=3, invitation="idle"),
+        StatusReply(kind="status", version=4, invitation="idle"),
     )
     sink = EventSink(ipc)
     ipc.start()
@@ -550,7 +550,7 @@ def test_no_protected_string_leaves_during_search_match_and_end(
         sock_dir = Path(tempfile.mkdtemp(dir="/tmp"))
         sock_dir.chmod(0o700)
         ipc = IpcWorker(
-            sock_dir / "s", StatusReply(kind="status", version=3, invitation="idle")
+            sock_dir / "s", StatusReply(kind="status", version=4, invitation="idle")
         )
         sink = EventSink(ipc)
         ipc.start()

@@ -6,12 +6,14 @@ through the `push_*` helpers.
 """
 
 from dataclasses import dataclass, field
+from uuid import UUID
 
 from breakroom_companion.break_state import BreakState
+from breakroom_companion.chat_state import ChatState
 from breakroom_companion.credentials import StoredCredentials
 from breakroom_companion.remote import ConnectionState, RemoteWorker
 from breakroom_companion.remote_config import RemoteConfig
-from breakroom_shared.api import Consent, Me
+from breakroom_shared.api import Consent, Me, ReportReason
 from breakroom_shared.presence import OutboundPresence
 
 
@@ -44,6 +46,15 @@ class Calls:
     starts: int = 0
     sign_outs: int = 0
     stops: int = 0
+    # M5 chat
+    messages: list[str] = field(default_factory=list)
+    retries: list[UUID] = field(default_factory=list)
+    extension_requests: int = 0
+    extension_answers: list[bool] = field(default_factory=list)
+    reports: list[tuple[ReportReason, str | None, tuple[int, ...]]] = field(
+        default_factory=list
+    )
+    chat_closes: int = 0
 
 
 class FakeRemoteWorker(RemoteWorker):
@@ -91,6 +102,26 @@ class FakeRemoteWorker(RemoteWorker):
     def dismiss_break(self) -> None:
         self.calls.dismisses += 1
 
+    def send_message(self, text: str) -> None:
+        self.calls.messages.append(text)
+
+    def retry_message(self, client_message_id: UUID) -> None:
+        self.calls.retries.append(client_message_id)
+
+    def request_extension(self) -> None:
+        self.calls.extension_requests += 1
+
+    def answer_extension(self, accept: bool) -> None:
+        self.calls.extension_answers.append(accept)
+
+    def report_peer(
+        self, reason: ReportReason, note: str | None, message_seqs: tuple[int, ...]
+    ) -> None:
+        self.calls.reports.append((reason, note, message_seqs))
+
+    def close_chat(self) -> None:
+        self.calls.chat_closes += 1
+
     # --- drive the signals as the real worker would ---
 
     def push_state(self, state: ConnectionState) -> None:
@@ -105,3 +136,7 @@ class FakeRemoteWorker(RemoteWorker):
 
     def push_break(self, state: BreakState) -> None:
         self.break_changed.emit(state)
+
+    def push_chat(self, state: ChatState) -> None:
+        self._chat = state
+        self.chat_changed.emit(state)

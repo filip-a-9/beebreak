@@ -61,7 +61,7 @@ class BreakTracker:
             phase = self._phase
         if phase in ("joining", "searching"):
             return "searching"
-        return "matched" if phase == "matched" else "none"
+        return "chatting" if phase == "matched" else "none"
 
     def leave_queue(self) -> LeaveResult:
         """IPC thread. Never ends a match; does not wait for the server."""
@@ -79,7 +79,7 @@ def initial_status(controller: Controller, queue: QueueState = "none") -> Status
     """Snapshot of the controller as a StatusReply."""
     return StatusReply(
         kind="status",
-        version=3,
+        version=4,
         invitation=controller.state,
         last_event_at=controller.last_event_at,
         activity=controller.activity(datetime.now(UTC)),

@@ -32,7 +32,7 @@ def make_event() -> NormalizedEvent:
 
 def status(invitation: str) -> StatusReply:
     return StatusReply.model_validate(
-        {"kind": "status", "version": 3, "invitation": invitation}
+        {"kind": "status", "version": 4, "invitation": invitation}
     )
 
 
@@ -161,7 +161,7 @@ def test_status_carries_the_queue_state(sock_path: Path) -> None:
         first = request_status(socket_path=sock_path, timeout=1.0)
         assert isinstance(first, StatusReply) and first.queue == "none"
         worker.set_status(
-            StatusReply(kind="status", version=3, invitation="idle", queue="searching")
+            StatusReply(kind="status", version=4, invitation="idle", queue="searching")
         )
         second = request_status(socket_path=sock_path, timeout=1.0)
         assert isinstance(second, StatusReply) and second.queue == "searching"
