@@ -54,6 +54,11 @@ _STATUS: dict[ErrorCode, int] = {
     "already_matched": 409,
     "setup_incomplete": 409,
     "not_found": 404,
+    "chat_ended": 409,
+    "no_extensions_left": 409,
+    "no_extension_request": 409,
+    "already_reported": 409,
+    "report_window_closed": 409,
 }
 
 
@@ -85,6 +90,8 @@ class Limiters:
     verify_ip: RateLimiter
     refresh_device: RateLimiter
     queue_user: RateLimiter
+    message_user: RateLimiter  # own window: rate_message_window_s
+    report_user: RateLimiter
 
 
 def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
@@ -95,6 +102,10 @@ def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
         verify_ip=RateLimiter(config.rate_verify_ip, window, clock),
         refresh_device=RateLimiter(config.rate_refresh_device, window, clock),
         queue_user=RateLimiter(config.rate_queue_user, window, clock),
+        message_user=RateLimiter(
+            config.rate_message_user, float(config.rate_message_window_s), clock
+        ),
+        report_user=RateLimiter(config.rate_report_user, window, clock),
     )
 
 

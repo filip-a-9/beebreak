@@ -9,6 +9,8 @@
 - M4 helpers: `add_ready_user` (database only), `ready_user` (through the API),
   `seed_queued`, `seed_match`. Fakes for the notifier and matchmaker are in
   `tests/server/fakes.py`.
+- M5 helpers: `seed_match` also fills the chat columns; `seed_message`,
+  `seed_report`.
 
 BREAKROOM_TEST_DATABASE_URL is read once at import time. tests/conftest.py
 deletes every BREAKROOM_* variable before each test, so a fixture reading the
@@ -18,7 +20,7 @@ variable later would never see it. Import `TEST_DATABASE_URL` instead.
 import os
 import re
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -40,14 +42,17 @@ from breakroom_server.models import (
     Device,
     Match,
     MatchParticipant,
+    Message,
     QueueEntry,
+    Report,
+    ReportMessage,
     User,
     UserPreference,
     join_tags,
 )
 from breakroom_server.nickname import skeleton
 from breakroom_server.tokens import hmac_code, new_code
-from breakroom_shared.api import Consent
+from breakroom_shared.api import Consent, ReportReason
 from breakroom_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
 
 TEST_DATABASE_URL: str | None = os.environ.get("BREAKROOM_TEST_DATABASE_URL") or None
@@ -340,26 +345,124 @@ def seed_match(
     ttl_s: int = 900,
     shared_tags: Sequence[StackTag] = (),
     shared_category: TaskCategory | None = None,
+    extensions_used: int = 0,
+    last_seq: int = 0,
+    extension_requested_by: SeededUser | ApiUser | None = None,
+    offline_since: dict[uuid.UUID, datetime] | None = None,
+    status: str = "active",
+    ended_at: datetime | None = None,
+    end_reason: str | None = None,
 ) -> uuid.UUID:
-    """An active match between `a` and `b` (no queue entries); returns its id."""
+    """A match between `a` and `b` (no queue entries); returns its id.
+
+    Active by default. `offline_since` maps a participant's user id to the time
+    the sweep saw them go offline. `status="ended"` makes both participants
+    inactive; pass `ended_at` and `end_reason` with it.
+    """
+    active = status == "active"
+    offline = offline_since or {}
     with session_factory() as s:
         match = Match(
-            status="active",
+            status=status,
             created_at=now,
             ends_at=now + timedelta(seconds=ttl_s),
-            shared_tags=join_tags(shared_tags),
-            shared_category=shared_category,
+            ended_at=ended_at,
+            end_reason=end_reason,
+            shared_tags=join_tags(shared_tags) if active else None,
+            shared_category=shared_category if active else None,
+            extensions_used=extensions_used,
+            last_seq=last_seq,
+            extension_requested_by=(
+                extension_requested_by.user_id if extension_requested_by else None
+            ),
         )
         s.add(match)
         s.flush()
         s.add_all(
             [
-                MatchParticipant(match_id=match.id, user_id=a.user_id, active=True),
-                MatchParticipant(match_id=match.id, user_id=b.user_id, active=True),
+                MatchParticipant(
+                    match_id=match.id,
+                    user_id=user.user_id,
+                    active=active,
+                    offline_since=offline.get(user.user_id),
+                )
+                for user in (a, b)
             ]
         )
         s.commit()
         return match.id
+
+
+def seed_message(
+    session_factory: SessionFactory,
+    match_id: uuid.UUID,
+    author: SeededUser | ApiUser,
+    *,
+    seq: int,
+    body: str,
+    now: datetime = START_TIME,
+    client_message_id: uuid.UUID | None = None,
+) -> uuid.UUID:
+    """A stored message; raises the match's `last_seq` to at least `seq` and
+    counts it in the author's `messages_sent`. Returns its client message id."""
+    client_id = client_message_id or uuid.uuid4()
+    with session_factory() as s:
+        s.add(
+            Message(
+                match_id=match_id,
+                seq=seq,
+                author_id=author.user_id,
+                client_message_id=client_id,
+                body=body,
+                created_at=now,
+            )
+        )
+        match = s.get(Match, match_id)
+        assert match is not None
+        match.last_seq = max(match.last_seq, seq)
+        participant = s.get(MatchParticipant, (match_id, author.user_id))
+        assert participant is not None
+        participant.messages_sent += 1
+        s.commit()
+    return client_id
+
+
+def seed_report(
+    session_factory: SessionFactory,
+    reporter: SeededUser | ApiUser,
+    reported: SeededUser | ApiUser,
+    match_id: uuid.UUID,
+    *,
+    now: datetime = START_TIME,
+    reason: ReportReason = "harassment",
+    note: str | None = None,
+    status: str = "open",
+    resolved_at: datetime | None = None,
+    evidence: Iterable[tuple[int, str, str]] = (),
+) -> uuid.UUID:
+    """A report created at `now`; `evidence` is (seq, author, body) with author
+    "reporter" or "reported". Returns the report id."""
+    with session_factory() as s:
+        report = Report(
+            reporter_id=reporter.user_id,
+            reported_id=reported.user_id,
+            match_id=match_id,
+            reason=reason,
+            note=note,
+            status=status,
+            created_at=now,
+            resolved_at=resolved_at,
+        )
+        s.add(report)
+        s.flush()
+        s.add_all(
+            ReportMessage(
+                report_id=report.id, seq=seq, author=author, body=body, sent_at=now
+            )
+            for seq, author, body in evidence
+        )
+        s.commit()
+        return report.id
 
 
 @pytest.fixture(autouse=True)

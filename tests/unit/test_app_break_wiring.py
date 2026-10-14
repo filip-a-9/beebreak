@@ -24,6 +24,7 @@ from breakroom_companion.window import CompanionWindow
 from breakroom_companion.worker import IpcWorker
 from breakroom_shared.api import Consent, MatchView, Me, QueueEntryView
 from breakroom_shared.events import EventType, NormalizedEvent
+from tests.fakes.chat import chat_status
 from tests.fakes.remote_worker import FakeRemoteWorker
 
 CFG = TriggerConfig(
@@ -51,7 +52,14 @@ def _entry() -> QueueEntryView:
 
 
 def _match() -> MatchView:
-    return MatchView(match_id=uuid4(), peer_nickname="bob_b", ends_at=LATER)
+    match_id = uuid4()
+    return MatchView(
+        match_id=match_id,
+        peer_nickname="bob_b",
+        ends_at=LATER,
+        chat=chat_status(match_id, LATER),
+        last_seq=0,
+    )
 
 
 @dataclass

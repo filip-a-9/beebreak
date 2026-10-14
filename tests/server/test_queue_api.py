@@ -541,6 +541,7 @@ def test_mutual_blocks_are_two_rows(
 
 def test_state_follows_join_and_cancel(
     client: TestClient,
+    server_config: ServerConfig,
     ada: ApiUser,
     session_factory: SessionFactory,
     clock: FixedClock,
@@ -549,11 +550,11 @@ def test_state_follows_join_and_cancel(
 ) -> None:
     join(client, ada)
     with session_factory() as s:
-        entry, match = current_state(s, clock(), ada.user_id)
+        entry, match = current_state(s, server_config, clock(), ada.user_id)
     assert entry is not None and entry.status == "queued" and match is None
     client.delete("/v1/queue/current", headers=ada.headers)
     with session_factory() as s:
-        assert current_state(s, clock(), ada.user_id) == (None, None)
+        assert current_state(s, server_config, clock(), ada.user_id) == (None, None)
 
 
 def test_every_route_requires_authentication(client: TestClient) -> None:

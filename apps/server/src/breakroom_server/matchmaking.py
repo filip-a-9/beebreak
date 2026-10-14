@@ -494,7 +494,9 @@ class Matchmaker:
                             WsMatchCreated,
                             now,
                             entry_id=mine.entry_id,
-                            match=match_view(session, match, mine.user_id),
+                            match=match_view(
+                                session, self._config, match, mine.user_id
+                            ),
                         ),
                     )
                     for mine in (a, b)

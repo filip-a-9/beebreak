@@ -19,6 +19,7 @@ from breakroom_shared.api import Consent, MatchView, Me, QueueEntryView
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import InvitationState
 from breakroom_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
+from tests.fakes.chat import chat_status
 
 
 @pytest.fixture(autouse=True)
@@ -473,12 +474,15 @@ def _match(
     tags: tuple[Any, ...] = (),
     category: Any = None,
 ) -> MatchView:
+    match_id = uuid4()
     return MatchView.model_construct(
-        match_id=uuid4(),
+        match_id=match_id,
         peer_nickname=nickname,
         shared_tags=tags,
         shared_category=category,
         ends_at=LATER,
+        chat=chat_status(match_id, LATER),
+        last_seq=0,
     )
 
 

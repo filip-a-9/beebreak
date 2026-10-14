@@ -13,7 +13,7 @@ from starlette.testclient import WebSocketTestSession
 from breakroom_server.db import SessionFactory
 from breakroom_server.mailer import RecordingMailer
 from breakroom_server.models import Device
-from breakroom_server.realtime import Hub, make_frame
+from breakroom_server.realtime import OUTBOUND_MAX, Hub, make_frame
 from breakroom_server.tokens import hash_token, new_token
 from breakroom_shared.api import (
     WS_CLOSE,
@@ -187,7 +187,7 @@ def test_outbound_overflow_closes_only_that_socket(
 
         def burst() -> None:
             # In one event-loop turn, so the socket cannot drain in between.
-            for _ in range(40):
+            for _ in range(OUTBOUND_MAX + 8):
                 hub.send_to_user(alice.user_id, ended(clock))
             hub.send_to_user(bobby.user_id, ended(clock))
 

@@ -389,8 +389,8 @@ def test_docs_endpoints_are_off(client: TestClient) -> None:
         assert client.get(path).status_code == 404
 
 
-def test_request_body_is_capped_at_4_kib(client: TestClient) -> None:
-    big = {"email": "a@example.com", "invite_code": "x" * 5000}
+def test_request_body_is_capped_at_16_kib(client: TestClient) -> None:
+    big = {"email": "a@example.com", "invite_code": "x" * 17_000}
     response = client.post("/v1/auth/start", json=big)
     assert (response.status_code, response.json()) == (
         400,
@@ -400,7 +400,7 @@ def test_request_body_is_capped_at_4_kib(client: TestClient) -> None:
 
 def test_streamed_body_is_capped_too(client: TestClient) -> None:
     def chunks() -> Any:
-        for _ in range(10):
+        for _ in range(20):
             yield b" " * 1024
 
     response = client.post(

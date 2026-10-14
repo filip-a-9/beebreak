@@ -27,6 +27,7 @@ from breakroom_shared.api import (
     WsQueueEnded,
     WsQueueJoined,
 )
+from tests.fakes.chat import chat_status
 
 NOW = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
 ENTRY = QueueEntryView(
@@ -38,6 +39,8 @@ MATCH = MatchView(
     peer_nickname="bobby",
     shared_tags=("python",),
     ends_at=NOW + timedelta(minutes=15),
+    chat=chat_status(UUID(int=10), NOW + timedelta(minutes=15)),
+    last_seq=0,
 )
 OTHER_MATCH = MATCH.model_copy(update={"match_id": UUID(int=11)})
 

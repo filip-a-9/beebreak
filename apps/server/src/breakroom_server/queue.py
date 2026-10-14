@@ -1,11 +1,13 @@
 """Queue and match HTTP API and the queue operations behind it. Owned by M4-02.
 
 `current_state`, `entry_view`, `match_view` and `clear_presence` are shared with
-the matchmaker (M4-03) and the realtime `sync` frame (M4-04). Nothing here logs
+the matchmaker (M4-03) and the realtime `sync` frame (M4-04); `chat_status` and
+`end_match` also with the chat and reports APIs (M5). Nothing here logs
 presence fields, nicknames or user IDs (rule 13).
 """
 
 from datetime import datetime, timedelta
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
@@ -32,6 +34,8 @@ from breakroom_server.models import (
 )
 from breakroom_server.notify import make_frame
 from breakroom_shared.api import (
+    ChatStatus,
+    ExtensionState,
     MatchView,
     QueueEntryView,
     QueueJoinRequest,
@@ -68,8 +72,41 @@ def clear_presence(entry: QueueEntry) -> None:
     entry.remaining_time_bucket = None
 
 
-def match_view(session: Session, match: Match, viewer_id: UUID) -> MatchView:
-    """The match as `viewer_id` sees it: the other participant's nickname."""
+def chat_status(
+    session: Session, config: ServerConfig, match: Match, viewer_id: UUID
+) -> ChatStatus:
+    """The chat as `viewer_id` sees it. `peer_online` is the sweep's view
+    (the peer's `offline_since` is unset), not a live socket check."""
+    peer_offline_since = session.execute(
+        select(MatchParticipant.offline_since).where(
+            MatchParticipant.match_id == match.id,
+            MatchParticipant.user_id != viewer_id,
+        )
+    ).first()
+    requested_by = match.extension_requested_by
+    extension: ExtensionState
+    if requested_by is None:
+        extension = "none"
+    elif requested_by == viewer_id:
+        extension = "requested_by_me"
+    else:
+        extension = "requested_by_peer"
+    return ChatStatus(
+        match_id=match.id,
+        ends_at=match.ends_at,
+        grace_at=match.ends_at - timedelta(seconds=config.chat_grace_s),
+        extensions_left=max(0, config.chat_max_extensions - match.extensions_used),
+        extension_s=config.chat_extension_s,
+        extension=extension,
+        peer_online=peer_offline_since is None or peer_offline_since[0] is None,
+    )
+
+
+def match_view(
+    session: Session, config: ServerConfig, match: Match, viewer_id: UUID
+) -> MatchView:
+    """The match as `viewer_id` sees it: the other participant's nickname and
+    the chat status from the viewer's side."""
     peer_nickname = session.scalar(
         select(User.nickname)
         .join(MatchParticipant, MatchParticipant.user_id == User.id)
@@ -86,11 +123,13 @@ def match_view(session: Session, match: Match, viewer_id: UUID) -> MatchView:
         shared_tags=split_tags(match.shared_tags),
         shared_category=category,
         ends_at=match.ends_at,
+        chat=chat_status(session, config, match, viewer_id),
+        last_seq=match.last_seq,
     )
 
 
 def current_state(
-    session: Session, now: datetime, user_id: UUID
+    session: Session, config: ServerConfig, now: datetime, user_id: UUID
 ) -> tuple[QueueEntryView | None, MatchView | None]:
     """The user's live queue entry (not past `expires_at`) and active match."""
     entry = session.scalars(
@@ -111,7 +150,7 @@ def current_state(
     ).first()
     return (
         entry_view(entry) if entry is not None else None,
-        match_view(session, match, user_id) if match is not None else None,
+        match_view(session, config, match, user_id) if match is not None else None,
     )
 
 
@@ -267,14 +306,25 @@ def leave_queue(session: Session, now: datetime, user_id: UUID) -> UUID | None:
     return entry_id
 
 
+EndReason = Literal["ended", "blocked", "reported"]
+
+
 def end_match(
-    session: Session, now: datetime, user_id: UUID, match_id: UUID, *, block: bool
+    session: Session,
+    now: datetime,
+    user_id: UUID,
+    match_id: UUID,
+    *,
+    block: bool,
+    reason: EndReason | None = None,
 ) -> UUID | None:
     """End (and optionally block) a match; the peer's user id if it ended now.
 
+    `reason` None keeps the M4 behaviour: "blocked" if `block` else "ended".
     Raises ApiError("not_found") when the caller is not a participant, the same
     answer as for a match that does not exist.
     """
+    end_reason: EndReason = reason or ("blocked" if block else "ended")
     user_ids = list(
         session.scalars(
             select(MatchParticipant.user_id).where(
@@ -296,9 +346,10 @@ def end_match(
             .values(
                 status="ended",
                 ended_at=now,
-                end_reason="blocked" if block else "ended",
+                end_reason=end_reason,
                 shared_tags=None,
                 shared_category=None,
+                extension_requested_by=None,
             )
             .execution_options(synchronize_session=False)
         ).rowcount  # type: ignore[attr-defined]
@@ -308,7 +359,7 @@ def end_match(
         session.execute(
             update(MatchParticipant)
             .where(MatchParticipant.match_id == match_id)
-            .values(active=False)
+            .values(active=False, offline_since=None)
             .execution_options(synchronize_session=False)
         )
     if block and peer_id is not None:
@@ -358,7 +409,7 @@ def get_queue(request: Request, principal: CurrentPrincipal) -> QueueSnapshot:
     state = request.app.state
     now: datetime = state.clock()
     with state.session_factory() as session:
-        entry, match = current_state(session, now, principal.user_id)
+        entry, match = current_state(session, state.config, now, principal.user_id)
     return QueueSnapshot(queue=entry, match=match)
 
 

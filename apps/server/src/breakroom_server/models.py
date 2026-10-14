@@ -1,5 +1,5 @@
 """ORM models: accounts, invites, sign-in challenges, devices (M3-01); queue
-entries, matches and blocks (M4-01).
+entries, matches and blocks (M4-01); chat messages and reports (M5-01).
 
 Primary keys are UUIDs generated in Python. Every timestamp is an aware UTC
 datetime: `timestamptz` on PostgreSQL, and the `UtcDateTime` decorator keeps
@@ -20,6 +20,7 @@ from sqlalchemy import (
     LargeBinary,
     MetaData,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
     text,
@@ -28,6 +29,7 @@ from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
+from breakroom_shared.api import ReportReason
 from breakroom_shared.presence import StackTag
 
 MAX_EMAIL_LENGTH = 254
@@ -205,14 +207,28 @@ def split_tags(raw: str | None) -> tuple[StackTag, ...]:
     return tuple(t for t in _STACK_TAGS if t in stored)
 
 
+MATCH_END_REASONS = (
+    "ended",
+    "blocked",
+    "expired",
+    "disabled",
+    "disconnected",
+    "reported",
+)
+
+
+def _in(column: str, values: Iterable[str]) -> str:
+    return f"{column} IN ({', '.join(repr(v) for v in values)})"
+
+
 class Match(Base):
+    """A match is also the chat (M5): the chat columns live here."""
+
     __tablename__ = "matches"
     __table_args__ = (
         CheckConstraint("status IN ('active', 'ended')", name="status"),
-        CheckConstraint(
-            "end_reason IN ('ended', 'blocked', 'expired', 'disabled')",
-            name="end_reason",
-        ),
+        CheckConstraint(_in("end_reason", MATCH_END_REASONS), name="end_reason"),
+        CheckConstraint("extensions_used >= 0", name="extensions_used_nonneg"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -223,6 +239,12 @@ class Match(Base):
     end_reason: Mapped[str | None] = mapped_column(String(16), default=None)
     shared_tags: Mapped[str | None] = mapped_column(String(200), default=None)
     shared_category: Mapped[str | None] = mapped_column(String(16), default=None)
+    # Chat (M5-01).
+    extensions_used: Mapped[int] = mapped_column(default=0)
+    extension_requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), default=None
+    )
+    last_seq: Mapped[int] = mapped_column(default=0)
 
 
 class QueueEntry(Base):
@@ -281,6 +303,10 @@ class MatchParticipant(Base):
     )
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
     active: Mapped[bool] = mapped_column(default=True)
+    # Chat (M5-01): set by the sweep while no device of the user is connected.
+    offline_since: Mapped[datetime | None] = mapped_column(default=None)
+    # Kept after the bodies are purged (spec §13 metric).
+    messages_sent: Mapped[int] = mapped_column(default=0)
 
 
 class Block(Base):
@@ -294,3 +320,70 @@ class Block(Base):
         ForeignKey("users.id"), primary_key=True
     )
     created_at: Mapped[datetime]
+
+
+# --- chat and reports (M5-01) -----------------------------------------------
+
+REPORT_REASONS: tuple[ReportReason, ...] = get_args(ReportReason)
+REPORT_STATUSES = ("open", "dismissed", "actioned")
+REPORT_AUTHORS = ("reporter", "reported")
+
+
+class Message(Base):
+    """A chat message. Bodies are deleted `message_retention_s` after the end."""
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint("seq >= 1", name="seq_positive"),
+        UniqueConstraint(
+            "author_id", "client_message_id", name="uq_messages_author_client_id"
+        ),
+    )
+
+    match_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("matches.id", ondelete="CASCADE"), primary_key=True
+    )
+    seq: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    author_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    client_message_id: Mapped[uuid.UUID]
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime]
+
+
+class Report(Base):
+    """A user's report about a chat peer. No foreign key to the match: the
+    30-day match purge must not touch it."""
+
+    __tablename__ = "reports"
+    __table_args__ = (
+        CheckConstraint(_in("status", REPORT_STATUSES), name="status"),
+        CheckConstraint(_in("reason", REPORT_REASONS), name="reason"),
+        CheckConstraint("reporter_id <> reported_id", name="not_self"),
+        UniqueConstraint("reporter_id", "match_id", name="uq_reports_reporter_match"),
+        Index("ix_reports_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    reporter_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    reported_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    match_id: Mapped[uuid.UUID]
+    reason: Mapped[str] = mapped_column(String(16))
+    note: Mapped[str | None] = mapped_column(String(2000), default=None)
+    status: Mapped[str] = mapped_column(String(16), default="open")
+    created_at: Mapped[datetime]
+    resolved_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class ReportMessage(Base):
+    """A copy of one message the reporter ticked as evidence."""
+
+    __tablename__ = "report_messages"
+    __table_args__ = (CheckConstraint(_in("author", REPORT_AUTHORS), name="author"),)
+
+    report_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("reports.id", ondelete="CASCADE"), primary_key=True
+    )
+    seq: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    author: Mapped[str] = mapped_column(String(16))
+    body: Mapped[str] = mapped_column(Text)
+    sent_at: Mapped[datetime]

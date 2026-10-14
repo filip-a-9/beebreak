@@ -211,7 +211,7 @@ M4 (**CONFIRMED** 2026-10-13):
 - Admission also requires a saved nickname and consent (`409 setup_incomplete`), and every presence field sent must be covered by the stored consent (`400`). The search lasts 90 s (`queue_ttl_s`); then `expired` and a "nobody available" screen, no automatic retry.
 - One `queued` entry and one active match per user are enforced by partial unique indexes on both PostgreSQL and SQLite; the in-process matcher lock is only a performance aid.
 - Only users with a live WebSocket are paired; a disconnected user's entry waits and expires by its TTL.
-- A match (`active -> ended`) ends by either participant (End or Block), after 15 min (`match_ttl_s`, until M5's chat replaces it), or when an admin disables a participant. A blocked peer is told only `ended`.
+- A match (`active -> ended`) ends by either participant (End or Block), after 15 min (`match_ttl_s`; M5 makes the match the chat and adds extensions, reports and the offline hold, §6.4), or when an admin disables a participant. A blocked peer is told only `ended`.
 - When an entry leaves `queued` its presence fields are nulled at once; ended rows are deleted after 30 days (`retention_s`).
 
 ### 6.4 Chat (server)
@@ -220,6 +220,14 @@ M4 (**CONFIRMED** 2026-10-13):
 
 A verified task-completion signal may start the proposed grace period, but completion is uncertain. When uncertain, show an **“agent status changed”** notice rather than claim it finished. Either participant can end or report/block at any time. Extension requests require explicit agreement by **both** parties. Chat stays available despite coding-agent disconnection during an already-established session until its independent duration policy ends.
 
+M5 (**CONFIRMED** 2026-10-14):
+
+- The chat *is* the match: no separate chat state machine or table. It lasts 15 min (`match_ttl_s`); the last 2 min before the deadline (`chat_grace_s`) is the grace period, in which both windows offer "Extend?". The grace period is deadline-driven: agent activity never changes the chat timer, and the chat shows nothing about either person's agent.
+- An extension needs both people: one requests, the other accepts (a request while the peer's request is pending counts as accepting it). Each adds 10 min (`chat_extension_s`), at most 2 per chat (`chat_max_extensions`). Either side may decline or withdraw a pending request. The server adjudicates with conditional updates, so two accepts extend once and an accept that races the deadline loses. Extension state is reported per viewer (`none`, `requested_by_me`, `requested_by_peer`), so no frame carries an account ID.
+- A participant with no connected device is *offline*. The sweep notices (1 s pass), tells the peer (`peer_offline`, then `peer_online`), and after 60 s offline (`chat_disconnect_s`) ends the chat with reason `disconnected`. The deadline keeps running while offline. The first pass after a server start resets every offline timer, so a restart never ends a chat by itself.
+- A user counts as online while any device is connected; every device mirrors the chat and can send.
+- End reasons stored: `ended`, `blocked`, `reported`, `expired`, `disabled`, `disconnected`. A blocked or reported peer is told only `ended`.
+
 ### 6.5 Proposed timer semantics
 
 - **Estimate timer:** advisory only, updated with new local evidence, shown with `~` or a range. Never use reaching `00:00` alone to force a session close.
@@ -227,6 +235,8 @@ A verified task-completion signal may start the proposed grace period, but compl
 - **Grace:** suggested `2 minutes` after a *confirmed* task-finish event; otherwise ask whether to remain rather than invent completion.
 - **Extension:** suggested `10 minutes` when both opt in; do not reset from a single client request.
 - All concrete values are **PROPOSED defaults**, controlled from configuration/remote policy, not accepted product decisions.
+
+M5 (**CONFIRMED** 2026-10-14): session 15 min; grace is the last 2 min before the deadline (there is no confirmed task finish to start it from); extension 10 min, at most 2, both must agree; offline hold 60 s. All are server configuration (`BREAKROOM_CHAT_*`). The deadline travels as `ends_at` (UTC) in every chat status and `match.created`/`sync`; clients show it against the server time carried by each frame.
 
 ## 7. Invitation and local decision engine
 
@@ -294,9 +304,13 @@ CLI/hook paths should resolve to a verified companion-installed launcher. The pl
 - `POST /v1/queue` — authenticated enqueue; idempotency key (scoped per user) required; body carries the consented `OutboundPresence`. 201, or 200 on replay; 409 `setup_incomplete` / `already_queued` / `already_matched`; per-user rate limit (M4)
 - `DELETE /v1/queue/current` — cancel own queue entry; always 204 (M4)
 - `POST /v1/matches/{id}/end` — leave the active match; 404 `not_found` for non-participants (M4; replaces `/v1/chat/{id}/end`, M5 hangs chat off the match)
-- `POST /v1/chat/{id}/extension` — request/accept/decline extension, server adjudicates
+- `POST /v1/matches/{id}/messages` — send a chat message: `client_message_id` (idempotent per user) and plain text, normalized by the server (NFC; control and bidi characters removed; at most 1000 characters; empty rejected). 201 `MessageView`, 200 on replay; 409 `chat_ended`; 20 per 10 s per user (M5)
+- `GET /v1/matches/{id}/messages?after_seq=N` — the messages after sequence number N, oldest first, at most 100, plus the match's `last_seq`. Readable by participants only and only until the bodies are purged (M5)
+- `POST /v1/matches/{id}/extension` — `request`/`accept`/`decline`; the server adjudicates and returns the caller's chat status. 409 `chat_ended` / `no_extensions_left` / `no_extension_request` (M5; replaces `/v1/chat/{id}/extension`)
 - `POST /v1/matches/{id}/block` — end the match and block the other participant by account ID (M4; replaces `/v1/users/{id}/block`: clients never see account IDs)
-- `POST /v1/reports` — file a report with explicit user-selected content/evidence
+- `POST /v1/reports` — file a report with explicit user-selected content/evidence. M5: `match_id`, a reason from a fixed list, an optional note (at most 500 characters) and the sequence numbers of the messages the user ticked (none by default). Reporting also blocks the peer and ends the chat. One report per user per chat, accepted up to 24 h after the chat ended (`report_window_s`). 204; 409 `already_reported` / `report_window_closed`
+
+Every chat and report route answers 404 `not_found` both for an unknown match and for one the caller is not part of (no oracle). Request bodies are capped at 16 KiB.
 - `GET /v1/privacy/export-preview` — *not necessary* if preview is purely local; don't send it remotely
 
 ### 9.2 WebSocket events (proposed)
@@ -306,6 +320,8 @@ Authenticated `WSS /v1/realtime` supports:
 `queue.joined`, `queue.expired`, `match.created`, `chat.message`, `chat.message_ack`, `chat.status`, `chat.extension_requested`, `chat.extension_resolved`, `chat.ended`, `session.reconnected`.
 
 M4 implements `sync` (sent once after the first `session.ready`: the user's current entry and match), `queue.joined`, `queue.ended` (reason `cancelled` or `expired`; this is §9.2's `queue.expired`), `match.created` and `match.ended` (reason `ended` or `expired`; a block is reported as `ended`). Queue and match frames go to every connected device of the user. Frames are best effort; the database is the truth and `sync` restores it on reconnect.
+
+M5 implements `chat.message` (to every device of both participants, the sender's included, so the sender's other devices mirror it; `mine` and `client_message_id` are per recipient) and `chat.status` (the recipient's full chat status plus a `change`: `extension_requested`, `extension_accepted`, `extension_declined`, `peer_offline`, `peer_online`). §9.2's `chat.extension_requested` and `chat.extension_resolved` are `chat.status` changes; `chat.ended` is `match.ended` with the new reason `disconnected`; `session.reconnected` is `sync`. `chat.message_ack` is not needed: messages are sent over HTTP and the reply is the ack, so the WebSocket stays server → client only. `match.created` and `sync` carry the chat status and `last_seq`; a client that sees a gap fetches the missing messages over HTTP. No typing indicator and no delivered or read receipts. Server frames may be up to 8 KiB (`MAX_SERVER_FRAME_BYTES`, so a 1000-character message of 4-byte characters fits); client frames stay at 4 KiB. The per-socket outbound queue holds 64 frames.
 
 All frames include `version`, `event_id`, and server-side timestamp. Chat send requests include a unique client message ID for idempotency. The server validates session membership and authorization on **every** message and operation, not just WebSocket connection setup. Bound lengths, validate Unicode/attachments, and set message rate limits.
 
@@ -326,13 +342,12 @@ M4 (**CONFIRMED** 2026-10-13): availability does not filter pairs; the remaining
 - `user_interests`: controlled optional tags; do not automatically retain per-task categories here.
 - `blocks`: blocker ID, blocked ID, timestamp, unique pair constraint.
 - `queue_entries`: user ID, public sanitized activity buckets, admitted/expires timestamps, status, idempotency key.
-- `matches` and `match_participants` (M4): two participants per match, `active` flag per participant, end deadline and reason, the shared tags/category shown to both. M5's chat attaches to the match.
-- `chat_sessions`: two distinct user IDs, state, end deadline, extension sequence, created/closed times.
-- `messages`: session ID, author ID, message ID, text, server timestamp, expiry timestamp.
-- `reports`: reporting user, reported user/session, moderation status, expressly included evidence.
+- `matches` and `match_participants` (M4): two participants per match, `active` flag per participant, end deadline and reason, the shared tags/category shown to both. M5: the match is the chat session (§10's former `chat_sessions` is not a separate table). `matches` adds `extensions_used`, `extension_requested_by` and `last_seq` (the message sequence); `match_participants` adds `offline_since` (set by the sweep) and `messages_sent` (kept after the bodies are purged, for the §13 metric).
+- `messages` (M5): match ID (deleted with the match), per-match sequence number, author ID, client message ID (unique per author), normalized text, server timestamp. Bodies are deleted 24 h after the chat ends (`message_retention_s`).
+- `reports` (M5): reporting user, reported user, match ID without a foreign key (so the match purge leaves it), reason, optional note, status (`open`, `dismissed`, `actioned`), created and resolved times; one per reporter and match. `report_messages`: copies of only the messages the reporter ticked (sequence, `reporter`/`reported`, text, time). Open reports are kept until resolved; resolved reports and their evidence are deleted 90 days after resolution (`report_retention_s`). Moderation is the admin CLI only (`breakroom-admin report list/show/resolve`); appeals go by email (policy in M6).
 - `beta_invites`: invitation token (hashed), invitee/role, expiry, redemption state.
 
-**Retention proposal:** short-lived queue metadata (purged promptly after expiry; M4: presence fields nulled when the entry ends, ended entries and matches deleted after 30 days), chat messages deleted automatically after a proposed 24-hour recovery window, and longer report evidence retained under a separately disclosed moderation policy. Exact durations, account deletion/export, and legally appropriate retention must be finalized before beta. Logs should contain structured IDs, no message bodies or task metadata beyond minimal operational metrics.
+**Retention proposal:** short-lived queue metadata (purged promptly after expiry; M4: presence fields nulled when the entry ends, ended entries and matches deleted after 30 days), chat messages deleted automatically after a proposed 24-hour recovery window, and longer report evidence retained under a separately disclosed moderation policy. M5 (**CONFIRMED** 2026-10-14): message bodies 24 h after the chat ends; report evidence 90 days after the report is resolved, open reports until resolved; the chat window always says "Not end-to-end encrypted. Messages are deleted 24 h after the chat ends." Exact durations, account deletion/export, and legally appropriate retention must be finalized before beta. Logs should contain structured IDs, no message bodies or task metadata beyond minimal operational metrics.
 
 ## 11. Security, abuse, and resilience controls
 
@@ -472,11 +487,11 @@ These are deliberately unresolved until the next *non-interview* architecture re
 4. Exact availability estimation baseline and calibration; what counts as a reliable task finish. M2 baseline (**CONFIRMED** 2026-10-12): heuristic engine only; nothing counts as a whole-task finish, `TaskCompleted` is a hint; with several sessions, invite only if one qualifies and none waits for input. Calibration stays open.
 5. Local model candidates and resource budgets. No default model weight bundled until evaluated.
 6. Auth provider, email invitation workflow, token/device lifecycle. M3 (**CONFIRMED** 2026-10-13): self-hosted email codes with admin invites, see §2; email change and account deletion stay open.
-7. Message and reports retention policy, deletion/export UX, locale/jurisdiction requirements.
-8. Exact timer defaults, UI presentation when estimated duration changes. M2 (**CONFIRMED** 2026-10-12): the invitation shows the remaining-time bucket as a range, nothing when unknown; no live countdown. Session/grace/extension defaults stay open (M5).
+7. Message and reports retention policy, deletion/export UX, locale/jurisdiction requirements. M5 (**CONFIRMED** 2026-10-14): message bodies deleted 24 h after the chat ends, report evidence 90 days after resolution, open reports kept until resolved, all configurable; export UX and jurisdiction stay open (M6).
+8. Exact timer defaults, UI presentation when estimated duration changes. M2 (**CONFIRMED** 2026-10-12): the invitation shows the remaining-time bucket as a range, nothing when unknown; no live countdown. M5 (**CONFIRMED** 2026-10-14): 15 min chat, grace the last 2 min before the deadline, 10 min extensions by mutual agreement, at most 2; 60 s offline hold.
 9. ~~Apache-2.0 versus MIT/AGPL~~ — resolved 2026-10-12: Apache-2.0.
 10. Hosting cost ceiling, monitoring, backup/restore, and abuse operational responsibilities. M3 runs on local Docker only; a host is chosen later.
-11. Matchmaking (M4, **CONFIRMED** 2026-10-13): single in-process matcher (join + 1 s sweep), uniqueness in the database; 90 s search; blocks by account ID through the match, unblock by admin only; reports wait for M5.
+11. Matchmaking (M4, **CONFIRMED** 2026-10-13): single in-process matcher (join + 1 s sweep), uniqueness in the database; 90 s search; blocks by account ID through the match, unblock by admin only; reports wait for M5 (M5: reporting blocks and ends the chat; admin CLI moderation).
 
 Each architecture decision should have its own ADR explaining choice, alternatives, consequences, acceptance tests, and rollback path. None requires another interview until a product-level tradeoff genuinely needs the founder's decision.
 

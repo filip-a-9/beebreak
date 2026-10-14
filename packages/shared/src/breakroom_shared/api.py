@@ -22,7 +22,11 @@ from breakroom_shared.consent import Consent as Consent
 from breakroom_shared.presence import OutboundPresence, StackTag, TaskCategory
 
 API_VERSION = 1
+# What the server accepts from a client.
 MAX_WS_FRAME_BYTES = 4 * 1024
+# What a client accepts from the server: a 1000-character chat message of
+# 4-byte characters plus its envelope does not fit in 4 KiB (M5).
+MAX_SERVER_FRAME_BYTES = 8 * 1024
 
 Nickname = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{3,24}$")]
 # 8 Crockford base32 characters, optionally written with one hyphen.
@@ -42,6 +46,12 @@ ErrorCode = Literal[
     "already_matched",
     "setup_incomplete",
     "not_found",
+    # Chat and reports (M5); all 409.
+    "chat_ended",
+    "no_extensions_left",
+    "no_extension_request",
+    "already_reported",
+    "report_window_closed",
 ]
 
 
@@ -115,6 +125,22 @@ class QueueEntryView(_Model):
     expires_at: AwareDatetime
 
 
+# Chat (M5). The chat is the match: its status rides on MatchView.
+
+# Per viewer, so no frame carries an account ID.
+ExtensionState = Literal["none", "requested_by_me", "requested_by_peer"]
+
+
+class ChatStatus(_Model):
+    match_id: UUID
+    ends_at: AwareDatetime
+    grace_at: AwareDatetime  # ends_at - chat_grace_s
+    extensions_left: int = Field(ge=0)
+    extension_s: int = Field(gt=0)  # length of one extension (server config)
+    extension: ExtensionState
+    peer_online: bool
+
+
 class MatchView(_Model):
     match_id: UUID
     peer_nickname: Nickname
@@ -122,6 +148,45 @@ class MatchView(_Model):
     # Never "other": a category is shared only when both sent the same real one.
     shared_category: TaskCategory | None = None
     ends_at: AwareDatetime
+    chat: ChatStatus  # chat.ends_at == ends_at
+    last_seq: int = Field(ge=0)  # highest message seq in this match
+
+
+class MessageView(_Model):
+    seq: int = Field(ge=1)
+    mine: bool
+    body: str  # already normalized by the server
+    sent_at: AwareDatetime
+    client_message_id: UUID | None  # only when mine
+
+
+class SendMessageRequest(_Model):
+    client_message_id: UUID
+    # Normalized and length-checked (MAX_MESSAGE_CHARS) by the server.
+    body: str = Field(max_length=4000)
+
+
+class MessagePage(_Model):
+    messages: tuple[MessageView, ...] = Field(max_length=100)
+    last_seq: int = Field(ge=0)
+
+
+ExtensionAction = Literal["request", "accept", "decline"]
+
+
+class ExtensionRequest(_Model):
+    action: ExtensionAction
+
+
+ReportReason = Literal["harassment", "spam", "sexual", "hate", "other"]
+
+
+class ReportRequest(_Model):
+    match_id: UUID
+    reason: ReportReason
+    # Normalized by the server, at most MAX_NOTE_CHARS after normalization.
+    note: str | None = Field(default=None, max_length=2000)
+    message_seqs: tuple[int, ...] = Field(default=(), max_length=50)
 
 
 class QueueSnapshot(_Model):
@@ -132,8 +197,16 @@ class QueueSnapshot(_Model):
     match: MatchView | None
 
 
-# "blocked" is never sent: a blocked peer sees a plain end.
-MatchEndReason = Literal["ended", "expired"]
+# "blocked" and "reported" are never sent: that peer sees a plain end.
+MatchEndReason = Literal["ended", "expired", "disconnected"]
+
+ChatChange = Literal[
+    "extension_requested",
+    "extension_accepted",
+    "extension_declined",
+    "peer_offline",
+    "peer_online",
+]
 
 
 # WebSocket, client → server.
@@ -215,6 +288,26 @@ class WsMatchEnded(_Model):
     reason: MatchEndReason
 
 
+class WsChatMessage(_Model):
+    type: Literal["chat.message"]
+    version: Literal[1]
+    event_id: UUID
+    server_time: AwareDatetime
+    match_id: UUID
+    message: MessageView
+
+
+class WsChatStatus(_Model):
+    """The full chat status for the recipient, plus what changed."""
+
+    type: Literal["chat.status"]
+    version: Literal[1]
+    event_id: UUID
+    server_time: AwareDatetime
+    status: ChatStatus
+    change: ChatChange
+
+
 ServerWsFrame = RootModel[
     Annotated[
         WsReady
@@ -223,7 +316,9 @@ ServerWsFrame = RootModel[
         | WsQueueJoined
         | WsQueueEnded
         | WsMatchCreated
-        | WsMatchEnded,
+        | WsMatchEnded
+        | WsChatMessage
+        | WsChatStatus,
         Field(discriminator="type"),
     ]
 ]

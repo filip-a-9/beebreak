@@ -227,7 +227,7 @@ def test_match_status_and_end_reason_checks(session_factory: SessionFactory) -> 
     )
     _commit_fails(
         session_factory,
-        Match(end_reason="reported", created_at=START_TIME, ends_at=START_TIME),
+        Match(end_reason="vanished", created_at=START_TIME, ends_at=START_TIME),
     )
     with session_factory() as s:
         s.add_all(

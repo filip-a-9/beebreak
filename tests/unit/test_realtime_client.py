@@ -27,6 +27,7 @@ from breakroom_shared.api import (
     WsReady,
     WsSync,
 )
+from tests.fakes.chat import chat_json
 
 if TYPE_CHECKING:
     from tests.e2e_support.server import LiveServer
@@ -362,12 +363,15 @@ ENTRY = {
     "status": "queued",
     "expires_at": "2026-10-13T12:01:30+00:00",
 }
+_MATCH_ID = uuid4()
 MATCH = {
-    "match_id": str(uuid4()),
+    "match_id": str(_MATCH_ID),
     "peer_nickname": "bobby",
     "shared_tags": ["python"],
     "shared_category": None,
     "ends_at": "2026-10-13T12:15:00+00:00",
+    "chat": chat_json(_MATCH_ID, "2026-10-13T12:15:00+00:00"),
+    "last_seq": 0,
 }
 
 

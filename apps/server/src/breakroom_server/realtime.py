@@ -47,7 +47,7 @@ _log = logging.getLogger(__name__)
 FLOOD_FRAMES: Final = 20
 FLOOD_WINDOW_S: Final = 10.0
 NORMAL_CLOSE: Final = 1000
-OUTBOUND_MAX: Final = 32  # frames queued per socket; overflow closes with 4429
+OUTBOUND_MAX: Final = 64  # frames queued per socket; overflow closes with 4429
 
 router = APIRouter()
 
@@ -244,10 +244,10 @@ async def _flush(ws: WebSocket, conn: Connection) -> None:
 
 
 def _read_state(
-    factory: SessionFactory, now: datetime, user_id: UUID
+    factory: SessionFactory, config: ServerConfig, now: datetime, user_id: UUID
 ) -> tuple[QueueEntryView | None, MatchView | None]:
     with factory() as session:
-        return current_state(session, now, user_id)
+        return current_state(session, config, now, user_id)
 
 
 def _parse(message: MutableMapping[str, Any]) -> Any:
@@ -346,7 +346,7 @@ async def realtime(websocket: WebSocket) -> None:
                 await _send(websocket, make_frame(WsReady, now, nickname=nickname))
                 if first:
                     queue_view, match_view = await run_in_threadpool(
-                        _read_state, factory, now, principal.user_id
+                        _read_state, factory, config, now, principal.user_id
                     )
                     await _send(
                         websocket,

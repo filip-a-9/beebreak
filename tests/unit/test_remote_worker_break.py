@@ -36,6 +36,7 @@ from breakroom_companion.remote import RemoteWorker
 from breakroom_companion.remote_config import RemoteConfig
 from breakroom_shared.api import QueueJoinRequest
 from breakroom_shared.presence import OutboundPresence
+from tests.fakes.chat import chat_json
 
 WAIT_MS = 10_000
 NICKNAME = "ada_l"
@@ -55,12 +56,15 @@ def _now() -> datetime:
 
 
 def match_json(match_id: UUID) -> dict[str, Any]:
+    ends_at = _now() + timedelta(minutes=15)
     return {
         "match_id": str(match_id),
         "peer_nickname": PEER,
         "shared_tags": ["python"],
         "shared_category": None,
-        "ends_at": (_now() + timedelta(minutes=15)).isoformat(),
+        "ends_at": ends_at.isoformat(),
+        "chat": chat_json(match_id, ends_at),
+        "last_seq": 0,
     }
 
 

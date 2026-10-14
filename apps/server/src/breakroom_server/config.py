@@ -33,6 +33,19 @@ def _positive(name: str, default: int) -> int:
     return value
 
 
+def _non_negative(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be an integer") from None
+    if value < 0:
+        raise ValueError(f"{name} must not be negative")
+    return value
+
+
 def _positive_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     if raw is None:
@@ -99,6 +112,17 @@ class ServerConfig:
     rematch_penalty_s: int = 86_400
     retention_s: int = 2_592_000
     rate_queue_user: int = 20
+    # Chat and reports (M5).
+    chat_grace_s: int = 120
+    chat_extension_s: int = 600
+    chat_max_extensions: int = 2  # 0 allowed: no extensions
+    chat_disconnect_s: int = 60
+    message_retention_s: int = 86_400
+    report_window_s: int = 86_400
+    report_retention_s: int = 7_776_000
+    rate_message_user: int = 20  # per rate_message_window_s
+    rate_message_window_s: int = 10
+    rate_report_user: int = 5  # per rate_window_s
 
     def __post_init__(self) -> None:
         if len(self.secret) < MIN_SECRET_BYTES:
@@ -123,9 +147,20 @@ class ServerConfig:
             "rematch_penalty_s",
             "retention_s",
             "rate_queue_user",
+            "chat_grace_s",
+            "chat_extension_s",
+            "chat_disconnect_s",
+            "message_retention_s",
+            "report_window_s",
+            "report_retention_s",
+            "rate_message_user",
+            "rate_message_window_s",
+            "rate_report_user",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+        if self.chat_max_extensions < 0:
+            raise ValueError("chat_max_extensions must not be negative")
         if self.mailer not in MAILER_KINDS:
             raise ValueError("mailer must be smtp or record")
 
@@ -161,4 +196,14 @@ class ServerConfig:
             rematch_penalty_s=_positive("BREAKROOM_REMATCH_PENALTY_S", 86_400),
             retention_s=_positive("BREAKROOM_RETENTION_S", 2_592_000),
             rate_queue_user=_positive("BREAKROOM_RATE_QUEUE_USER", 20),
+            chat_grace_s=_positive("BREAKROOM_CHAT_GRACE_S", 120),
+            chat_extension_s=_positive("BREAKROOM_CHAT_EXTENSION_S", 600),
+            chat_max_extensions=_non_negative("BREAKROOM_CHAT_MAX_EXTENSIONS", 2),
+            chat_disconnect_s=_positive("BREAKROOM_CHAT_DISCONNECT_S", 60),
+            message_retention_s=_positive("BREAKROOM_MESSAGE_RETENTION_S", 86_400),
+            report_window_s=_positive("BREAKROOM_REPORT_WINDOW_S", 86_400),
+            report_retention_s=_positive("BREAKROOM_REPORT_RETENTION_S", 7_776_000),
+            rate_message_user=_positive("BREAKROOM_RATE_MESSAGE_USER", 20),
+            rate_message_window_s=_positive("BREAKROOM_RATE_MESSAGE_WINDOW_S", 10),
+            rate_report_user=_positive("BREAKROOM_RATE_REPORT_USER", 5),
         )

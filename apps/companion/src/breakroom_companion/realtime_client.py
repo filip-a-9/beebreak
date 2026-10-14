@@ -16,9 +16,11 @@ from websockets.asyncio.client import connect as _connect
 from websockets.exceptions import ConnectionClosed
 
 from breakroom_shared.api import (
-    MAX_WS_FRAME_BYTES,
+    MAX_SERVER_FRAME_BYTES,
     ServerWsFrame,
     WsAuth,
+    WsChatMessage,
+    WsChatStatus,
     WsMatchCreated,
     WsMatchEnded,
     WsPing,
@@ -38,6 +40,8 @@ ServerFrame = (
     | WsQueueEnded
     | WsMatchCreated
     | WsMatchEnded
+    | WsChatMessage
+    | WsChatStatus
 )
 
 _log = logging.getLogger(__name__)
@@ -104,7 +108,7 @@ class RealtimeClient:
                 ping_interval=None,  # application-level pings only
                 open_timeout=self._timeout_s,
                 close_timeout=self._timeout_s,
-                max_size=MAX_WS_FRAME_BYTES,
+                max_size=MAX_SERVER_FRAME_BYTES,
             )
         except Exception:
             raise RealtimeError(None) from None
