@@ -142,8 +142,11 @@ def make_side(
 
 def chat_has(side: Side, bodies: list[str]) -> Callable[[], bool]:
     def check() -> bool:
-        have = {m.body for m in side.worker.chat_state.messages}
-        return set(bodies) <= have
+        # The window gets its state through a queued signal, so wait on what
+        # the window holds, not only on the worker thread's copy.
+        worker = {m.body for m in side.worker.chat_state.messages}
+        window = {m.body for m in side.chat._state.messages}
+        return set(bodies) <= worker & window
 
     return check
 
@@ -195,7 +198,7 @@ def test_a_full_chat_leaks_no_content(
         lambda: wa.chat_state.status is not None and wb.chat_state.status is not None,
         timeout=WAIT_MS,
     )
-    assert a.chat.isVisible() and b.chat.isVisible()
+    qtbot.waitUntil(lambda: a.chat.isVisible() and b.chat.isVisible(), timeout=WAIT_MS)
 
     # Chat both ways, through the windows' own input where it is a user action.
     a.chat.input.setPlainText(A1)
