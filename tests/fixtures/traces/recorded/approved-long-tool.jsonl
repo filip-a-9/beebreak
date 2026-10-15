@@ -1,0 +1,5 @@
+{"event_version":1,"event_id":"21ace35a-2afb-4803-ab12-76367620083c","local_session_key":"a6c36bc6e6b49ba5","agent":"claude_code","type":"turn_submitted","observed_at":"2026-10-15T16:02:05.752161Z","tool_class":null}
+{"event_version":1,"event_id":"adc265d2-13dc-4674-85ee-cdc5cb425577","local_session_key":"a6c36bc6e6b49ba5","agent":"claude_code","type":"tool_started","observed_at":"2026-10-15T16:02:07.391522Z","tool_class":"shell"}
+{"event_version":1,"event_id":"f098f93d-b2c0-4d71-8efe-fe0f38235f74","local_session_key":"a6c36bc6e6b49ba5","agent":"claude_code","type":"waiting_input","observed_at":"2026-10-15T16:02:07.475131Z","tool_class":null}
+{"event_version":1,"event_id":"c73adcdf-747c-43c4-a51a-cb6fc6c85117","local_session_key":"a6c36bc6e6b49ba5","agent":"claude_code","type":"tool_completed","observed_at":"2026-10-15T16:03:09.229752Z","tool_class":"shell"}
+{"event_version":1,"event_id":"e1c49fb4-1cb0-4758-9cd2-65ff30a70584","local_session_key":"a6c36bc6e6b49ba5","agent":"claude_code","type":"turn_stopped","observed_at":"2026-10-15T16:03:11.233991Z","tool_class":null}

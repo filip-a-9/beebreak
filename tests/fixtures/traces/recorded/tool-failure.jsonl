@@ -1,0 +1,4 @@
+{"event_version":1,"event_id":"6f47af2d-8f2a-46e9-873e-4c13925f35a8","local_session_key":"9749835080287022","agent":"claude_code","type":"turn_submitted","observed_at":"2026-10-15T16:09:33.215363Z","tool_class":null}
+{"event_version":1,"event_id":"f804eccd-025b-460e-8006-05342b923ea4","local_session_key":"9749835080287022","agent":"claude_code","type":"tool_started","observed_at":"2026-10-15T16:09:35.380023Z","tool_class":"shell"}
+{"event_version":1,"event_id":"a1988799-fe5f-4626-a81a-b0827d3411c4","local_session_key":"9749835080287022","agent":"claude_code","type":"tool_completed","observed_at":"2026-10-15T16:09:35.704867Z","tool_class":"shell"}
+{"event_version":1,"event_id":"5176cb74-d96b-41be-be87-177f01916080","local_session_key":"9749835080287022","agent":"claude_code","type":"turn_stopped","observed_at":"2026-10-15T16:09:38.081475Z","tool_class":null}

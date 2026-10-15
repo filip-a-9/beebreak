@@ -1,0 +1,6 @@
+{"event_version":1,"event_id":"8b325163-4a47-431b-bbbe-ab92c959e7f2","local_session_key":"dff304856f27c01c","agent":"claude_code","type":"turn_submitted","observed_at":"2026-10-15T15:53:22.679708Z","tool_class":null}
+{"event_version":1,"event_id":"3822c7d7-4960-451c-ba60-dbef9efbf37a","local_session_key":"dff304856f27c01c","agent":"claude_code","type":"tool_started","observed_at":"2026-10-15T15:53:24.666012Z","tool_class":"shell"}
+{"event_version":1,"event_id":"9785e58e-78db-45b9-bc97-b26e48b6d570","local_session_key":"dff304856f27c01c","agent":"claude_code","type":"waiting_input","observed_at":"2026-10-15T15:53:24.741010Z","tool_class":null}
+{"event_version":1,"event_id":"112dd32a-ccba-43c3-9c81-7cd84bc184ee","local_session_key":"dff304856f27c01c","agent":"claude_code","type":"waiting_input","observed_at":"2026-10-15T15:53:30.683913Z","tool_class":null}
+{"event_version":1,"event_id":"74600c25-71e1-4120-8ad1-c1a595868df0","local_session_key":"dff304856f27c01c","agent":"claude_code","type":"tool_completed","observed_at":"2026-10-15T15:54:15.033165Z","tool_class":"shell"}
+{"event_version":1,"event_id":"e23cb46a-8e81-42ee-829c-cd89d9e79135","local_session_key":"dff304856f27c01c","agent":"claude_code","type":"turn_stopped","observed_at":"2026-10-15T15:54:17.414461Z","tool_class":null}

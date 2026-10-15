@@ -1,0 +1,2 @@
+{"event_version":1,"event_id":"ccbc0052-226f-429a-8c7d-f55bedeae1b3","local_session_key":"60e399204dfbfb79","agent":"claude_code","type":"turn_submitted","observed_at":"2026-10-15T16:08:05.836703Z","tool_class":null}
+{"event_version":1,"event_id":"e875fe3c-316c-425a-9334-f353a9c9d906","local_session_key":"60e399204dfbfb79","agent":"claude_code","type":"tool_started","observed_at":"2026-10-15T16:08:07.501596Z","tool_class":"shell"}
