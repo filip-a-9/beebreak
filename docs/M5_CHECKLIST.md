@@ -397,7 +397,9 @@ docker compose exec server breakroom-admin block list Bea
 
 Expect: both chat windows show `The chat ended.` (A gets no hint that it was
 blocked); `block list Bea` prints `Filip`; `XQ` shows the match `ended`
-with the stored reason `blocked` (never shown to A). Click Find in both and wait
+with the stored reason `blocked` (never shown to A). Click `Close` in both chat
+windows and OK in both main windows (Find is hidden until then). Click Find in
+both and wait
 about 95 s: no match is made. Then remove the block and match again:
 
 ```

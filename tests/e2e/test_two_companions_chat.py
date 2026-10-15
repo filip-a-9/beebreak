@@ -2,7 +2,9 @@
 
 The server runs its real matchmaker loop (sweep interval 0.05 s) with the short
 chat timings of the spec: `chat_disconnect_s` 1, `match_ttl_s` 3, `chat_grace_s`
-1, `chat_extension_s` 2. Nothing calls `run_once()`. Every wait polls a condition
+1, `chat_extension_s` 2 (the extension cases use `match_ttl_s` 8 and an
+extension of 4 or 6 s so that request and accept fit well inside the TTL).
+Nothing calls `run_once()`. Every wait polls a condition
 with a deadline.
 
 Timing rules (rule 15): a loaded machine can only make things LATE, never
@@ -12,9 +14,10 @@ deadline), while "ends at" bounds are an order of magnitude wider than the
 
 Deviations from the spec timings, per case, are named where the config is built:
 the 40-message and report cases use a long `match_ttl_s` (the chat must not
-expire while messages are being exchanged), the restart case a longer
-`chat_disconnect_s` (a server restart plus two reconnects must fit in the hold
-even on a slow machine), and the message rate limit is raised everywhere
+expire while messages are being exchanged), the restart and short-drop cases a
+longer `chat_disconnect_s` of 5 (a restart plus two reconnects, or an outage plus
+three POSTs and a reconnect, must fit in the hold even on a slow machine),
+and the message rate limit is raised everywhere
 (20 messages each way arrive in a burst at the default limit).
 
 A "dropped socket" is a loopback TCP proxy between one worker and the server:
@@ -65,6 +68,8 @@ BASE: dict[str, Any] = {
     "rate_message_user": 1000,  # bursts of 20+ messages must not hit the limit
 }
 LONG_TTL: dict[str, Any] = {"match_ttl_s": 120}
+EXT_ACCEPT_S = 4
+EXT_DECLINE_S = 6
 
 
 class Recorder(QObject):
@@ -137,6 +142,16 @@ class FlakyProxy:
             self.port = self._server.sockets[0].getsockname()[1]
             ready.set()
             self._loop.run_forever()
+            # stop() ended the loop: let every handler finish, then close the
+            # loop so nothing outlives the test.
+            pending = asyncio.all_tasks(self._loop)
+            for task in pending:
+                task.cancel()
+            self._loop.run_until_complete(
+                asyncio.gather(*pending, return_exceptions=True)
+            )
+            self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            self._loop.close()
 
         self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()
@@ -192,7 +207,8 @@ class FlakyProxy:
         if self._server is not None:
             self._loop.call_soon_threadsafe(self._server.close)
         self._loop.call_soon_threadsafe(self._loop.stop)
-        self._thread.join(5)
+        self._thread.join(10)
+        assert not self._thread.is_alive()
 
 
 @dataclass
@@ -323,14 +339,15 @@ def test_forty_interleaved_messages_give_identical_transcripts(
 def test_short_drop_of_a_keeps_the_chat_live_and_a_catches_up(
     qtbot: QtBot, make_pair: PairFactory
 ) -> None:
-    server, ada, bob = make_pair(proxy_a=True, **LONG_TTL)
+    # Hold of 5 s: the real outage is the 0.3 s sleep plus Bob's three POST
+    # round trips plus Ada's reconnect (backoff <= 0.2 s), so a loaded machine
+    # still has several seconds before the server could end the chat.
+    server, ada, bob = make_pair(proxy_a=True, chat_disconnect_s=5, **LONG_TTL)
     assert ada.proxy is not None
     bob.worker.send_message("before")
     qtbot.waitUntil(lambda: len(ada.rec.chat.messages) == 1, timeout=WAIT_MS)
     marks = len(ada.rec.states)
 
-    # 0.3 s is well under the 1 s hold: 0.7 s of margin (14 sweeps) for a
-    # loaded machine before the server could end the chat.
     ada.proxy.drop()
     for i in range(3):
         bob.worker.send_message(f"during-{i}")
@@ -364,10 +381,11 @@ def _drop_a_past_the_hold(qtbot: QtBot, make_pair: PairFactory) -> Pair:
     ada.worker.send_message("hello")
     qtbot.waitUntil(lambda: len(bob.rec.chat.messages) == 1, timeout=WAIT_MS)
 
-    # The server notices the loss within a sweep and ends the chat 1 s later:
-    # about 1.1 s into a 2 s drop, i.e. 0.9 s of margin.
+    # Deterministic: Ada stays cut off until the server has ended the chat (Bob
+    # was told `disconnected`), however slow the machine is; only then does she
+    # come back and find the match gone.
     ada.proxy.drop()
-    time.sleep(2)
+    qtbot.waitUntil(lambda: bob.rec.chat.ended == "disconnected", timeout=WAIT_MS)
     ada.proxy.restore()
 
     qtbot.waitUntil(
@@ -410,7 +428,9 @@ def test_accepted_extension_moves_the_end_declined_one_does_not(
     # Accepted: the chat must outlive the original deadline and end after the
     # extended one. Server time never runs early, so the lower bounds are tight
     # (50 ms for clock rounding); the upper bounds are loose.
-    server, ada, bob = make_pair()
+    # TTL 8 s from match creation leaves ample time for request and accept
+    # (a few HTTP round trips); the extension adds 4 s.
+    server, ada, bob = make_pair(match_ttl_s=8, chat_extension_s=EXT_ACCEPT_S)
     original = ada.rec.chat.status.ends_at if ada.rec.chat.status else None
     assert original is not None
     ada.worker.request_extension()
@@ -429,7 +449,9 @@ def test_accepted_extension_moves_the_end_declined_one_does_not(
     )
     assert ada.rec.chat.status is not None
     extended = ada.rec.chat.status.ends_at
-    assert (extended - original).total_seconds() == pytest.approx(2, abs=0.01)
+    assert (extended - original).total_seconds() == pytest.approx(
+        EXT_ACCEPT_S, abs=0.01
+    )
 
     qtbot.waitUntil(
         lambda: ada.rec.chat.ended is not None and bob.rec.chat.ended is not None,
@@ -440,7 +462,8 @@ def test_accepted_extension_moves_the_end_declined_one_does_not(
         end = peer.rec.ended_at()
         assert end is not None
         assert end >= extended.timestamp() - 0.05  # not before the extended deadline
-        assert end >= original.timestamp() + 1.9  # in particular, not at the old one
+        # in particular, not at the old one
+        assert end >= original.timestamp() + EXT_ACCEPT_S - 0.1
     row = _match(server, ada.rec.chat)
     assert row.ended_at is not None and row.end_reason == "expired"
     assert (
@@ -451,7 +474,9 @@ def test_accepted_extension_moves_the_end_declined_one_does_not(
 def test_declined_extension_ends_at_the_original_deadline(
     qtbot: QtBot, make_pair: PairFactory
 ) -> None:
-    server, ada, bob = make_pair()
+    # TTL 8 s leaves ample time to request and decline; a 6 s extension makes
+    # the "no extension applied" bound below wide (see there).
+    server, ada, bob = make_pair(match_ttl_s=8, chat_extension_s=EXT_DECLINE_S)
     assert ada.rec.chat.status is not None
     original = ada.rec.chat.status.ends_at
     ada.worker.request_extension()
@@ -478,9 +503,9 @@ def test_declined_extension_ends_at_the_original_deadline(
     row = _match(server, ada.rec.chat)
     assert row.ended_at is not None and row.extensions_used == 0
     lateness = (row.ended_at.replace(tzinfo=UTC) - original).total_seconds()
-    # Never early; and an applied extension would add 2 s, so ending within
-    # 1.5 s (30 sweeps) of the deadline shows none was applied.
-    assert -0.05 <= lateness < 1.5
+    # Never early; an applied extension would add 6 s, so ending less than 5 s
+    # after the deadline (100 sweeps of slack) shows none was applied.
+    assert -0.05 <= lateness < EXT_DECLINE_S - 1
 
 
 def test_server_restart_mid_chat_keeps_the_chat_and_transcript(
