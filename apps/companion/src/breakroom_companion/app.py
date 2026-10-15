@@ -284,6 +284,7 @@ def wire_chat(
         if not isinstance(state, ChatState):
             return
         chat_window.set_chat(state)
+        window.set_chat_held(state.match_id is not None and state.ended is not None)
         if state.match_id != seen["match"]:
             seen["match"] = state.match_id
             seen["notified"] = None
@@ -321,6 +322,7 @@ def wire_chat(
 
     window.open_chat_requested.connect(open_chat)
     remote.chat_changed.connect(on_chat)
+    remote.error.connect(chat_window.show_error)
     remote.break_changed.connect(on_break)
     remote.state_changed.connect(on_state)
     chat_window.activity_changed.connect(on_activity)

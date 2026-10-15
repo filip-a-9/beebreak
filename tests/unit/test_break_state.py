@@ -139,6 +139,9 @@ CHANGES: dict[tuple[BreakPhase, str], BreakState] = {
     ("searching", "match_created"): MATCHED,
     ("joining", "match_created"): MATCHED,
     ("matched", "match_ended_current"): BreakState(phase="ended", match=MATCH),
+    # A match that is not the finished one replaces the result (M5 review F1).
+    ("nobody_available", "sync_match"): MATCHED,
+    ("nobody_available", "match_created"): MATCHED,
     ("ended", "dismiss"): NONE,
     ("nobody_available", "dismiss"): NONE,
 }
@@ -217,3 +220,17 @@ def test_an_empty_sync_replaces_joining_only_when_no_request_is_outstanding() ->
 
     assert reduce(joining, Sync(None, None, join_in_flight=True), NOW) == joining
     assert reduce(joining, Sync(None, None), NOW) == BreakState()
+
+
+@pytest.mark.parametrize("phase", ["ended", "nobody_available"])
+def test_f1_a_new_match_replaces_a_finished_result(phase: BreakPhase) -> None:
+    via_frame = reduce(STATES[phase], match_created(OTHER_MATCH), NOW)
+    via_sync = reduce(STATES[phase], Sync(None, OTHER_MATCH), NOW)
+
+    assert via_frame == BreakState(phase="matched", match=OTHER_MATCH)
+    assert via_sync == BreakState(phase="matched", match=OTHER_MATCH)
+
+
+def test_f1_the_finished_match_itself_does_not_come_back() -> None:
+    assert reduce(STATES["ended"], Sync(None, MATCH), NOW) == STATES["ended"]
+    assert reduce(STATES["ended"], match_created(MATCH), NOW) == STATES["ended"]

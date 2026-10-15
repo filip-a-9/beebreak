@@ -422,3 +422,31 @@ def test_the_tracker_reports_chatting_while_matched() -> None:
     assert tracker.queue_state() == "chatting"
     tracker.set_phase("ended")
     assert tracker.queue_state() == "none"
+
+
+# --- review fixes ---
+
+
+def test_remote_errors_reach_the_chat_window_as_fixed_lines(rig: Rig) -> None:
+    rig.remote.push_chat(chat_state())
+    rig.remote.push_error("report_window_closed")
+    assert rig.chat.error_label.text() == "The report window has closed."
+    rig.remote.push_error("unauthorized")
+    assert rig.chat.error_label.text() == "The report window has closed."
+
+
+def test_an_ended_chat_stays_reachable_from_the_main_window(rig: Rig) -> None:
+    rig.window.show()
+    match_id = uuid4()
+    rig.remote.push_break(BreakState(phase="matched", match=_match()))
+    rig.remote.push_chat(chat_state(match_id=match_id))
+    rig.chat.close()  # hidden during the live chat
+    rig.remote.push_break(BreakState(phase="ended", match=_match()))  # chat still live
+    assert not rig.window.open_chat_button.isVisibleTo(rig.window)
+    rig.remote.push_chat(chat_state(match_id=match_id, ended="ended"))
+    assert rig.window.open_chat_button.isVisibleTo(rig.window)
+    rig.window.open_chat_button.click()
+    assert rig.chat.isVisible()
+    rig.chat.close_button.click()
+    rig.remote.push_chat(ChatState())  # the worker forgot it
+    assert not rig.window.open_chat_button.isVisibleTo(rig.window)

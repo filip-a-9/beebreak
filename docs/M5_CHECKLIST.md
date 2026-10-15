@@ -450,11 +450,19 @@ docker compose exec server breakroom-admin report list
 docker compose exec server breakroom-admin block remove Filip Bea
 ```
 
-Expect: the report is accepted (no error dialog), A's `Report` button is
-disabled, `report list` now shows two open reports (`harassment` and `spam`),
+Expect: the report is accepted (no error line such as `The report window has
+closed.` or `Network problem. Try again.` appears in the chat window), A's
+`Report` button is disabled, `report list` now shows two open reports (`harassment` and `spam`),
 the new one with evidence count `1`. Also check the rule from the other
 side: in B's chat window (ended, still open) the `Report` button works for B
 as well; do not use it. Click `Close` and OK in both windows.
+
+Then the hidden-window case: Find in both, send one message each way, and
+close A's chat window with its title-bar button while the chat is live (it
+only hides). In B click **End**. Expect: A's main window shows `Break ended.`
+and still offers `Open chat`; click it: A's chat window reappears with
+`The chat ended.` and its `Report` button enabled. Click `Close` (the main
+window's `Open chat` disappears) and OK in both windows.
 
 **M5-C15 — Resolve: dismiss one, disable with the other.** Take the two ids
 from `report list`.
@@ -561,6 +569,12 @@ and fixed strings (`report filed id=<uuid> reason=harassment`, `presence
 offline=1 ...`, `purged entries=... messages=... reports=...`). For the
 companions, check the terminals T2 and T3 by eye or search their scrollback
 for `CANARY`: there must be none.
+
+Last, no invisible companion: Find in both. While the chat is live, close
+A's main window with its title-bar button (A's chat window stays), then close
+A's chat window the same way. Expect: companion A's process exits (T2 returns
+to its prompt) and, about 60 s later, B's chat window shows `The connection
+was lost.`. Record a `fail` if T2 keeps running with no window.
 
 **M5-C19 — Report.**
 

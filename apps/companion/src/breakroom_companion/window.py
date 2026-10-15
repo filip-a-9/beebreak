@@ -186,6 +186,7 @@ class CompanionWindow(QWidget):
             self.ok_button,
         )
         self._unread = 0
+        self._chat_held = False
         for button in self._break_buttons:
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._break = BreakState()
@@ -279,6 +280,12 @@ class CompanionWindow(QWidget):
             self.show()
             self.raise_()
 
+    def set_chat_held(self, held: bool) -> None:
+        """The worker holds an ended chat nobody has closed yet: its window
+        (and a late report) stays reachable through Open chat."""
+        self._chat_held = held
+        self._render_break()
+
     def set_unread(self, count: int) -> None:
         """Peer messages since the chat window was last active."""
         self._unread = max(0, count)
@@ -312,7 +319,7 @@ class CompanionWindow(QWidget):
         self.open_chat_button.setText(
             f"{OPEN_CHAT} ({self._unread})" if self._unread else OPEN_CHAT
         )
-        self.open_chat_button.setVisible(phase == "matched")
+        self.open_chat_button.setVisible(phase == "matched" or self._chat_held)
         # End and Block live in the chat window while chatting (M5-06). After
         # the peer ended it, Block is still offered while the match is known.
         can_block = phase == "ended" and self._break.match is not None

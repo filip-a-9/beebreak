@@ -4,7 +4,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
@@ -12,6 +12,7 @@ from pytestqt.qtbot import QtBot
 from breakroom_companion.chat_state import ChatEnd, ChatState, PendingMessage
 from breakroom_companion.chat_window import ChatWindow
 from breakroom_companion.report_dialog import ReportDialog
+from breakroom_companion.window import CompanionWindow
 from tests.fakes.chat import T0, chat_state, chat_status, message_view
 
 FOOTER = "Not end-to-end encrypted. Messages are deleted 24 h after the chat ends."
@@ -578,11 +579,20 @@ def test_closing_an_ended_window_asks_to_forget_the_chat(
         window.close()
 
 
-def test_the_close_event_of_a_live_chat_is_ignored(window: ChatWindow) -> None:
+def test_the_close_event_of_a_live_chat_is_ignored(
+    window: ChatWindow, qtbot: QtBot
+) -> None:
+    main = CompanionWindow()
+    qtbot.addWidget(main)
+    main.show()  # with the main window on screen, closing only hides
     window.set_chat(chat_state())
     event = QCloseEvent()
     window.closeEvent(event)
     assert not event.isAccepted()
+    main.hide()
+    event = QCloseEvent()
+    window.closeEvent(event)  # nothing else is visible: let the app quit
+    assert event.isAccepted()
 
 
 def test_an_empty_state_hides_the_window_and_clears_everything(
@@ -626,3 +636,155 @@ def test_every_label_is_plain_text(window: ChatWindow) -> None:
     for label in labels:
         assert label.textFormat() == Qt.TextFormat.PlainText
         assert not label.openExternalLinks()
+
+
+# --- review fixes ---
+
+
+def test_a_report_dialog_does_not_outlive_its_chat(
+    window: ChatWindow, qtbot: QtBot
+) -> None:
+    window.set_chat(chat_state(messages=(message_view(1),), ended="ended"))
+    emitted: list[object] = []
+    window.report_requested.connect(lambda *args: emitted.append(args))
+    window.report_button.click()
+    dialog = window._report_dialog
+    assert dialog is not None and dialog.isVisible()
+    window.set_chat(chat_state())  # a new chat replaces it
+    assert not dialog.isVisible()
+    assert window._report_dialog is None
+    dialog.reason_buttons["spam"].setChecked(True)
+    dialog.report_button.click()  # even a late click reports nothing
+    assert emitted == []
+
+
+def test_the_report_dialog_closes_when_the_chat_is_forgotten(
+    window: ChatWindow,
+) -> None:
+    window.set_chat(chat_state(ended="ended"))
+    window.report_button.click()
+    dialog = window._report_dialog
+    assert dialog is not None
+    window.set_chat(ChatState())
+    assert not dialog.isVisible()
+
+
+def test_the_report_dialog_stays_while_the_same_chat_updates(
+    window: ChatWindow,
+) -> None:
+    match_id = uuid4()
+    window.set_chat(chat_state(match_id=match_id))
+    window.report_button.click()
+    dialog = window._report_dialog
+    assert dialog is not None
+    window.set_chat(chat_state(match_id=match_id, messages=(message_view(1),)))
+    assert dialog.isVisible()
+
+
+@pytest.mark.parametrize(
+    ("code", "line"),
+    [
+        ("invalid_request", "That didn't work."),
+        ("rate_limited", "Too fast. Wait a moment."),
+        ("report_window_closed", "The report window has closed."),
+        ("already_reported", "You already reported this chat."),
+        ("chat_ended", "The chat has ended."),
+        ("no_extensions_left", "No extensions left."),
+        ("no_extension_request", "There is no request to answer."),
+        ("not_found", "That chat is no longer available."),
+        ("network", "Network problem. Try again."),
+    ],
+)
+def test_chat_action_errors_show_a_fixed_line(
+    window: ChatWindow, code: str, line: str
+) -> None:
+    window.set_chat(chat_state())
+    assert not window.error_label.isVisibleTo(window)
+    window.show_error(code)
+    assert window.error_label.text() == line
+    assert window.error_label.isVisibleTo(window)
+    assert window.error_label.textFormat() == Qt.TextFormat.PlainText
+
+
+@pytest.mark.parametrize(
+    "code", ["unauthorized", "invalid_code", "nickname_taken", "replaced", "<b>x</b>"]
+)
+def test_onboarding_and_unknown_codes_show_nothing(
+    window: ChatWindow, code: str
+) -> None:
+    window.set_chat(chat_state())
+    window.show_error(code)
+    assert not window.error_label.isVisibleTo(window)
+
+
+def test_no_error_line_without_a_chat(window: ChatWindow) -> None:
+    window.show_error("network")
+    assert not window.error_label.isVisibleTo(window)
+
+
+def test_the_error_line_clears_by_timer_and_on_a_new_chat(
+    window: ChatWindow, qtbot: QtBot
+) -> None:
+    window.set_chat(chat_state())
+    window.show_error("network")
+    assert window._error_timer.isActive()
+    window._error_timer.timeout.emit()
+    assert not window.error_label.isVisibleTo(window)
+    window.show_error("network")
+    window.set_chat(chat_state())  # another match
+    assert not window.error_label.isVisibleTo(window)
+    assert window.error_label.text() == ""
+
+
+def test_closing_the_chat_window_quits_when_nothing_else_is_visible(
+    qtbot: QtBot,
+) -> None:
+    """lastWindowClosed only fires inside a running `exec()`, so run one."""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    assert isinstance(app, QApplication)
+    main = CompanionWindow()
+    chat = ChatWindow()
+    qtbot.addWidget(main)
+    qtbot.addWidget(chat)
+    chat.set_chat(chat_state())
+    main.show()
+    chat.show()
+    fired: list[bool] = []
+    after_main: list[bool] = []
+    app.lastWindowClosed.connect(lambda: fired.append(True))
+    QTimer.singleShot(100, main.close)
+    QTimer.singleShot(200, lambda: after_main.append(bool(fired)))
+    QTimer.singleShot(300, chat.close)
+    QTimer.singleShot(1000, app.quit)  # safety net
+    app.exec()
+    assert after_main == [False]  # the chat window keeps the app alive
+    assert not main.isVisible() and not chat.isVisible()
+    assert fired == [True]
+
+
+def test_closing_the_chat_window_only_hides_it_while_the_main_window_shows(
+    qtbot: QtBot,
+) -> None:
+    main = CompanionWindow()
+    chat = ChatWindow()
+    qtbot.addWidget(main)
+    qtbot.addWidget(chat)
+    chat.set_chat(chat_state())
+    main.show()
+    chat.show()
+    chat.close()
+    assert main.isVisible() and not chat.isVisible()
+
+
+def test_a_failed_message_in_an_ended_chat_is_not_clickable(
+    window: ChatWindow,
+) -> None:
+    pending = PendingMessage(uuid4(), "lost", "failed")
+    match_id = uuid4()
+    window.set_chat(chat_state(match_id=match_id, pending=(pending,)))
+    assert len(window.transcript.findChildren(QPushButton)) == 1
+    window.set_chat(chat_state(match_id=match_id, pending=(pending,), ended="ended"))
+    assert window.transcript.findChildren(QPushButton) == []
+    assert "not sent" in _texts(window)

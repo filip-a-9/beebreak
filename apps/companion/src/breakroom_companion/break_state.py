@@ -130,6 +130,8 @@ def _sync(
     in_flight: bool,
 ) -> BreakState:
     if state.phase in ("nobody_available", "ended"):
+        if match is not None and _is_new_match(state, match):
+            return BreakState(phase="matched", match=match)
         return state  # stays until dismissed
     if match is not None:
         return BreakState(phase="matched", match=match)
@@ -164,6 +166,10 @@ def _frame(
         case WsMatchCreated(match=match_view):
             if state.phase in ("none", "searching", "joining"):
                 return BreakState(phase="matched", match=match_view)
+            if state.phase in ("nobody_available", "ended") and _is_new_match(
+                state, match_view
+            ):
+                return BreakState(phase="matched", match=match_view)
             return state
         case WsMatchEnded(match_id=match_id):
             if (
@@ -174,6 +180,11 @@ def _frame(
                 return BreakState(phase="ended", match=state.match)
             return state
     return state  # pragma: no cover
+
+
+def _is_new_match(state: BreakState, match: MatchView) -> bool:
+    """A match that is not the one `state` is showing the end of."""
+    return state.match is None or state.match.match_id != match.match_id
 
 
 def _entry_id(state: BreakState) -> UUID | None:

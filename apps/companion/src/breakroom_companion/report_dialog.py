@@ -34,6 +34,8 @@ CANCEL = "Cancel"
 NOTE_PLACEHOLDER = "Optional note"
 MESSAGES_HEADING = "Messages to include (none are included unless you tick them):"
 YOU = "You"
+MAX_TICKED = 50  # ReportRequest.message_seqs
+TOO_MANY = "Tick at most 50 messages."
 
 
 def display_text(body: str) -> str:
@@ -75,6 +77,8 @@ class ReportDialog(QDialog):
         self.note_edit.setPlaceholderText(NOTE_PLACEHOLDER)
         self.note_edit.setFixedHeight(70)
         self.note_edit.textChanged.connect(self._refresh)
+        self.limit_label = QLabel(TOO_MANY)
+        self.limit_label.setTextFormat(Qt.TextFormat.PlainText)
         self.note_counter = QLabel()
         self.note_counter.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.note_edit)
@@ -98,6 +102,8 @@ class ReportDialog(QDialog):
             item.setCheckState(Qt.CheckState.Unchecked)
             self.message_list.addItem(item)
         layout.addWidget(self.message_list)
+        layout.addWidget(self.limit_label)
+        self.message_list.itemChanged.connect(self._refresh)
 
         self.report_button = QPushButton(REPORT)
         self.cancel_button = QPushButton(CANCEL)
@@ -124,14 +130,18 @@ class ReportDialog(QDialog):
     def _refresh(self) -> None:
         count = len(self.note_edit.toPlainText())
         self.note_counter.setText(f"{count} / {MAX_NOTE_CHARS}")
+        too_many = len(self._ticked()) > MAX_TICKED
+        self.limit_label.setVisible(too_many)
         self.report_button.setEnabled(
-            self._reason() is not None and count <= MAX_NOTE_CHARS
+            self._reason() is not None and count <= MAX_NOTE_CHARS and not too_many
         )
 
     def _on_report(self) -> None:
         reason = self._reason()
         text = self.note_edit.toPlainText()
         if reason is None or len(text) > MAX_NOTE_CHARS:
+            return
+        if len(self._ticked()) > MAX_TICKED:
             return
         note = normalize_text(text, max_chars=MAX_NOTE_CHARS)
         self.submitted.emit(reason, note, self._ticked())

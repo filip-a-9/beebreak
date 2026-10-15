@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QHideEvent, QKeyEvent, QShowEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -27,7 +28,13 @@ from PySide6.QtWidgets import (
 
 from breakroom_companion.chat_state import ChatEnd, ChatState, PendingMessage
 from breakroom_companion.report_dialog import ReportDialog, display_text
-from breakroom_companion.window import BLOCK_CONFIRM, BLOCK_TITLE, safe_nickname
+from breakroom_companion.window import (
+    BLOCK_CONFIRM,
+    BLOCK_TITLE,
+    IN_COMMON,
+    CompanionWindow,
+    safe_nickname,
+)
 from breakroom_shared.api import ChatStatus
 from breakroom_shared.chat import MAX_MESSAGE_CHARS, normalize_text
 
@@ -49,7 +56,19 @@ RECONNECTING = "Reconnecting\N{HORIZONTAL ELLIPSIS}"
 FOOTER = "Not end-to-end encrypted. Messages are deleted 24 h after the chat ends."
 END_TITLE = "End this chat?"
 END_CONFIRM = "The chat ends for both of you."
-IN_COMMON = "In common:"
+ERROR_TEXT: dict[str, str] = {
+    "invalid_request": "That didn't work.",
+    "rate_limited": "Too fast. Wait a moment.",
+    "report_window_closed": "The report window has closed.",
+    "already_reported": "You already reported this chat.",
+    "chat_ended": "The chat has ended.",
+    "no_extensions_left": "No extensions left.",
+    "no_extension_request": "There is no request to answer.",
+    "not_found": "That chat is no longer available.",
+    "network": "Network problem. Try again.",
+}
+ERROR_SECONDS = 5
+NOT_SENT_ENDED = "not sent"
 ENDED_LINES: dict[ChatEnd, str] = {
     "ended": "The chat ended.",
     "expired": "Time is up.",
@@ -126,6 +145,7 @@ class ChatWindow(QWidget):
         self.status_label = QLabel()
         self.banner_label = QLabel()
         self.ended_label = QLabel()
+        self.error_label = QLabel()
         self.counter_label = QLabel()
         self.footer_label = QLabel(FOOTER)
         for label in (
@@ -135,6 +155,7 @@ class ChatWindow(QWidget):
             self.status_label,
             self.banner_label,
             self.ended_label,
+            self.error_label,
             self.counter_label,
             self.footer_label,
         ):
@@ -208,6 +229,7 @@ class ChatWindow(QWidget):
         layout.addWidget(self.scroll_area, 1)
         layout.addWidget(self.banner)
         layout.addWidget(self.ended_label)
+        layout.addWidget(self.error_label)
         layout.addLayout(input_row)
         layout.addWidget(self.counter_label)
         layout.addLayout(actions)
@@ -227,10 +249,15 @@ class ChatWindow(QWidget):
         self.report_button.clicked.connect(self._on_report_clicked)
         self.close_button.clicked.connect(self.close_requested)
 
+        self._error_timer = QTimer(self)
+        self._error_timer.setSingleShot(True)
+        self._error_timer.setInterval(ERROR_SECONDS * 1000)
+        self._error_timer.timeout.connect(self._clear_error)
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_INTERVAL_MS)
         self._timer.timeout.connect(self.tick)
 
+        self._clear_error()
         self._render()
 
     # --- public API ---
@@ -241,6 +268,12 @@ class ChatWindow(QWidget):
         self._state = state
         if state.match_id != previous.match_id:
             self.input.clear()
+            self._clear_error()
+            # A report dialog belongs to the chat it was opened for.
+            if self._report_dialog is not None:
+                self._report_dialog.submitted.disconnect(self.report_requested)
+                self._report_dialog.reject()
+                self._report_dialog = None
         if state.match_id is None:
             self._shared = ""
         self._anchor_time(state)
@@ -252,6 +285,22 @@ class ChatWindow(QWidget):
         """This companion's own connection (the "Reconnecting…" line)."""
         self._connected = connected
         self._render()
+
+    def show_error(self, code: str) -> None:
+        """A failed chat action, as a fixed line. Codes that no chat action can
+        produce (sign-in and the like) and a missing chat show nothing; the
+        server's own text is never shown."""
+        text = ERROR_TEXT.get(code)
+        if text is None or self._state.match_id is None:
+            return
+        self.error_label.setText(text)
+        self.error_label.setVisible(True)
+        self._error_timer.start()
+
+    def _clear_error(self) -> None:
+        self._error_timer.stop()
+        self.error_label.setText("")
+        self.error_label.setVisible(False)
 
     def set_shared(self, labels: list[str]) -> None:
         """What both people shared (the M4 labels), already display strings."""
@@ -392,6 +441,7 @@ class ChatWindow(QWidget):
             state.messages,
             state.pending,
             state.peer_nickname,
+            state.ended,
         )
         if key == self._transcript_key:
             return
@@ -411,7 +461,7 @@ class ChatWindow(QWidget):
         for pending in state.pending:
             self._add_row(True, display_text(pending.body), pending)
         # The range change may have happened before the layout settled.
-        QTimer.singleShot(0, self._scroll_if_sticking)
+        QTimer.singleShot(0, self, self._scroll_if_sticking)
 
     def _scroll_if_sticking(self) -> None:
         if self._stick:
@@ -437,7 +487,11 @@ class ChatWindow(QWidget):
         label.setAlignment(align)
         column.addWidget(label, 0, align)
         if pending is not None:
-            if pending.status == "failed":
+            if pending.status == "failed" and self._state.ended is not None:
+                mark = QLabel(NOT_SENT_ENDED)  # nothing can be retried any more
+                mark.setTextFormat(Qt.TextFormat.PlainText)
+                column.addWidget(mark, 0, align)
+            elif pending.status == "failed":
                 retry = QPushButton(NOT_SENT)
                 retry.setFlat(True)
                 retry.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -518,10 +572,19 @@ class ChatWindow(QWidget):
             self.activity_changed.emit(self.isActiveWindow())
 
     def closeEvent(self, event: QCloseEvent) -> None:
-        """Closing a live chat hides the window; an ended one is forgotten."""
+        """Closing a live chat hides the window while the main window is visible;
+        an ended one is forgotten."""
         if self._state.match_id is not None and self._state.ended is not None:
             event.accept()
             self.close_requested.emit()
+            return
+        if not any(
+            isinstance(w, CompanionWindow) and w.isVisible()
+            for w in QApplication.topLevelWidgets()
+        ):
+            # Nothing else is on screen: hiding would leave the app running
+            # with no window. Closing lets it quit (lastWindowClosed).
+            event.accept()
             return
         event.ignore()
         self.hide()

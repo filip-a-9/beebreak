@@ -133,11 +133,28 @@ def test_bodies_are_listed_as_plain_text_without_tooltips(
     assert QToolTip.text() == ""
 
 
-def test_the_dialog_reads_no_message_other_than_its_own_list(
-    dialog: ReportDialog,
-) -> None:
+def test_the_dialog_reads_no_message_other_than_its_own_list(qtbot: QtBot) -> None:
     # Seqs come from item data, so a body that looks like a number is harmless.
     d = ReportDialog("bob_b", (message_view(7, body="99"),))
+    qtbot.addWidget(d)
     d.reason_buttons["spam"].setChecked(True)
     _tick(d, 0)
     assert d._ticked() == (7,)
+
+
+def test_more_than_50_ticked_messages_cannot_be_submitted(qtbot: QtBot) -> None:
+    messages = tuple(message_view(i) for i in range(1, 61))
+    d = ReportDialog("bob_b", messages)
+    qtbot.addWidget(d)
+    d.show()
+    d.reason_buttons["harassment"].setChecked(True)
+    for row in range(50):
+        d.message_list.item(row).setCheckState(Qt.CheckState.Checked)
+    assert d.report_button.isEnabled()
+    assert not d.limit_label.isVisibleTo(d)
+    d.message_list.item(50).setCheckState(Qt.CheckState.Checked)
+    assert not d.report_button.isEnabled()
+    assert d.limit_label.text() == "Tick at most 50 messages."
+    assert d.limit_label.isVisibleTo(d)
+    d.message_list.item(50).setCheckState(Qt.CheckState.Unchecked)
+    assert d.report_button.isEnabled()

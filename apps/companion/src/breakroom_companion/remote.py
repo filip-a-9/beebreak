@@ -158,6 +158,8 @@ class RemoteWorker(QObject):
         self._gap_tasks: dict[UUID, asyncio.Task[None]] = {}
         self._gap_target: dict[UUID, int] = {}
         self._resend_task: asyncio.Task[None] | None = None
+        self._seen_match: UUID | None = None
+        self._last_seq_seen = 0  # highest `last_seq` a match view told us
         self._inflight: set[UUID] = set()  # client message ids being POSTed
 
     # --- public, thread-safe ---
@@ -348,7 +350,12 @@ class RemoteWorker(QObject):
             self._on_matched(match)
         elif from_frame and self._chat.match_id is not None:
             # A sync without our match: it ended while this device was offline.
+            # Fetch what was missed meanwhile (a late report needs it): at least
+            # one probe past what we hold, then on to the server's `last_seq`.
+            was_live = self._chat.ended is None
             self._apply_chat(Ended(None, None))
+            if was_live:
+                self._check_gap(max(self._contiguous() + 1, self._last_seq_seen))
 
     def _on_frame(self, frame: ServerFrame) -> None:
         self._note_server_time(frame.server_time)
@@ -393,6 +400,9 @@ class RemoteWorker(QObject):
 
     def _on_matched(self, match: MatchView) -> None:
         self._apply_chat(Matched(match))
+        if match.match_id != self._seen_match:
+            self._seen_match, self._last_seq_seen = match.match_id, 0
+        self._last_seq_seen = max(self._last_seq_seen, match.last_seq)
         self._check_gap(match.last_seq)
 
     def _contiguous(self) -> int:
@@ -409,8 +419,8 @@ class RemoteWorker(QObject):
         """Start (or extend) the one fetch per match that fills a gap up to
         `target`."""
         match_id = self._chat.match_id
-        if match_id is None or self._chat.ended is not None or not self._signed_in:
-            return
+        if match_id is None or not self._signed_in:
+            return  # an ended chat still fills: its messages stay for 24 h
         if target <= self._contiguous():
             return
         self._gap_target[match_id] = max(self._gap_target.get(match_id, 0), target)
@@ -421,7 +431,7 @@ class RemoteWorker(QObject):
         api = self._api
         assert api is not None
         try:
-            while self._chat.match_id == match_id and self._chat.ended is None:
+            while self._chat.match_id == match_id:
                 known = self._contiguous()
                 if known >= self._gap_target.get(match_id, 0):
                     return
@@ -488,7 +498,10 @@ class RemoteWorker(QObject):
                 lambda token: api.send_message(token, match_id, request)
             )
         except ApiError as exc:
-            if exc.code != "network" and self._signed_in:
+            # A network failure while the socket is up would never be resent
+            # (that waits for the next session.ready): offer Retry instead.
+            # Offline, it stays `sending` and is resent after the reconnect.
+            if self._signed_in and (exc.code != "network" or self.state == "connected"):
                 self._apply_chat(SendFailed(cid))
             return
         finally:
@@ -504,7 +517,9 @@ class RemoteWorker(QObject):
         """A session is up: resend what the last one could not deliver."""
         self._note_server_time(frame.server_time)
         if self._resend_task is None or self._resend_task.done():
-            self._resend_task = asyncio.create_task(self._resend_pending())
+            # Through the command lock, so a resent old message cannot overtake
+            # a send the user made after the reconnect.
+            self._resend_task = asyncio.create_task(self._guard(self._resend_pending()))
 
     async def _resend_pending(self) -> None:
         for pending in self._chat.pending:
@@ -631,33 +646,40 @@ class RemoteWorker(QObject):
         )
 
     async def _end_match(self, *, block: bool) -> None:
+        """End or block the chat the window shows (the chat state), falling back
+        to the break's match when no chat is held. End needs a live chat; Block
+        is also allowed after the end (the peer ended it while the confirmation
+        was open, or the user already pressed OK): the server records the block
+        and the state stays ended."""
         api = self._api
-        match = self._break.match
-        phase = self._break.phase
-        # Block is also allowed after the match ended (the peer ended it while the
-        # confirmation was open); the server records it and the state stays ended.
-        if api is None or not self._signed_in or phase not in ("matched", "ended"):
+        if api is None or not self._signed_in:
             return
-        if phase == "ended" and not block:
-            return
-        assert match is not None
-        if block:
-            await self._authed(lambda token: api.block_match(token, match.match_id))
-            if phase == "ended":
-                return
+        if self._chat.match_id is not None:
+            match_id, live = self._chat.match_id, self._chat.ended is None
         else:
-            await self._authed(lambda token: api.end_match(token, match.match_id))
+            match = self._break.match
+            if match is None or self._break.phase not in ("matched", "ended"):
+                return
+            match_id, live = match.match_id, self._break.phase == "matched"
+        if not live and not block:
+            return
+        if block:
+            await self._authed(lambda token: api.block_match(token, match_id))
+        else:
+            await self._authed(lambda token: api.end_match(token, match_id))
+        if not live:
+            return
         self._apply(
             Frame(
                 WsMatchEnded(
                     type="match.ended",
-                    match_id=match.match_id,
+                    match_id=match_id,
                     reason="ended",
                     **self._synthetic(),
                 )
             )
         )
-        self._apply_chat(Ended(match.match_id, "ended"))
+        self._apply_chat(Ended(match_id, "ended"))
 
     async def _dismiss_break(self) -> None:
         self._apply(Dismiss())

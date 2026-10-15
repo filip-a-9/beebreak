@@ -38,6 +38,7 @@ from tests.unit.test_remote_worker_break import (
 
 MATCH_ID = UUID(int=910)
 MESSAGES = f"/v1/matches/{MATCH_ID}/messages"
+OTHER = UUID(int=920)
 BODY_CANARY = "canary-body-text"
 
 
@@ -477,27 +478,122 @@ def test_send_of_empty_text_or_without_a_chat_posts_nothing(
     assert rig.rec.last.pending == ()
 
 
-def test_a_send_during_a_network_failure_is_resent_with_the_same_id_after_reconnect(
+def test_f3_a_failed_post_with_the_socket_up_does_not_stay_sending(
     qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
 ) -> None:
     rig = make_rig()
     open_chat(qtbot, rig)
-    server.fail_sends = 1
+    server.fail_sends = 1  # one 502 from a proxy; the WebSocket stays up
 
     rig.worker.send_message("hello")
-    wait(qtbot, lambda: len(server.send_bodies()) == 1)
-    settle(qtbot)
-    assert [p.status for p in rig.rec.last.pending] == ["sending"]  # not failed
-    assert rig.rec.errors == []
+
+    wait(qtbot, lambda: [p.status for p in rig.rec.last.pending] == ["failed"])
+    failed_id = rig.rec.last.pending[0].client_message_id
+    rig.worker.retry_message(failed_id)  # Retry reuses the id
+    wait(qtbot, lambda: seqs(rig.rec.last) == [1])
+    first, second = server.send_bodies()
+    assert first == second and rig.rec.last.pending == ()
+
+
+def test_a_resent_message_does_not_overtake_a_later_send(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
+) -> None:
+    rig = make_rig()
+    open_chat(qtbot, rig)
+    server.drop_sockets()
+    wait(qtbot, lambda: "offline" in rig.rec.connection)
+    rig.worker.send_message("old")
+    wait(qtbot, lambda: [p.status for p in rig.rec.last.pending] == ["sending"])
+    connected = rig.rec.connection.count("connected")
+    wait(qtbot, lambda: rig.rec.connection.count("connected") > connected)
+
+    rig.worker.send_message("new")
+
+    wait(qtbot, lambda: len(server.messages) == 2)
+    assert [m["body"] for m in server.messages] == ["old", "new"]
+
+
+def test_a_chat_that_ended_while_offline_still_fetches_what_it_missed(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
+) -> None:
+    rig = make_rig()
+    open_chat(qtbot, rig)
+    server.messages = [message_json(1), message_json(2)]
+    server.sync = {"queue": None, "match": None}  # the chat ended meanwhile
 
     server.drop_sockets()
-    wait(qtbot, lambda: len(server.send_bodies()) == 2)
-    wait(qtbot, lambda: seqs(rig.rec.last) == [1])
 
-    first, second = server.send_bodies()
-    assert first == second  # same client message id and body
-    assert rig.rec.last.pending == ()
-    assert len(server.messages) == 1
+    wait(qtbot, lambda: rig.rec.last.ended == "ended")
+    wait(qtbot, lambda: seqs(rig.rec.last) == [1, 2])
+
+
+def _ended_then_other_device_matches(qtbot: QtBot, rig: Rig) -> None:
+    open_chat(qtbot, rig)
+    rig.server.push(frame("match.ended", match_id=str(MATCH_ID), reason="ended"))
+    wait(qtbot, lambda: rig.rec.last.ended == "ended")
+    rig.server.push(
+        frame("match.created", entry_id=str(uuid4()), match=match_json(OTHER))
+    )
+    wait(qtbot, lambda: rig.rec.last.match_id == OTHER)
+    assert rig.rec.last.ended is None  # the chat window now shows live chat B
+
+
+def test_f1_end_in_the_chat_window_ends_the_chat_it_shows(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
+) -> None:
+    rig = make_rig()
+    _ended_then_other_device_matches(qtbot, rig)
+
+    rig.worker.end_match()
+
+    wait(qtbot, lambda: rig.rec.last.ended == "ended")
+    ends = [c[1] for c in server.calls("POST", "/v1/matches/") if c[1].endswith("/end")]
+    assert ends == [f"/v1/matches/{OTHER}/end"]
+
+
+def test_f1_block_in_the_chat_window_blocks_the_peer_it_shows(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
+) -> None:
+    rig = make_rig()
+    _ended_then_other_device_matches(qtbot, rig)
+
+    rig.worker.block_peer()
+
+    wait(qtbot, lambda: rig.rec.last.ended == "ended")
+    blocked = [c[1] for c in server.calls("POST", "/v1/matches/")]
+    assert blocked == [f"/v1/matches/{OTHER}/block"]
+
+
+def test_f1_block_from_an_ended_chat_window_after_ok_still_blocks(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
+) -> None:
+    rig = make_rig()
+    open_chat(qtbot, rig)
+    server.push(frame("match.ended", match_id=str(MATCH_ID), reason="ended"))
+    wait(qtbot, lambda: rig.rec.last.ended == "ended")
+    rig.worker.dismiss_break()  # OK in the main window; chat window still open
+    settle(qtbot)
+
+    rig.worker.block_peer()
+    wait(qtbot, lambda: bool(server.calls("POST", "/v1/matches/")))
+
+    assert [c[1] for c in server.calls("POST", "/v1/matches/")] == [
+        f"/v1/matches/{MATCH_ID}/block"
+    ]
+
+
+def test_end_from_an_ended_chat_window_posts_nothing(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
+) -> None:
+    rig = make_rig()
+    open_chat(qtbot, rig)
+    server.push(frame("match.ended", match_id=str(MATCH_ID), reason="ended"))
+    wait(qtbot, lambda: rig.rec.last.ended == "ended")
+
+    rig.worker.end_match()
+    settle(qtbot)
+
+    assert server.calls("POST", "/v1/matches/") == []
 
 
 def test_a_send_while_offline_waits_for_the_next_session(
@@ -584,13 +680,16 @@ def test_pending_messages_fail_when_the_chat_ends(
 ) -> None:
     rig = make_rig()
     open_chat(qtbot, rig)
-    server.fail_sends = 1
+    server.drop_sockets()
+    wait(qtbot, lambda: "offline" in rig.rec.connection)
     rig.worker.send_message("hello")
     wait(qtbot, lambda: [p.status for p in rig.rec.last.pending] == ["sending"])
+    # The chat ended while we were away: the resend is refused or never made.
+    server.send_error = (409, "chat_ended")
+    server.sync = {"queue": None, "match": None}
 
-    server.push(frame("match.ended", match_id=str(MATCH_ID), reason="expired"))
+    wait(qtbot, lambda: rig.rec.last.ended == "ended")
 
-    wait(qtbot, lambda: rig.rec.last.ended == "expired")
     assert [p.status for p in rig.rec.last.pending] == ["failed"]
 
 
@@ -848,9 +947,9 @@ def test_no_message_body_or_nickname_reaches_the_logs(
     rig = make_rig()
     open_chat(qtbot, rig)
     server.fail_sends = 1
-    rig.worker.send_message(BODY_CANARY)
-    wait(qtbot, lambda: len(server.send_bodies()) == 1)
-    server.drop_sockets()
+    rig.worker.send_message(BODY_CANARY)  # a 502 with the socket up: failed
+    wait(qtbot, lambda: [p.status for p in rig.rec.last.pending] == ["failed"])
+    rig.worker.retry_message(rig.rec.last.pending[0].client_message_id)
     wait(qtbot, lambda: seqs(rig.rec.last) == [1])
     server.messages = []
     server.report_error = (409, "already_reported")
