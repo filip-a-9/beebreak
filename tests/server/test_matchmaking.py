@@ -15,7 +15,7 @@ from breakroom_server.app import create_app
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
 from breakroom_server.mailer import RecordingMailer
-from breakroom_server.matchmaking import MatchCreated, Matchmaker
+from breakroom_server.matchmaking import MatchCreated, Matchmaker, _Candidate
 from breakroom_server.models import Block, Match, MatchParticipant, QueueEntry, User
 from breakroom_shared.api import WsMatchCreated, WsMatchEnded, WsQueueEnded
 from breakroom_shared.presence import RemainingTimeBucket, StackTag
@@ -204,6 +204,57 @@ def test_block_prevents_pair_in_either_direction(rig: Rig, direction: str) -> No
     else:
         rig.block(bob, ada)
     assert rig.mm.run_once() == []
+    assert rig.entry(ea).status == rig.entry(eb).status == "queued"
+
+
+def _plan_candidate(rig: Rig, user: SeededUser, entry_id: uuid.UUID) -> _Candidate:
+    """The candidate as a plan read before the claim would have seen it."""
+    entry = rig.entry(entry_id)
+    return _Candidate(
+        entry_id=entry_id,
+        user_id=user.user_id,
+        admitted_at=entry.admitted_at,
+        category=None,
+        tags=frozenset(),
+        has_tags=False,
+        bucket=None,
+    )
+
+
+def _match_count(rig: Rig) -> int:
+    with rig.factory() as s:
+        return s.scalar(select(func.count()).select_from(Match)) or 0
+
+
+@pytest.mark.parametrize("direction", ["a_blocks_b", "b_blocks_a"])
+def test_block_committed_after_the_plan_stops_the_claim(
+    rig: Rig, direction: str
+) -> None:
+    ada, bob = rig.user("Ada"), rig.user("Bob")
+    ea, eb = rig.queue(ada), rig.queue(bob)
+    first, second = _plan_candidate(rig, ada, ea), _plan_candidate(rig, bob, eb)
+    if direction == "a_blocks_b":
+        rig.block(ada, bob)
+    else:
+        rig.block(bob, ada)
+
+    assert rig.mm._create_match(rig.clock.now, first, second) is None
+
+    assert _match_count(rig) == 0
+    assert rig.entry(ea).status == rig.entry(eb).status == "queued"
+
+
+def test_user_disabled_after_the_plan_stops_the_claim(rig: Rig) -> None:
+    ada, bob = rig.user("Ada"), rig.user("Bob")
+    ea, eb = rig.queue(ada), rig.queue(bob)
+    first, second = _plan_candidate(rig, ada, ea), _plan_candidate(rig, bob, eb)
+    with rig.factory() as s:
+        s.get_one(User, bob.user_id).status = "disabled"
+        s.commit()
+
+    assert rig.mm._create_match(rig.clock.now, first, second) is None
+
+    assert _match_count(rig) == 0
     assert rig.entry(ea).status == rig.entry(eb).status == "queued"
 
 
@@ -396,6 +447,21 @@ def test_user_in_active_match_is_not_paired_again(rig: Rig) -> None:
     assert rig.entry(e_ada).status == rig.entry(e_cy).status == "queued"
 
 
+def test_stray_entry_of_a_matched_user_does_not_starve_the_waiters(rig: Rig) -> None:
+    ada, bob, cy = rig.user("Ada"), rig.user("Bob"), rig.user("Cyd")
+    seed_match(rig.factory, ada, rig.user("Zed"))
+    # Ada's stray entry is the oldest, so the plan would pick it first.
+    ea = rig.queue(ada, at=START_TIME)
+    rig.queue(bob, at=START_TIME + timedelta(seconds=1))
+    rig.queue(cy, at=START_TIME + timedelta(seconds=2))
+    rig.clock.advance(5)
+
+    created = rig.mm.run_once()
+
+    assert [set(m.users) for m in created] == [{bob.user_id, cy.user_id}]
+    assert rig.entry(ea).status == "queued"
+
+
 def test_disabled_user_cancelled_and_match_ended(rig: Rig) -> None:
     ada, bob, cy = rig.user("Ada"), rig.user("Bob"), rig.user("Cyd")
     match_id = seed_match(rig.factory, ada, bob)
@@ -550,7 +616,7 @@ def test_purge_deletes_only_rows_older_than_retention(rig: Rig) -> None:
 
 
 def test_purge_runs_at_most_once_a_minute(rig: Rig) -> None:
-    config = dataclasses.replace(rig.config, retention_s=1)
+    config = dataclasses.replace(rig.config, retention_s=1, rematch_penalty_s=1)
     mm = Matchmaker(rig.factory, config, rig.clock, rig.notifier)
     ada, bob = rig.user("Ada"), rig.user("Bob")
     rig.queue(ada)

@@ -1,4 +1,5 @@
 import base64
+from typing import Any
 
 import pytest
 
@@ -54,6 +55,7 @@ CHAT_DEFAULTS = {
     "rate_message_user": 20,
     "rate_message_window_s": 10,
     "rate_report_user": 5,
+    "rate_extension_user": 10,
 }
 
 
@@ -72,6 +74,8 @@ def test_chat_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize("name", sorted(CHAT_DEFAULTS))
 def test_chat_values_read_from_env(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     _env(monkeypatch)
+    # Keeps message_retention_s = 7 clear of the report-window coupling.
+    monkeypatch.setenv("BREAKROOM_REPORT_WINDOW_S", "1")
     monkeypatch.setenv(f"BREAKROOM_{name.upper()}", "7")
     assert getattr(ServerConfig.from_env(), name) == 7
 
@@ -98,3 +102,31 @@ def test_zero_extensions_allowed_negative_rejected(
             ServerConfig.from_env()
     with pytest.raises(ValueError):
         ServerConfig(database_url="sqlite://", secret=b"s" * 32, chat_max_extensions=-1)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # Evidence would be purged before a report can attach it.
+        {"report_window_s": 200, "message_retention_s": 100},
+        # The purge would delete the rematch history the penalty needs.
+        {"retention_s": 100, "rematch_penalty_s": 200},
+    ],
+)
+def test_couplings_that_silently_break_features_are_rejected(
+    overrides: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError):
+        ServerConfig(database_url="sqlite://", secret=b"s" * 32, **overrides)
+
+
+def test_equal_coupled_values_and_the_defaults_are_accepted() -> None:
+    ServerConfig(database_url="sqlite://", secret=b"s" * 32)
+    ServerConfig(
+        database_url="sqlite://",
+        secret=b"s" * 32,
+        report_window_s=100,
+        message_retention_s=100,
+        retention_s=100,
+        rematch_penalty_s=100,
+    )

@@ -482,6 +482,22 @@ def test_rate_limit_is_per_user_and_recovers(
     assert send(client, ada, match_id).status_code == 201
 
 
+def test_extension_calls_past_the_limit_are_429_and_per_user(
+    client: TestClient,
+    ada: ApiUser,
+    bob: ApiUser,
+    match_id: uuid.UUID,
+    server_config: ServerConfig,
+    notifier: RecordingNotifier,
+) -> None:
+    for _ in range(server_config.rate_extension_user):
+        assert ext(client, ada, match_id, "request").status_code != 429
+    r = ext(client, ada, match_id, "decline")
+    assert r.status_code == 429
+    assert int(r.headers["Retry-After"]) >= 1
+    assert ext(client, bob, match_id, "decline").status_code != 429
+
+
 # --- concurrency ----------------------------------------------------------------
 
 

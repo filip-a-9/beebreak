@@ -6,6 +6,7 @@ Rule 10: no address or code ever reaches a log line or exception message.
 import logging
 import queue
 import smtplib
+import ssl
 import threading
 from email.message import EmailMessage
 from typing import Final, Literal, Protocol
@@ -69,6 +70,8 @@ class SmtpMailer:
         self._mail_from = mail_from
         self._starttls = starttls
         self._timeout_s = timeout_s
+        # Verifies the certificate chain and hostname; bare starttls() does not.
+        self._tls_context = ssl.create_default_context()
         self._queue: queue.Queue[tuple[Kind, str, str]] = queue.Queue(QUEUE_SIZE)
         self._closing = threading.Event()
         self._thread = threading.Thread(
@@ -112,7 +115,7 @@ class SmtpMailer:
     def _deliver(self, msg: EmailMessage) -> None:
         with smtplib.SMTP(self._host, self._port, timeout=self._timeout_s) as smtp:
             if self._starttls:
-                smtp.starttls()
+                smtp.starttls(context=self._tls_context)
             smtp.send_message(msg)
 
 

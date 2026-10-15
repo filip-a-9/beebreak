@@ -360,6 +360,7 @@ def post_extension(
     principal: CurrentPrincipal,
 ) -> ChatStatus:
     state = request.app.state
+    check_limit(state.limiters.extension_user, str(principal.user_id))
     now: datetime = state.clock()
     with state.session_factory() as session:
         status, change, peer_id = extension(

@@ -481,6 +481,12 @@ class Matchmaker:
                     QueueEntry.status == "queued",
                     QueueEntry.expires_at > now,
                     User.status == "active",
+                    # A stray entry of a matched user can never be claimed (the
+                    # active-participant index); planning it would starve others.
+                    ~exists().where(
+                        MatchParticipant.user_id == QueueEntry.user_id,
+                        MatchParticipant.active.is_(True),
+                    ),
                 )
                 .order_by(QueueEntry.admitted_at, QueueEntry.id)
             ).all()
@@ -564,8 +570,9 @@ class Matchmaker:
     ) -> tuple[MatchCreated, list[tuple[UUID, BaseModel]]] | None:
         """One transaction: the match, two participants, both entries claimed.
 
-        None when a row was claimed or ended meanwhile, or a user already has an
-        active match (the partial unique indexes say no).
+        None when a row was claimed or ended meanwhile, the pair got blocked or a user
+        disabled since the plan, or a user already has an active match (the
+        partial unique indexes say no).
         """
         ids = [a.entry_id, b.entry_id]
         with self._factory() as session:
@@ -580,6 +587,22 @@ class Matchmaker:
                     .with_for_update(skip_locked=True)
                 ).all()
                 if len(live) != 2:
+                    session.rollback()
+                    return None
+                # The plan is a plain read: a block or an admin disable may have
+                # committed since. Re-check both inside the claim.
+                users = [a.user_id, b.user_id]
+                blocked = session.scalar(
+                    select(
+                        exists().where(
+                            Block.blocker_id.in_(users), Block.blocked_id.in_(users)
+                        )
+                    )
+                )
+                active = session.scalars(
+                    select(User.id).where(User.id.in_(users), User.status == "active")
+                ).all()
+                if blocked or len(active) != 2:
                     session.rollback()
                     return None
                 shared = (

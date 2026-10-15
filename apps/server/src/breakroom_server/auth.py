@@ -92,6 +92,7 @@ class Limiters:
     queue_user: RateLimiter
     message_user: RateLimiter  # own window: rate_message_window_s
     report_user: RateLimiter
+    extension_user: RateLimiter
 
 
 def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
@@ -106,6 +107,7 @@ def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
             config.rate_message_user, float(config.rate_message_window_s), clock
         ),
         report_user=RateLimiter(config.rate_report_user, window, clock),
+        extension_user=RateLimiter(config.rate_extension_user, window, clock),
     )
 
 

@@ -5,6 +5,7 @@ passes at the same time (PostgreSQL; set BREAKROOM_TEST_DATABASE_URL). The
 deterministic tests replay the same interleavings by hand and run on SQLite too.
 """
 
+import dataclasses
 import threading
 import uuid
 from collections import Counter
@@ -351,11 +352,11 @@ def test_user_with_active_match_is_rejected_by_the_index(
     assert mm._create_match(clock.now, a, b) is not None
     # Ada queues again while still matched (the queue API forbids it; the
     # matchmaker must not rely on that) and Cyd joins.
-    seed_queued(session_factory, ada, now=clock.now)
+    stray = seed_queued(session_factory, ada, now=clock.now)
     seed_queued(session_factory, cyd, now=clock.now)
-    again = _snapshot(mm, clock.now)
-    ada_entry = next(c for c in again if c.user_id == ada.user_id)
-    cyd_entry = next(c for c in again if c.user_id == cyd.user_id)
+    # The plan no longer offers the stray entry, so a stale plan stands in.
+    cyd_entry = next(c for c in _snapshot(mm, clock.now) if c.user_id == cyd.user_id)
+    ada_entry = dataclasses.replace(cyd_entry, entry_id=stray, user_id=ada.user_id)
 
     assert mm._create_match(clock.now, ada_entry, cyd_entry) is None
 

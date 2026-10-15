@@ -89,6 +89,7 @@ class FakeServer:
         self.refreshes = 0
         self.entries: dict[str, dict[str, Any]] = {}  # idempotency key -> entry
         self.queue_error: tuple[int, str] | None = None
+        self.join_delay_s = 0.0
         self.sync: dict[str, Any] = {"queue": None, "match": None}
         self.snapshot: dict[str, Any] = {"queue": None, "match": None}
         self.snapshot_error: tuple[int, str] | None = None
@@ -175,6 +176,7 @@ class FakeServer:
         if self.queue_error is not None:
             status, code = self.queue_error
             return JSONResponse({"error": code}, status_code=status)
+        await asyncio.sleep(self.join_delay_s)
         key = json.loads(body)["idempotency_key"]
         if key in self.entries:
             return JSONResponse(self.entries[key], status_code=200)
@@ -602,6 +604,22 @@ def test_leave_queue_deletes_the_entry_and_goes_to_none(
 
     assert len(rig.server.calls("DELETE", "/v1/queue/current")) == 1
     assert rig.rec.phases == ["joining", "searching", "none"]
+
+
+def test_leave_during_the_join_round_trip_still_cancels_the_search(
+    qtbot: QtBot, make_rig: Callable[..., Rig]
+) -> None:
+    rig = make_rig()
+    rig.server.join_delay_s = 0.5
+
+    rig.worker.join_queue(PRESENCE)
+    wait_phase(qtbot, rig, "joining")
+    rig.worker.leave_queue()
+    wait(qtbot, lambda: len(rig.server.calls("DELETE", "/v1/queue/current")) == 1)
+    wait_phase(qtbot, rig, "none")
+
+    assert "matched" not in rig.rec.phases
+    assert rig.rec.last.phase == "none"
 
 
 def test_expiry_frame_shows_nobody_available_until_dismissed(

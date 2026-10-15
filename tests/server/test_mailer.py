@@ -1,7 +1,9 @@
 import logging
 import queue
+import smtplib
 import socket
 import socketserver
+import ssl
 import threading
 from collections.abc import Iterator
 from email import message_from_bytes
@@ -179,3 +181,29 @@ def test_recording_mailer_records() -> None:
         ("code", "a@b.test", CODE),
         ("invite", "c@d.test", "WXYZ6789"),
     ]
+
+
+def test_starttls_verifies_the_server_certificate(
+    sink: _Sink, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contexts: list[ssl.SSLContext | None] = []
+
+    class _RecordingSMTP(smtplib.SMTP):
+        def starttls(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            # The sink speaks no TLS: record the context, skip the handshake.
+            contexts.append(kwargs.get("context"))
+            return (220, b"skipped")
+
+    monkeypatch.setattr(smtplib, "SMTP", _RecordingSMTP)
+    mailer = SmtpMailer(
+        "127.0.0.1", _port(sink), "Breakroom <no-reply@breakroom.test>", starttls=True
+    )
+    try:
+        mailer.send_code(ADDRESS, CODE)
+        sink.received.get(timeout=5)
+    finally:
+        mailer.close()
+    (context,) = contexts
+    assert context is not None
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname

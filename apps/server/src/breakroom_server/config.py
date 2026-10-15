@@ -123,6 +123,7 @@ class ServerConfig:
     rate_message_user: int = 20  # per rate_message_window_s
     rate_message_window_s: int = 10
     rate_report_user: int = 5  # per rate_window_s
+    rate_extension_user: int = 10  # per rate_window_s
 
     def __post_init__(self) -> None:
         if len(self.secret) < MIN_SECRET_BYTES:
@@ -156,9 +157,14 @@ class ServerConfig:
             "rate_message_user",
             "rate_message_window_s",
             "rate_report_user",
+            "rate_extension_user",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+        if self.report_window_s > self.message_retention_s:
+            raise ValueError("report_window_s must not exceed message_retention_s")
+        if self.retention_s < self.rematch_penalty_s:
+            raise ValueError("retention_s must not be below rematch_penalty_s")
         if self.chat_max_extensions < 0:
             raise ValueError("chat_max_extensions must not be negative")
         if self.mailer not in MAILER_KINDS:
@@ -206,4 +212,5 @@ class ServerConfig:
             rate_message_user=_positive("BREAKROOM_RATE_MESSAGE_USER", 20),
             rate_message_window_s=_positive("BREAKROOM_RATE_MESSAGE_WINDOW_S", 10),
             rate_report_user=_positive("BREAKROOM_RATE_REPORT_USER", 5),
+            rate_extension_user=_positive("BREAKROOM_RATE_EXTENSION_USER", 10),
         )

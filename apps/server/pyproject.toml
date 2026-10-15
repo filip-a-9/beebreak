@@ -11,6 +11,8 @@ dependencies = [
     "breakroom-shared",
     "alembic==1.20.0",
     "fastapi==0.141.1",
+    # The binary wheel is a dev/M3 convenience; M6 decides binary vs. system libpq
+    # for the production image.
     "psycopg[binary]==3.3.6",
     "sqlalchemy==2.1.1",
     "uvicorn[standard]==0.54.0",
