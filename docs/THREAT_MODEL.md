@@ -43,7 +43,7 @@ content the server stores (T36–T49).
 ```text
 Claude Code ──stdin JSON──▶ hook process ──Unix socket──▶ companion ──▶ window
 Claude Code ◀──stdio MCP──▶ MCP server  ──Unix socket──▶ companion
-companion ──HTTP + WebSocket (loopback until M6 adds TLS)──▶ server ──▶ Postgres / SMTP (Mailpit)
+companion ──HTTPS + WSS (plain only to loopback)──▶ Caddy ──▶ server ──▶ Postgres / SMTP
 ```
 
 1. **Hook payload → reducer.** Untrusted and sensitive. Prompt text can carry
@@ -51,12 +51,16 @@ companion ──HTTP + WebSocket (loopback until M6 adds TLS)──▶ server �
 2. **Reducer → socket.** Only `NormalizedEvent` crosses (`extra="forbid"`).
 3. **Socket → companion.** Any same-user process can connect.
 4. **MCP server → Claude's context.** Anything returned enters the model context.
-5. **Companion → server.** The only network boundary. Until M6 it is plain HTTP/WS
-   and only to `127.0.0.1`, `::1` or `localhost`; any other host needs `https://`
-   (TLS termination is M6 work). The server trusts nothing the client says about
+5. **Companion → server.** The only network boundary. Plain HTTP/WS is allowed
+   only to `127.0.0.1`, `::1` or `localhost`; any other host needs `https://`.
+   In production Caddy terminates TLS (`compose.prod.yaml`) and is the only
+   service with published ports. The companion verifies against the system
+   trust store, or only against `BREAKROOM_CA_FILE` when it is set (T56). The server trusts nothing the client says about
    identity (README rule 12). Nothing derived from hook payloads crosses it;
    a search carries only the consented presence fields (T23, T24).
-6. **Server → mail relay.** SMTP to Mailpit in M3; real SMTP is a config change.
+6. **Server → mail relay.** `BREAKROOM_SMTP_TLS` is `none` (local Mailpit only),
+   `starttls` or `implicit`, both with a verifying context; credentials are
+   refused without TLS (T55).
 7. **Peer → peer, through the server.** One user's nickname and shared tags are
    shown in another user's window. Both are untrusted text there (T32); the
    server never sends the other user's account ID or email (T35). Since M5 the
@@ -124,6 +128,12 @@ companion ──HTTP + WebSocket (loopback until M6 adds TLS)──▶ server �
 | T50 | Sign-in rows kept beyond need | The matchmaker's purge also deletes `auth_challenges` 24 h after use or expiry (`challenge_retention_s`), `refresh_tokens` 7 days after they expire, used or not (`refresh_token_retention_s`; an unexpired token is never deleted), and revoked, redeemed or expired `beta_invites` 30 days after the earliest of those times (`invite_retention_s`). Challenges go first; an invite a retained challenge still references waits for a later sweep. The log line carries counts only | `test_consumed_challenge_purged_after_retention`, `test_used_but_unexpired_token_survives_any_age`, `test_invite_uses_earliest_terminal_time`, `test_invite_referenced_by_retained_challenge_waits_for_its_removal`, `test_purge_log_carries_counts_only` (`test_retention_auth.py`) |
 | T51 | A data request leaks a third party's data, or a deletion leaves traces | Export and deletion are operator-run (`breakroom-admin account export <email>` / `account delete <email> --yes`, a hard delete); no in-app UI. The export holds the user's own rows and message bodies only, never a peer's body, a hash or a code HMAC; reports about the user appear only as dates and outcome. Deletion is refused, deleting nothing, while the user is queued, in a live match or on either side of an open report, and for a disabled account unless the operator passes `--disabled-ok` (deleting it would erase the ban). Otherwise the user's devices are revoked first, busy is checked again, and only then does every row referencing the user go in one transaction; a match whose peer remains keeps the peer's side. The CLI never echoes the email; `--out` is written to a 0600 temp file and renamed into place | `test_export_has_own_bodies_and_none_of_the_peers`, `test_export_has_no_hash_column_anywhere`, `test_report_against_the_user_has_only_date_and_outcome`, `test_delete_covers_every_foreign_key_to_users`, `test_delete_keeps_the_peers_match_and_messages`, `test_busy_when_queued`, `test_busy_in_a_live_match`, `test_busy_when_the_subject_of_an_open_report`, `test_busy_when_the_user_filed_an_open_report`, `test_becoming_busy_between_the_phases_refuses_the_delete` (`test_account_data.py`); `test_account_export_out_file_is_mode_0600`, `test_account_delete_without_yes_changes_nothing`, `test_account_commands_never_log_content` (`test_admin.py`) |
 | T52 | The machine hostname used as a device identifier or fingerprint | The companion never reads the hostname. Sign-in sends the device name from the code page, prefilled `WSL device`, editable, and validated against `breakroom_shared.api.DeviceName`; the privacy preview lists it under "Sent when you sign in". It cannot be renamed after sign-in (no server route) | `test_default_name_is_sent_and_hostname_never_leaves`, `test_typed_name_is_sent_unchanged`, `test_invalid_name_disables_next`, `test_preview_lists_the_given_device_name` (`test_device_name.py`) |
+| T53 | A client picks its own rate-limit key with `X-Forwarded-For` | Forwarded headers are honoured only from peers in `BREAKROOM_TRUSTED_PROXIES` (exact networks, empty by default = trust none; `*` and host bits such as `10.0.0.1/24` refused). `compose.prod.yaml` pins Caddy to `172.29.7.10` and trusts only `172.29.7.10/32`, and Caddy overwrites the client's `X-Forwarded-For` | `test_forwarded_for_from_an_untrusted_peer_is_ignored`, `test_forwarded_for_from_a_trusted_peer_sets_the_limiter_key`, `test_forwarded_for_from_a_trusted_peer_still_limits_that_client`, `test_serve_honours_forwarded_headers_only_from_configured_proxies` (`test_serve_process.py`); `test_trusted_proxies_reject_wildcards_and_garbage` (`test_deploy_config.py`); checklist M6 proxy limits |
+| T54 | An example secret reaches production | `serve` and `migrate` refuse the `.env.example` database password and example SMTP credentials and never echo the value; `compose.prod.yaml` requires every secret with `:?` | `test_example_database_password_refuses_to_start` (`test_deploy_config.py`), `test_example_database_password_stops_the_command` (`test_serve_process.py`) |
+| T55 | SMTP credentials or sign-in codes sent in clear or to an unverified relay | `starttls` and `implicit` both verify the certificate; credentials need TLS and both halves; the password is not in `repr` and never logged | `test_implicit_tls_refuses_an_untrusted_certificate_and_logs_no_secret`, `test_starttls_upgrades_before_login_and_delivery` (`test_mailer_tls.py`); `test_smtp_credentials_need_tls_and_both_halves` (`test_deploy_config.py`) |
+| T56 | Someone swaps the companion's private CA file | `BREAKROOM_CA_FILE` must be a regular file owned by the user or root, not group- or world-writable, and valid PEM. It is checked and loaded once at startup (a later swap of the file is not picked up; changing the CA needs a restart). When set, only that CA is trusted (the system store is not mixed in) | `test_ca_file_writable_by_others_is_refused`, `test_ca_file_owned_by_another_user_is_refused`, `test_ca_is_loaded_once_at_startup`, `test_ca_file_symlink_is_followed_but_must_be_a_regular_file`, `test_https_with_a_different_ca_fails_verification`, `test_wss_without_the_private_ca_fails_verification` (`test_ca_file.py`) |
+| T57 | Uninstall leaves a valid login or local traces | `breakroom-companion uninstall` revokes the device (unless `--keep-account`, or the server is unreachable, which it says), then removes the state and socket directories, keyring entry, credentials file and autostart entry, also after a partial install. It stops a running companion only after checking that the socket's peer runs as the same user | `test_uninstall_revokes_the_device_on_a_real_server`, `test_offline_server_still_removes_everything`, `test_uninstall_stops_a_running_companion` (`test_install_uninstall.py`); `test_uninstall_revoke_trusts_the_private_ca_from_env` (`test_ca_file.py`) |
+| T58 | A second server worker or replica splits in-memory state | The hub, presence, rate limiters and matchmaker lock live in one process; `serve` exits for any worker count other than 1 (`--workers` or `WEB_CONCURRENCY`) | `test_serve_rejects_any_worker_count_but_one`, `test_serve_rejects_web_concurrency_above_one` (`test_serve_process.py`) |
 
 ## Out of scope for M1–M5
 

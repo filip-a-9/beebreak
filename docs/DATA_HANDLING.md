@@ -38,8 +38,13 @@ Paths follow `breakroom_shared.paths`. `$XDG_RUNTIME_DIR` falls back to
 | Access token (15 min) | Companion memory only | The companion process | Process lifetime | Quit the companion |
 | Chat messages and peer nickname | Companion memory and window only | You | Until the window closes | Close the window |
 
-Coming in M6: `install` and `uninstall` commands that remove the socket,
-state, credentials and autostart in one step.
+`breakroom-companion install` writes `install.json` in the state directory
+(`0600`; the server URL chosen at install, no secrets) and, with
+`--autostart`, `~/.config/autostart/breakroom.desktop`.
+`breakroom-companion uninstall` deletes the state directory, socket directory
+(socket, salt), keyring entry, credentials file and autostart entry, and
+revokes the device on the server unless `--keep-account` is given or the
+server is unreachable (it says which).
 
 ## On the server
 
@@ -70,7 +75,8 @@ email, code, token, nickname, message body, report note, device name or IP
 address.
 
 Sign-in emails are sent through the configured SMTP host (Mailpit in local
-development). The provider for the hosted beta is to be named before the beta.
+development), over STARTTLS or implicit TLS in production. SMTP credentials
+come only from the environment and are never logged. The provider for the hosted beta is to be named before the beta.
 
 ## Your data requests
 
