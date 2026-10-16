@@ -315,6 +315,17 @@ def test_ca_file_is_validated_at_install(home: Path) -> None:
             install.validate_ca_file(str(bad))
 
 
+def test_ca_file_owned_by_another_user_is_refused_at_install(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Install must refuse what the companion would refuse at start. Cannot chown
+    # without root, so the real file (ours) is judged by a pretend current user.
+    ca = write_ca(home)
+    monkeypatch.setattr(os, "getuid", lambda: ca.stat().st_uid + 1)
+    with pytest.raises(install.CaFileRefused):
+        install.validate_ca_file(str(ca))
+
+
 def test_install_with_a_bad_ca_file_writes_nothing(home: Path) -> None:
     with pytest.raises(install.CaFileRefused):
         install.install(
