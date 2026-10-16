@@ -124,6 +124,10 @@ class ServerConfig:
     rate_message_window_s: int = 10
     rate_report_user: int = 5  # per rate_window_s
     rate_extension_user: int = 10  # per rate_window_s
+    # Retention of sign-in rows (M6-04).
+    challenge_retention_s: int = 86_400
+    refresh_token_retention_s: int = 604_800
+    invite_retention_s: int = 2_592_000
 
     def __post_init__(self) -> None:
         if len(self.secret) < MIN_SECRET_BYTES:
@@ -158,6 +162,9 @@ class ServerConfig:
             "rate_message_window_s",
             "rate_report_user",
             "rate_extension_user",
+            "challenge_retention_s",
+            "refresh_token_retention_s",
+            "invite_retention_s",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -213,4 +220,9 @@ class ServerConfig:
             rate_message_window_s=_positive("BREAKROOM_RATE_MESSAGE_WINDOW_S", 10),
             rate_report_user=_positive("BREAKROOM_RATE_REPORT_USER", 5),
             rate_extension_user=_positive("BREAKROOM_RATE_EXTENSION_USER", 10),
+            challenge_retention_s=_positive("BREAKROOM_CHALLENGE_RETENTION_S", 86_400),
+            refresh_token_retention_s=_positive(
+                "BREAKROOM_REFRESH_TOKEN_RETENTION_S", 604_800
+            ),
+            invite_retention_s=_positive("BREAKROOM_INVITE_RETENTION_S", 2_592_000),
         )

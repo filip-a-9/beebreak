@@ -1,10 +1,13 @@
+import json
 import re
+import stat
 import uuid
 from datetime import timedelta
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from breakroom_server.admin import main
 from breakroom_server.db import SessionFactory
@@ -15,6 +18,7 @@ from breakroom_server.models import (
     Device,
     Match,
     MatchParticipant,
+    Message,
     QueueEntry,
     Report,
     User,
@@ -695,3 +699,163 @@ def test_admin_never_logs_report_content(
     run(["report", "show", str(ids["open_early"])], clock)
     run(["report", "resolve", str(ids["open_early"]), "disable"], clock)
     assert NOTE not in caplog.text and "canary-body" not in caplog.text
+
+
+# --- account export and delete (M6-04) ---------------------------------------
+
+ACCOUNT_EMAIL = "ada@example.com"  # what add_ready_user makes for "Ada"
+ACCOUNT_BODY = "canary-account-body"
+
+
+def _account_with_history(session_factory: SessionFactory) -> SeededUser:
+    ada = add_ready_user(session_factory, "Ada")
+    bob = add_ready_user(session_factory, "Bob")
+    mid = seed_match(
+        session_factory,
+        ada,
+        bob,
+        status="ended",
+        ended_at=START_TIME,
+        end_reason="ended",
+    )
+    seed_message(session_factory, mid, ada, seq=1, body=ACCOUNT_BODY)
+    return ada
+
+
+def test_account_export_prints_json_to_stdout(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _account_with_history(session_factory)
+    assert run(["account", "export", ACCOUNT_EMAIL], clock) == 0
+    out = capsys.readouterr()
+    data = json.loads(out.out)
+    assert data["export_version"] == 1
+    assert data["messages"][0]["body"] == ACCOUNT_BODY
+    assert ACCOUNT_EMAIL not in out.err
+
+
+def test_account_export_out_file_is_mode_0600(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _account_with_history(session_factory)
+    target = tmp_path / "export.json"
+    target.write_text("old")
+    target.chmod(0o644)  # an existing, looser file must be tightened
+    assert run(["account", "export", ACCOUNT_EMAIL, "--out", str(target)], clock) == 0
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert json.loads(target.read_text())["user"]["email"] == ACCOUNT_EMAIL
+    captured = capsys.readouterr()
+    assert ACCOUNT_EMAIL not in captured.out + captured.err
+    assert ACCOUNT_BODY not in captured.out + captured.err
+
+
+def test_account_export_unknown_email_exits_1_without_echoing_it(
+    clock: FixedClock, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert run(["account", "export", "ghost.person@example.com"], clock) == 1
+    captured = capsys.readouterr()
+    assert "ghost.person" not in captured.out + captured.err
+
+
+def test_account_delete_without_yes_changes_nothing(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ada = _account_with_history(session_factory)
+    assert run(["account", "delete", ACCOUNT_EMAIL], clock) == 2
+    assert ACCOUNT_EMAIL not in "".join(capsys.readouterr())
+    with session_factory() as s:
+        assert s.get(User, ada.user_id) is not None
+        assert s.scalar(select(func.count()).select_from(Message)) == 1
+
+
+def test_account_delete_with_yes_removes_the_account(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ada = _account_with_history(session_factory)
+    assert run(["account", "delete", ACCOUNT_EMAIL, "--yes"], clock) == 0
+    captured = capsys.readouterr()
+    assert ACCOUNT_EMAIL not in captured.out + captured.err
+    with session_factory() as s:
+        assert s.get(User, ada.user_id) is None
+
+
+def test_account_delete_refused_while_queued_exits_1(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ada = _account_with_history(session_factory)
+    seed_queued(session_factory, ada)
+    assert run(["account", "delete", ACCOUNT_EMAIL, "--yes"], clock) == 1
+    assert ACCOUNT_EMAIL not in "".join(capsys.readouterr())
+    with session_factory() as s:
+        assert s.get(User, ada.user_id) is not None
+
+
+def test_account_delete_unknown_email_exits_1(clock: FixedClock) -> None:
+    assert run(["account", "delete", "ghost@example.com", "--yes"], clock) == 1
+
+
+def test_account_commands_never_log_content(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _account_with_history(session_factory)
+    run(["account", "export", ACCOUNT_EMAIL, "--out", str(tmp_path / "e.json")], clock)
+    run(["account", "delete", ACCOUNT_EMAIL, "--yes"], clock)
+    assert ACCOUNT_BODY not in caplog.text
+
+
+def test_account_delete_disabled_account_needs_the_flag(
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ada = add_ready_user(session_factory, "Ada", status="disabled")
+    assert run(["account", "delete", ACCOUNT_EMAIL, "--yes"], clock) == 1
+    assert ACCOUNT_EMAIL not in "".join(capsys.readouterr())
+    with session_factory() as s:
+        assert s.get(User, ada.user_id) is not None
+    assert (
+        run(["account", "delete", ACCOUNT_EMAIL, "--yes", "--disabled-ok"], clock) == 0
+    )
+    with session_factory() as s:
+        assert s.get(User, ada.user_id) is None
+
+
+def test_account_export_failure_leaves_no_temp_file_and_keeps_the_target(
+    session_factory: SessionFactory, clock: FixedClock, tmp_path: Path
+) -> None:
+    _account_with_history(session_factory)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    target = out_dir / "taken"
+    target.mkdir()  # os.replace of a file onto a directory fails
+    assert run(["account", "export", ACCOUNT_EMAIL, "--out", str(target)], clock) == 1
+    assert [p.name for p in out_dir.iterdir()] == ["taken"]
+    assert target.is_dir()
+
+
+def test_account_export_replaces_a_symlink_instead_of_writing_through_it(
+    session_factory: SessionFactory, clock: FixedClock, tmp_path: Path
+) -> None:
+    _account_with_history(session_factory)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep")
+    link = tmp_path / "export.json"
+    link.symlink_to(victim)
+    assert run(["account", "export", ACCOUNT_EMAIL, "--out", str(link)], clock) == 0
+    assert victim.read_text() == "keep"
+    assert not link.is_symlink()
+    assert stat.S_IMODE(link.stat().st_mode) == 0o600

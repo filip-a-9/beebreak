@@ -1,6 +1,6 @@
-"""`breakroom-admin`: invites, users, devices, queue, matches, blocks.
+"""`breakroom-admin`: invites, users, devices, queue, matches, blocks, accounts.
 
-Owned by M3-01 and M4-01.
+Owned by M3-01, M4-01 and M6-04.
 
 
 Exit codes: 0 success, 2 bad input, 1 anything else. Expected errors print one
@@ -9,6 +9,9 @@ place an invite code is ever printed is `invite create`, once, on stdout.
 """
 
 import argparse
+import contextlib
+import json
+import os
 import re
 import sys
 import uuid
@@ -19,6 +22,13 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased
 
+from breakroom_server.account_data import (
+    AccountBusy,
+    AccountDisabled,
+    AccountNotFound,
+    delete_account,
+    export_account,
+)
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import make_engine
 from breakroom_server.mailer import Mailer, RecordingMailer, SmtpMailer
@@ -113,6 +123,23 @@ def _parser() -> argparse.ArgumentParser:
     remove = block.add_parser("remove", help="remove a block")
     remove.add_argument("blocker")
     remove.add_argument("blocked")
+
+    account = sub.add_parser(
+        "account", help="data requests for one account"
+    ).add_subparsers(dest="action", required=True)
+    export = account.add_parser(
+        "export", help="the account's data as JSON (contains user content)"
+    )
+    export.add_argument("email")
+    export.add_argument("--out", default=None, help="write to PATH with mode 0600")
+    delete_ = account.add_parser("delete", help="hard-delete an account")
+    delete_.add_argument("email")
+    delete_.add_argument("--yes", action="store_true", help="confirm the deletion")
+    delete_.add_argument(
+        "--disabled-ok",
+        action="store_true",
+        help="allow deleting a disabled account (frees its email and nickname)",
+    )
     return parser
 
 
@@ -400,11 +427,73 @@ def _block_remove(session: Session, blocker: str, blocked: str) -> None:
     session.commit()
 
 
+def _account_export(session: Session, email: str, out: str | None) -> None:
+    try:
+        data = export_account(session, email)
+    except AccountNotFound:
+        raise AdminError("no such account") from None
+    text = json.dumps(data, indent=2, sort_keys=True)
+    if out is None:
+        print(text)
+        return
+    _write_private(out, text + "\n")
+
+
+def _write_private(path: str, text: str) -> None:
+    """Write `path` atomically with mode 0600.
+
+    A fresh temp file in the same directory (O_EXCL, never following a link),
+    fsynced and renamed over the target. Any failure removes the temp file and
+    leaves an existing target untouched.
+    """
+    directory = os.path.dirname(os.path.abspath(path))
+    temp = os.path.join(directory, f".export-{uuid.uuid4().hex}.tmp")
+    try:
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp, path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temp)
+            raise
+    except OSError:
+        raise AdminError("cannot write the output file") from None
+
+
+def _account_delete(
+    session: Session, email: str, now: datetime, allow_disabled: bool
+) -> None:
+    try:
+        counts = delete_account(session, email, now, allow_disabled=allow_disabled)
+    except AccountNotFound:
+        raise AdminError("no such account") from None
+    except AccountDisabled:
+        raise AdminError(
+            "account is disabled; pass --disabled-ok to delete it anyway"
+        ) from None
+    except AccountBusy:
+        raise AdminError(
+            "account is queued, in a live match or has an open report; "
+            "resolve first, and if devices were already revoked retry after "
+            "the next matchmaker sweep"
+        ) from None
+    # Table names and counts only.
+    print(" ".join(f"{table}={count}" for table, count in counts.items()))
+
+
 def _run(args: argparse.Namespace, clock: Clock, mailer: Mailer | None) -> None:
     try:
         config = ServerConfig.from_env()
     except ValueError as err:
         raise AdminError(str(err), EXIT_BAD_INPUT) from None
+    if (args.group, getattr(args, "action", None)) == ("account", "delete") and (
+        not args.yes
+    ):
+        raise AdminError("refusing to delete without --yes", EXIT_BAD_INPUT)
     now = clock()
     engine = make_engine(config.database_url)
     try:
@@ -436,6 +525,10 @@ def _run(args: argparse.Namespace, clock: Clock, mailer: Mailer | None) -> None:
                     _block_list(session, args.nickname)
                 case ("block", "remove"):
                     _block_remove(session, args.blocker, args.blocked)
+                case ("account", "export"):
+                    _account_export(session, args.email, args.out)
+                case ("account", "delete"):
+                    _account_delete(session, args.email, now, args.disabled_ok)
     finally:
         engine.dispose()
 

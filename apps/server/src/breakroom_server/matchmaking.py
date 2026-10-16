@@ -20,18 +20,31 @@ from typing import Any, cast
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import ColumnElement, CursorResult, delete, exists, select, update
+from sqlalchemy import (
+    ColumnElement,
+    CursorResult,
+    delete,
+    exists,
+    func,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
 from breakroom_server.models import (
+    AuthChallenge,
+    BetaInvite,
     Block,
     Match,
     MatchParticipant,
     Message,
     QueueEntry,
+    RefreshToken,
     Report,
     ReportMessage,
     User,
@@ -731,12 +744,63 @@ class Matchmaker:
                 "CursorResult[Any]",
                 session.execute(delete(Match).where(Match.id.in_(old))),
             ).rowcount
+            challenges, tokens, invites = self._purge_auth(session, now)
             session.commit()
-        if entries or matches or msgs or reports:
+        if entries or matches or msgs or reports or challenges or tokens or invites:
             _log.info(
-                "purged entries=%d matches=%d messages=%d reports=%d",
+                "purged entries=%d matches=%d messages=%d reports=%d "
+                "challenges=%d tokens=%d invites=%d",
                 entries,
                 matches,
                 msgs,
                 reports,
+                challenges,
+                tokens,
+                invites,
             )
+
+    def _purge_auth(self, session: Session, now: datetime) -> tuple[int, int, int]:
+        """Delete stale sign-in rows; returns (challenges, tokens, invites)."""
+        config = self._config
+        challenge_cutoff = now - timedelta(seconds=config.challenge_retention_s)
+        token_cutoff = now - timedelta(seconds=config.refresh_token_retention_s)
+        invite_cutoff = now - timedelta(seconds=config.invite_retention_s)
+        challenges = cast(
+            "CursorResult[Any]",
+            session.execute(
+                delete(AuthChallenge).where(
+                    func.coalesce(AuthChallenge.consumed_at, AuthChallenge.expires_at)
+                    < challenge_cutoff
+                )
+            ),
+        ).rowcount
+        # Purged by expiry only, used or not. auth.refresh_tokens rejects an
+        # expired token before reuse detection runs, and a used row is what
+        # reuse detection (device revocation on replay) needs. Keeping every
+        # row until expiry + retention keeps replay detection for the token's
+        # whole lifetime; a used but unexpired row survives any age.
+        tokens = cast(
+            "CursorResult[Any]",
+            session.execute(
+                delete(RefreshToken).where(RefreshToken.expires_at < token_cutoff)
+            ),
+        ).rowcount
+        # An invite is terminal once revoked, redeemed or (unredeemed) expired;
+        # the earliest of those is below the cutoff iff any applicable one is.
+        # An invite a retained challenge still references waits for a later
+        # sweep: the foreign key must never break.
+        invites = cast(
+            "CursorResult[Any]",
+            session.execute(
+                delete(BetaInvite).where(
+                    or_(
+                        BetaInvite.revoked_at < invite_cutoff,
+                        BetaInvite.redeemed_at < invite_cutoff,
+                        (BetaInvite.redeemed_at.is_(None))
+                        & (BetaInvite.expires_at < invite_cutoff),
+                    ),
+                    ~exists().where(AuthChallenge.invite_id == BetaInvite.id),
+                )
+            ),
+        ).rowcount
+        return challenges, tokens, invites

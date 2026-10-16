@@ -1,5 +1,5 @@
 import base64
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -130,3 +130,47 @@ def test_equal_coupled_values_and_the_defaults_are_accepted() -> None:
         retention_s=100,
         rematch_penalty_s=100,
     )
+
+
+AUTH_RETENTION_DEFAULTS = {
+    "challenge_retention_s": 86_400,
+    "refresh_token_retention_s": 604_800,
+    "invite_retention_s": 2_592_000,
+}
+
+
+def test_auth_retention_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    config = ServerConfig.from_env()
+    for name, value in AUTH_RETENTION_DEFAULTS.items():
+        assert getattr(config, name) == value
+
+
+@pytest.mark.parametrize("name", sorted(AUTH_RETENTION_DEFAULTS))
+def test_auth_retention_read_from_env(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    _env(monkeypatch)
+    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", "7")
+    assert getattr(ServerConfig.from_env(), name) == 7
+
+
+@pytest.mark.parametrize("name", sorted(AUTH_RETENTION_DEFAULTS))
+@pytest.mark.parametrize("value", ["0", "-1", "x"])
+def test_auth_retention_must_be_positive(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    _env(monkeypatch)
+    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", value)
+    with pytest.raises(ValueError):
+        ServerConfig.from_env()
+
+
+@pytest.mark.parametrize("name", sorted(AUTH_RETENTION_DEFAULTS))
+def test_auth_retention_zero_rejected_when_constructed(name: str) -> None:
+    with pytest.raises(ValueError):
+        ServerConfig(
+            database_url="sqlite://",
+            secret=b"s" * 32,
+            **cast("dict[str, Any]", {name: 0}),
+        )
