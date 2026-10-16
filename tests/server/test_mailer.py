@@ -196,7 +196,7 @@ def test_starttls_verifies_the_server_certificate(
 
     monkeypatch.setattr(smtplib, "SMTP", _RecordingSMTP)
     mailer = SmtpMailer(
-        "127.0.0.1", _port(sink), "Breakroom <no-reply@breakroom.test>", starttls=True
+        "127.0.0.1", _port(sink), "Breakroom <no-reply@breakroom.test>", tls="starttls"
     )
     try:
         mailer.send_code(ADDRESS, CODE)

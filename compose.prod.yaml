@@ -1,0 +1,117 @@
+# Production-shaped stack: Caddy (TLS) -> server -> Postgres.
+#
+#   cp .env.example .env     # then replace EVERY placeholder
+#   docker compose -f compose.prod.yaml up -d --build
+#
+# Only Caddy publishes ports (80, 443). The server and Postgres are reachable
+# only from inside the compose networks.
+#
+# ONE server container only. The realtime hub, presence, rate limiters and the
+# matchmaker lock live in the server process; a second replica (or worker)
+# would split users between processes and break matching. Do not scale it.
+#
+# Base images are pinned by digest; the comment names the tag. To bump one:
+# `docker pull <tag>`, copy the new digest, change both.
+
+services:
+  postgres:
+    # postgres:17
+    image: postgres@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+    environment:
+      POSTGRES_USER: breakroom
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: breakroom
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U breakroom -d breakroom"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # One-shot: applies migrations, then exits. `server` starts only after it
+  # finished successfully.
+  migrate:
+    # Same image as `server` (one name, one build; BuildKit reuses the cache).
+    image: breakroom-server:prod
+    build: &server-build
+      context: .
+      dockerfile: apps/server/Dockerfile
+    command: ["breakroom-server", "migrate"]
+    environment:
+      BREAKROOM_DATABASE_URL: postgresql+psycopg://breakroom:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/breakroom
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [backend]
+    restart: "no"
+
+  server:
+    image: breakroom-server:prod
+    build: *server-build
+    environment:
+      BREAKROOM_DATABASE_URL: postgresql+psycopg://breakroom:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/breakroom
+      BREAKROOM_SERVER_SECRET: ${BREAKROOM_SERVER_SECRET:?set BREAKROOM_SERVER_SECRET in .env}
+      BREAKROOM_SMTP_HOST: ${BREAKROOM_SMTP_HOST:?set BREAKROOM_SMTP_HOST in .env}
+      BREAKROOM_SMTP_PORT: ${BREAKROOM_SMTP_PORT:?set BREAKROOM_SMTP_PORT in .env}
+      BREAKROOM_SMTP_USERNAME: ${BREAKROOM_SMTP_USERNAME:?set BREAKROOM_SMTP_USERNAME in .env}
+      BREAKROOM_SMTP_PASSWORD: ${BREAKROOM_SMTP_PASSWORD:?set BREAKROOM_SMTP_PASSWORD in .env}
+      BREAKROOM_SMTP_TLS: ${BREAKROOM_SMTP_TLS:-starttls}
+      BREAKROOM_MAIL_FROM: ${BREAKROOM_MAIL_FROM:?set BREAKROOM_MAIL_FROM in .env}
+      # Believe X-Forwarded-For only from Caddy's fixed address (not the whole
+      # subnet, which also holds the Docker gateway at .1).
+      BREAKROOM_TRUSTED_PROXIES: 172.29.7.10/32
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [backend, edge]
+    # No `ports:` on purpose: only Caddy is reachable from outside.
+    healthcheck:
+      # The slim image has no curl.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=3).status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+
+  caddy:
+    # caddy:2.10
+    image: caddy@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
+    environment:
+      BREAKROOM_PUBLIC_HOST: ${BREAKROOM_PUBLIC_HOST:?set BREAKROOM_PUBLIC_HOST in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data # certificates and the private CA live here
+      - caddy-config:/config
+    depends_on:
+      server:
+        condition: service_healthy
+    networks:
+      edge:
+        ipv4_address: 172.29.7.10
+    restart: unless-stopped
+
+networks:
+  # Postgres is reachable only here; `internal` also removes its internet access.
+  backend:
+    internal: true
+  # Caddy and the server. A fixed subnet lets Caddy keep a fixed address, which the server trusts.
+  edge:
+    ipam:
+      config:
+        - subnet: 172.29.7.0/24
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

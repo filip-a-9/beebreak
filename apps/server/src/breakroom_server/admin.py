@@ -164,7 +164,9 @@ def _mailer_from(config: ServerConfig) -> Mailer:
         config.smtp_host,
         config.smtp_port,
         config.mail_from,
-        starttls=config.smtp_starttls,
+        tls=config.smtp_tls,
+        username=config.smtp_username,
+        password=config.smtp_password,
     )
 
 

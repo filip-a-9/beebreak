@@ -6,6 +6,7 @@ for anything else (timeout, connection, redirect, bad body). Tokens travel only
 in the Authorization header, and never appear in an exception message.
 """
 
+import ssl
 from typing import TypeVar
 from uuid import UUID
 
@@ -57,10 +58,12 @@ class ApiClient:
         timeout_s: float,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         self._client = httpx.AsyncClient(
             base_url=origin,
             transport=transport,
+            verify=ssl_context if ssl_context is not None else True,
             timeout=timeout_s,
             follow_redirects=False,
             trust_env=False,  # never pick up proxies from the environment

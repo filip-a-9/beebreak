@@ -6,10 +6,13 @@
 #   docker compose exec server breakroom-admin invite create you@example.com
 #
 # Mailpit web UI: http://127.0.0.1:8025
+#
+# Base images are pinned by digest; the comment names the tag.
 
 services:
   postgres:
-    image: postgres:17
+    # postgres:17
+    image: postgres@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
     environment:
       POSTGRES_USER: breakroom
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -25,18 +28,30 @@ services:
       retries: 10
 
   mailpit:
-    image: axllent/mailpit:v1.27
+    # axllent/mailpit:v1.27
+    image: axllent/mailpit@sha256:e22dce5b36f93c77082e204a3942fb6b283b7896e057458400a4c88344c3df68
     ports:
       - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
 
-  server:
-    build:
+  # One-shot: applies migrations, then exits (the image CMD only serves).
+  migrate:
+    build: &server-build
       context: .
       dockerfile: apps/server/Dockerfile
+    command: ["breakroom-server", "migrate"]
+    environment:
+      BREAKROOM_DATABASE_URL: postgresql+psycopg://breakroom:${POSTGRES_PASSWORD}@postgres:5432/breakroom
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  server:
+    build: *server-build
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       mailpit:
         condition: service_started
     environment:

@@ -73,20 +73,25 @@ class Served:
         return stderr
 
 
-@pytest.fixture
-def served(tmp_path: Path) -> Iterator[Served]:
-    port = _free_port()
-    env = {
+def _env(tmp_path: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
+    return {
         **{k: v for k, v in os.environ.items() if not k.startswith("BREAKROOM_")},
         "BREAKROOM_DATABASE_URL": f"sqlite:///{tmp_path / 'serve.db'}",
         "BREAKROOM_SERVER_SECRET": base64.urlsafe_b64encode(TEST_SECRET).decode(),
         "BREAKROOM_MAILER": "record",
+        **(extra or {}),
     }
-    cli = [sys.executable, "-m", "breakroom_server.cli"]
-    subprocess.run([*cli, "migrate"], env=env, check=True, timeout=60)
+
+
+CLI = [sys.executable, "-m", "breakroom_server.cli"]
+
+
+def _start(env: dict[str, str]) -> Iterator[Served]:
+    port = _free_port()
+    subprocess.run([*CLI, "migrate"], env=env, check=True, timeout=60)
     server = Served(
         subprocess.Popen(
-            [*cli, "serve", "--port", str(port)],
+            [*CLI, "serve", "--port", str(port)],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -108,6 +113,23 @@ def served(tmp_path: Path) -> Iterator[Served]:
         yield server
     finally:
         server.stop()
+
+
+@pytest.fixture
+def served(tmp_path: Path) -> Iterator[Served]:
+    yield from _start(_env(tmp_path))
+
+
+@pytest.fixture
+def served_behind_trusted_proxy(tmp_path: Path) -> Iterator[Served]:
+    # The test client connects from 127.0.0.1, so it plays the proxy.
+    yield from _start(_env(tmp_path, {"BREAKROOM_TRUSTED_PROXIES": "127.0.0.1/32"}))
+
+
+@pytest.fixture
+def served_other_proxy_trusted(tmp_path: Path) -> Iterator[Served]:
+    # A proxy list that does not include the connecting peer.
+    yield from _start(_env(tmp_path, {"BREAKROOM_TRUSTED_PROXIES": "10.99.0.0/16"}))
 
 
 def test_serve_logs_no_address_query_or_token(served: Served) -> None:
@@ -132,3 +154,84 @@ def test_serve_ignores_x_forwarded_for_for_rate_limits(served: Served) -> None:
         for i in range(21)
     ]
     assert codes == [202] * 20 + [429]
+
+
+def _forged_start_codes(served: Served) -> list[int]:
+    return [
+        _request(
+            f"{served.http}/v1/auth/start",
+            {"email": f"user{i}@example.com"},
+            {"X-Forwarded-For": f"203.0.{i}.1"},
+        )
+        for i in range(21)
+    ]
+
+
+def test_forwarded_for_from_a_trusted_peer_sets_the_limiter_key(
+    served_behind_trusted_proxy: Served,
+) -> None:
+    # 21 different forwarded clients: none is over its own limit.
+    assert _forged_start_codes(served_behind_trusted_proxy) == [202] * 21
+
+
+def test_forwarded_for_from_a_trusted_peer_still_limits_that_client(
+    served_behind_trusted_proxy: Served,
+) -> None:
+    codes = [
+        _request(
+            f"{served_behind_trusted_proxy.http}/v1/auth/start",
+            {"email": f"user{i}@example.com"},
+            {"X-Forwarded-For": "203.0.113.9"},
+        )
+        for i in range(21)
+    ]
+    assert codes == [202] * 20 + [429]
+
+
+def test_forwarded_for_from_an_untrusted_peer_is_ignored(
+    served_other_proxy_trusted: Served,
+) -> None:
+    codes = _forged_start_codes(served_other_proxy_trusted)
+    assert codes == [202] * 20 + [429]
+
+
+@pytest.mark.parametrize("workers", ["0", "2", "-1"])
+def test_serve_rejects_any_worker_count_but_one(tmp_path: Path, workers: str) -> None:
+    result = subprocess.run(
+        [*CLI, "serve", "--port", str(_free_port()), "--workers", workers],
+        env=_env(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 2
+
+
+def test_serve_rejects_web_concurrency_above_one(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [*CLI, "serve", "--port", str(_free_port())],
+        env=_env(tmp_path, {"WEB_CONCURRENCY": "3"}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 2
+
+
+@pytest.mark.parametrize("command", ["serve", "migrate"])
+def test_example_database_password_stops_the_command(
+    tmp_path: Path, command: str
+) -> None:
+    env = _env(
+        tmp_path,
+        {"BREAKROOM_DATABASE_URL": "postgresql+psycopg://u:change-me@127.0.0.1:1/db"},
+    )
+    result = subprocess.run(
+        [*CLI, command],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 2
+    assert "change-me" not in result.stderr + result.stdout

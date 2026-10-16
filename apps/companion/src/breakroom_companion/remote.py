@@ -288,7 +288,11 @@ class RemoteWorker(QObject):
         self._stop_event = asyncio.Event()
         self._refresh_lock = asyncio.Lock()
         self._command_lock = asyncio.Lock()
-        self._api = ApiClient(self.config.server_url, self.config.http_timeout_s)
+        self._api = ApiClient(
+            self.config.server_url,
+            self.config.http_timeout_s,
+            ssl_context=self.config.ssl_context(),
+        )
         self._ready.set()
         await self._stop_event.wait()
 
@@ -873,6 +877,7 @@ class RemoteWorker(QObject):
                         self.config.http_timeout_s,
                         self.config.ws_ping_interval_s,
                         self._on_frame,
+                        ssl_context=self.config.ssl_context(),
                     )
                     self._rt = rt
                     assert self._access is not None
