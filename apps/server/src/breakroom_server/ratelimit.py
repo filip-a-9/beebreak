@@ -33,6 +33,21 @@ class RateLimiter:
             times.append(now)
             return None
 
+    def blocked(self, key: str) -> float | None:
+        """Seconds until `key` may hit again if it is at its limit, else None.
+
+        Records nothing: callers that count only some outcomes (failures) use
+        this before the work and `hit` after a failure.
+        """
+        now = self._clock().timestamp()
+        cutoff = now - self._window_s
+        with self._lock:
+            self._prune(cutoff)
+            times = self._hits.get(key)
+            if times is not None and len(times) >= self._limit:
+                return float(max(1, math.ceil(times[0] + self._window_s - now)))
+            return None
+
     def _prune(self, cutoff: float) -> None:
         """Drop expired hits of every key and forget keys with none left."""
         for key in list(self._hits):

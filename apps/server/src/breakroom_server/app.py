@@ -308,6 +308,7 @@ def create_app(
                 challenge_id=body.challenge_id,
                 raw_code=body.code,
                 device_name=body.device_name,
+                verify_email=limiters.verify_email,
             )
             return SessionResponse(
                 tokens=signed_in.tokens, me=build_me(session, signed_in.user_id)

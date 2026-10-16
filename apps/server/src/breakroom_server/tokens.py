@@ -5,6 +5,7 @@ base32 characters; normalize_code accepts lower case, one hyphen, and the
 usual misreadings (I/L → 1, O → 0).
 """
 
+import base64
 import hashlib
 import hmac
 import secrets
@@ -17,6 +18,24 @@ _MISREAD = str.maketrans({"I": "1", "L": "1", "O": "0"})
 
 def new_token(prefix: Literal["bra_", "brr_"]) -> str:
     return prefix + secrets.token_urlsafe(32)
+
+
+def derive_successor(secret: bytes, parent_token: str) -> tuple[str, str]:
+    """The (access, refresh) pair that rotating the raw token `parent_token` yields.
+
+    Deterministic, so a retried refresh inside the grace window can return the
+    same pair without the server storing a raw token. The input is the raw
+    token, which the database never holds (only its hash), and the key is a
+    subkey of the secret used for nothing else.
+    """
+    key = hmac.new(secret, b"refresh-successor", hashlib.sha256).digest()
+    parent = parent_token.encode("utf-8", "surrogatepass")
+
+    def part(label: bytes, prefix: str) -> str:
+        digest = hmac.new(key, label + b":" + parent, hashlib.sha256)
+        return prefix + base64.urlsafe_b64encode(digest.digest()).decode().rstrip("=")
+
+    return part(b"access", "bra_"), part(b"refresh", "brr_")
 
 
 def hash_token(token: str) -> bytes:

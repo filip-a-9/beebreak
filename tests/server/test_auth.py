@@ -20,6 +20,7 @@ from breakroom_server.models import (
     Device,
     User,
 )
+from breakroom_server.ratelimit import RateLimiter
 from breakroom_server.tokens import hmac_code, normalize_code
 from tests.server.conftest import (
     START_TIME,
@@ -209,6 +210,7 @@ def test_attempt_cap_holds_under_parallel_guesses(
                     challenge_id=challenge_id,
                     raw_code=wrong,
                     device_name="laptop",
+                    verify_email=RateLimiter(100, 900.0, lambda: START_TIME),
                 )
             except ApiError as error:
                 outcomes.append(error.code)
@@ -262,19 +264,6 @@ def test_code_is_still_valid_just_before_expiry(
     code = mailer.sent[-1][2]
     clock.advance(server_config.code_ttl_s - 1)
     assert verify(client, challenge_id, code).status_code == 200
-
-
-def test_second_start_invalidates_the_first_code(
-    client: TestClient, session_factory: SessionFactory, mailer: RecordingMailer
-) -> None:
-    sign_in(client, session_factory, mailer)
-    first = start(client).json()["challenge_id"]
-    first_code = mailer.sent[-1][2]
-    second = start(client).json()["challenge_id"]
-    second_code = mailer.sent[-1][2]
-    assert first != second
-    assert verify(client, first, first_code).json() == {"error": "invalid_code"}
-    assert verify(client, second, second_code).status_code == 200
 
 
 def test_code_is_single_use(

@@ -97,7 +97,14 @@ class Peer:
 
 @pytest.fixture
 def server(server_factory: Callable[..., LiveServer]) -> LiveServer:
-    return server_factory(match_sweep_interval_s=0.05, rate_queue_user=1000)
+    return server_factory(
+        match_sweep_interval_s=0.05,
+        rate_queue_user=1000,
+        # 20 rounds make ~13 matches per user inside one rate window.
+        matches_per_window_user=1000,
+        rate_queue_action_user=1000,
+        rate_queue_read_user=1000,
+    )
 
 
 @pytest.fixture

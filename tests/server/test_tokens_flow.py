@@ -70,7 +70,11 @@ def test_token_in_a_query_string_is_ignored(
 
 
 def test_rotate_twice_then_replay_revokes_the_device(
-    client: TestClient, session_factory: SessionFactory, mailer: RecordingMailer
+    client: TestClient,
+    session_factory: SessionFactory,
+    mailer: RecordingMailer,
+    clock: FixedClock,
+    server_config: ServerConfig,
 ) -> None:
     first = sign_in(client, session_factory, mailer)["tokens"]
     second = refresh(client, first["refresh_token"])
@@ -85,20 +89,26 @@ def test_rotate_twice_then_replay_revokes_the_device(
     assert me(client, second_tokens["access_token"]).status_code == 401
     assert me(client, newest["access_token"]).status_code == 200
 
+    clock.advance(server_config.refresh_grace_s + 1)
     replay = refresh(client, first["refresh_token"])
     assert (replay.status_code, replay.json()) == (401, UNAUTHORIZED)
 
     assert me(client, newest["access_token"]).status_code == 401
     assert refresh(client, newest["refresh_token"]).status_code == 401
     with session_factory() as s:
-        assert s.scalars(select(Device)).one().revoked_at == START_TIME
+        assert s.scalars(select(Device)).one().revoked_at == clock()
 
 
 def test_a_new_sign_in_after_reuse_detection_works(
-    client: TestClient, session_factory: SessionFactory, mailer: RecordingMailer
+    client: TestClient,
+    session_factory: SessionFactory,
+    mailer: RecordingMailer,
+    clock: FixedClock,
+    server_config: ServerConfig,
 ) -> None:
     first = sign_in(client, session_factory, mailer)["tokens"]
     refresh(client, first["refresh_token"])
+    clock.advance(server_config.refresh_grace_s + 1)
     refresh(client, first["refresh_token"])  # replay
     again = sign_in(client, session_factory, mailer)
     assert me(client, again["tokens"]["access_token"]).status_code == 200
@@ -219,6 +229,8 @@ def test_refresh_reuse_notifies_the_hub(
     client: TestClient,
     session_factory: SessionFactory,
     mailer: RecordingMailer,
+    clock: FixedClock,
+    server_config: ServerConfig,
 ) -> None:
     hub = hub_class()
     app.state.hub = hub
@@ -226,6 +238,7 @@ def test_refresh_reuse_notifies_the_hub(
     device_id = _device_id(session_factory)
     refresh(client, tokens["refresh_token"])
     assert hub.calls == []
+    clock.advance(server_config.refresh_grace_s + 1)
     refresh(client, tokens["refresh_token"])  # replay
     assert hub.calls == [device_id]
 
