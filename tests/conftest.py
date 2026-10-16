@@ -1,3 +1,4 @@
+import gc
 import os
 from collections.abc import Iterator
 
@@ -13,3 +14,13 @@ def _isolate_breakroom_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for name in [n for n in os.environ if n.startswith("BREAKROOM_")]:
         monkeypatch.delenv(name)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _collect_cycles_on_main_thread() -> Iterator[None]:
+    """The companion's GC policy for the suite (see gc_policy): no automatic
+    collection a worker or server thread could run, which would free a test's
+    QObjects off the GUI thread; the main thread collects after each test."""
+    gc.disable()
+    yield
+    gc.collect()

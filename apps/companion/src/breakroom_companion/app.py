@@ -17,6 +17,7 @@ from breakroom_companion.controller import Controller
 from breakroom_companion.credentials import default_credential_store
 from breakroom_companion.desktop_notify import DesktopNotifier
 from breakroom_companion.endpoint import EndpointRefused
+from breakroom_companion.gc_policy import collect_on_gui_thread
 from breakroom_companion.ipc_server import CompanionAlreadyRunning
 from breakroom_companion.onboarding import OnboardingDialog
 from breakroom_companion.remote import RemoteWorker
@@ -426,6 +427,7 @@ def main() -> int:
         print("breakroom-companion: invalid configuration", file=sys.stderr)
         return EXIT_START_FAILED
     app = QApplication(sys.argv)
+    collect_on_gui_thread(app)  # before any worker thread exists
     window = CompanionWindow()
     window.set_state(controller.state, controller.estimate)
     tracker = BreakTracker()

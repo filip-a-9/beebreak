@@ -12,6 +12,7 @@ IPC_READ_TIMEOUT_ENV = "BREAKROOM_IPC_READ_TIMEOUT_S"
 WORKER_START_TIMEOUT_ENV = "BREAKROOM_WORKER_START_TIMEOUT_S"
 WORKER_STOP_TIMEOUT_ENV = "BREAKROOM_WORKER_STOP_TIMEOUT_S"
 PROBE_TIMEOUT_ENV = "BREAKROOM_PROBE_TIMEOUT_S"
+GC_INTERVAL_ENV = "BREAKROOM_GC_INTERVAL_S"
 
 
 def _positive_seconds(name: str, default: float) -> float:
@@ -43,6 +44,11 @@ def worker_stop_timeout_s() -> float:
 def probe_timeout_s() -> float:
     """Seconds to wait when probing an existing socket for a live companion."""
     return _positive_seconds(PROBE_TIMEOUT_ENV, 1.0)
+
+
+def gc_interval_s() -> float:
+    """Seconds between the GUI thread's checks for due cyclic collections."""
+    return _positive_seconds(GC_INTERVAL_ENV, 1.0)
 
 
 def _positive(name: str, default: int) -> int:
