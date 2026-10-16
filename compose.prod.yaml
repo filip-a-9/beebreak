@@ -13,8 +13,16 @@
 # Base images are pinned by digest; the comment names the tag. To bump one:
 # `docker pull <tag>`, copy the new digest, change both.
 
+# Docker's default json-file driver never rotates; cap every service's logs.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
 services:
   postgres:
+    logging: *logging
     # postgres:17
     image: postgres@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
     environment:
@@ -34,6 +42,7 @@ services:
   # One-shot: applies migrations, then exits. `server` starts only after it
   # finished successfully.
   migrate:
+    logging: *logging
     # Runs the image `server` builds. No `build:` here, so it is built once;
     # `never` makes compose wait for that local build instead of pulling.
     image: breakroom-server:prod
@@ -48,6 +57,7 @@ services:
     restart: "no"
 
   server:
+    logging: *logging
     image: breakroom-server:prod
     # Always build locally; never look this name up in a registry.
     pull_policy: build
@@ -66,6 +76,8 @@ services:
       # Believe X-Forwarded-For only from Caddy's fixed address (not the whole
       # subnet, which also holds the Docker gateway at .1).
       BREAKROOM_TRUSTED_PROXIES: 172.29.7.10/32
+      # One JSON object per line on stderr (`docker compose logs server`).
+      BREAKROOM_LOG_FORMAT: json
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -85,6 +97,7 @@ services:
     restart: unless-stopped
 
   caddy:
+    logging: *logging
     # caddy:2.10
     image: caddy@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
     environment:

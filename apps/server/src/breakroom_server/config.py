@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.engine import make_url
 
+from breakroom_server.logging_config import LOG_FORMATS
+
 MIN_SECRET_BYTES = 32
 MAILER_KINDS = ("smtp", "record")
 SMTP_TLS_MODES = ("none", "starttls", "implicit")
@@ -57,6 +59,13 @@ def _smtp_tls() -> str:
     if mode not in SMTP_TLS_MODES:
         raise ValueError("BREAKROOM_SMTP_TLS must be none, starttls or implicit")
     return mode
+
+
+def _log_format() -> str:
+    value = os.environ.get("BREAKROOM_LOG_FORMAT", "text")
+    if value not in LOG_FORMATS:
+        raise ValueError("BREAKROOM_LOG_FORMAT must be text or json")
+    return value
 
 
 def _required(name: str) -> str:
@@ -184,6 +193,8 @@ class ServerConfig:
     rate_queue_action_user: int = 60  # queue DELETE, end, block per rate_window_s
     rate_queue_read_user: int = 300  # queue GET per rate_window_s
     matches_per_window_user: int = 10  # matches a user may join per rate_window_s
+    # Logging (M6-08): text | json.
+    log_format: str = "text"
 
     def __post_init__(self) -> None:
         if len(self.secret) < MIN_SECRET_BYTES:
@@ -235,6 +246,8 @@ class ServerConfig:
             raise ValueError("retention_s must not be below rematch_penalty_s")
         if self.chat_max_extensions < 0:
             raise ValueError("chat_max_extensions must not be negative")
+        if self.log_format not in LOG_FORMATS:
+            raise ValueError("log_format must be text or json")
         if self.mailer not in MAILER_KINDS:
             raise ValueError("mailer must be smtp or record")
         if self.smtp_tls not in SMTP_TLS_MODES:
@@ -304,4 +317,5 @@ class ServerConfig:
             rate_queue_action_user=_positive("BREAKROOM_RATE_QUEUE_ACTION_USER", 60),
             rate_queue_read_user=_positive("BREAKROOM_RATE_QUEUE_READ_USER", 300),
             matches_per_window_user=_positive("BREAKROOM_MATCHES_PER_WINDOW_USER", 10),
+            log_format=_log_format(),
         )

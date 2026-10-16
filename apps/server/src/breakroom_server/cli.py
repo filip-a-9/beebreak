@@ -1,46 +1,25 @@
-"""`breakroom-server migrate|serve`. Owned by M3-01."""
+"""`breakroom-server migrate|serve|purge`. Owned by M3-01."""
 
 import argparse
 import os
 import sys
 from typing import Any
 
+from breakroom_server.logging_config import build_log_config
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 APP_FACTORY = "breakroom_server.app:app_from_env"
 
-# uvicorn logs client addresses and WebSocket query strings at INFO, so its
-# loggers stay at WARNING; the app writes its own access lines (breakroom_server).
-LOG_CONFIG: dict[str, Any] = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "plain": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
-    },
-    "handlers": {
-        "stderr": {
-            "class": "logging.StreamHandler",
-            "formatter": "plain",
-            "stream": "ext://sys.stderr",
-        },
-    },
-    "loggers": {
-        "uvicorn": {"handlers": ["stderr"], "level": "WARNING", "propagate": False},
-        "uvicorn.error": {"level": "WARNING"},
-        "uvicorn.access": {"handlers": [], "level": "CRITICAL", "propagate": False},
-        "breakroom_server": {
-            "handlers": ["stderr"],
-            "level": "INFO",
-            "propagate": False,
-        },
-    },
-}
+# Text by default; BREAKROOM_LOG_FORMAT=json switches `serve` to JSON lines.
+LOG_CONFIG: dict[str, Any] = build_log_config("text")
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="breakroom-server")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("migrate", help="apply database migrations (alembic upgrade head)")
+    sub.add_parser("purge", help="run one retention purge pass and exit")
     serve = sub.add_parser("serve", help="run the HTTP/WebSocket server")
     serve.add_argument("--host", default=DEFAULT_HOST)
     serve.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -62,6 +41,46 @@ def _env_workers() -> int:
         return int(raw)
     except ValueError:
         return 0
+
+
+class _NoSockets:
+    """Notifier for a one-off process: nobody is connected."""
+
+    def send_to_user(self, user_id: Any, frame: Any) -> None:
+        return None
+
+    def is_user_connected(self, user_id: Any) -> bool:
+        return False
+
+
+def _purge() -> int:
+    """One matchmaker pass: expire, end, purge. Used after a restore."""
+    import logging.config
+    from datetime import UTC, datetime
+
+    from sqlalchemy.orm import sessionmaker
+
+    from breakroom_server.config import ServerConfig
+    from breakroom_server.db import make_engine
+    from breakroom_server.matchmaking import Matchmaker
+
+    try:
+        config = ServerConfig.from_env()
+    except ValueError as error:  # messages name the variable, never its value
+        print(error, file=sys.stderr)
+        return 2
+    logging.config.dictConfig(build_log_config(config.log_format))
+    engine = make_engine(config.database_url)
+    try:
+        factory = sessionmaker(engine, expire_on_commit=False)
+        Matchmaker(factory, config, lambda: datetime.now(UTC), _NoSockets()).run_once()
+    except Exception:
+        # The driver's message may carry the URL, so print a fixed string.
+        print("purge failed", file=sys.stderr)
+        return 1
+    finally:
+        engine.dispose()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -91,6 +110,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
+    if args.command == "purge":
+        return _purge()
+
     if args.workers != 1 or _env_workers() != 1:
         print(
             "serve runs exactly one worker: the realtime hub, presence, rate "
@@ -116,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         host=args.host,
         port=args.port,
         access_log=False,
-        log_config=LOG_CONFIG,
+        log_config=build_log_config(config.log_format),
         # A forwarded address lets its sender pick the limiter key, so it is
         # honoured only from the configured proxy peers; none by default.
         proxy_headers=bool(proxies),
