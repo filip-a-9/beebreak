@@ -294,7 +294,7 @@ M4: `breakroom_status` gains a fixed `queue` field (`none`/`searching`/`matched`
 
 Agent-facing tools should not be able to silently enroll a user into remote matchmaking: queue entry requires a **direct user acceptance in the companion UI**, independent of what the LLM requests. Tool responses must be bounded and not leak messages or peer profile details into Claude's context. Additional tools require separate acceptance criteria.
 
-CLI/hook paths should resolve to a verified companion-installed launcher. The plugin should emit a clearly identifiable health error if the companion is not installed, but must **fail open for Claude execution**. On Windows/WSL, launcher discovery and host boundary behavior need explicit testing.
+M6: the plugin depends on no venv. Hooks and the MCP server run `breakroom-hook` and `breakroom-mcp` from `PATH` (`~/.local/bin` prepended; a repo checkout's `.venv/bin` first), installed with `uv tool install --with-executables-from breakroom-agent-bridge breakroom-companion` from release wheels (`scripts/build_release.sh`). A missing hook binary exits 0 silently, so Claude execution **fails open**; a missing `breakroom-mcp` shows as a failed server in `/mcp`.
 
 ## 9. Companion ↔ backend contract
 
@@ -364,6 +364,8 @@ M4 (**CONFIRMED** 2026-10-13): availability does not filter pairs; the remaining
 - Safe failures on agent event storm, crashed companion, network loss, duplicate hooks, time skew, and server restart.
 - Project paths/source/secrets must never appear in outbound JSON, exception telemetry, stdout, or test fixture snapshots.
 - Include a clear disclaimer: chat is **not** end-to-end encrypted and is retained only per disclosed policy.
+
+**Deployment (M6: deploy-ready, not deployed).** `compose.prod.yaml`: Caddy terminates TLS and is the only service with published ports (80/443); the server has no published port and Postgres sits on an internal network. A one-shot `migrate` service runs before `server`, which then only serves. The server must run as **one worker and one replica**: the realtime hub, presence, rate limiters and matchmaker lock are in-process, so a second process would split waiting users and rate-limit counters (`serve` refuses any other worker count). New settings: `BREAKROOM_TRUSTED_PROXIES`, `BREAKROOM_SMTP_TLS` (`none`/`starttls`/`implicit`), `BREAKROOM_SMTP_USERNAME`, `BREAKROOM_SMTP_PASSWORD`, and the companion's `BREAKROOM_CA_FILE` (loaded once at startup; `install --ca-file` saves it for autostart). `BREAKROOM_SMTP_STARTTLS` is a deprecated alias, removed after one release.
 
 **Defensive testing:** prompt injection embedded in hook payload fields, oversized JSON, path-like strings, Unicode confusables, repeated event IDs, process races, multiple active client windows, HTTP origin attacks, WebSocket unauthorized joins, two-account simultaneous pair races.
 

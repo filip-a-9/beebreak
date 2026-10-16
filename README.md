@@ -59,9 +59,10 @@ breakroom-companion                # start it (it reads the URL saved above)
 ```
 
 A server with a private CA: add `--ca-file /path/to/ca.pem` to
-`breakroom-companion install`. The file must be a PEM that only you can write.
-It is recorded next to the server URL and applied on every start, including
-autostart, unless `BREAKROOM_CA_FILE` is already set.
+`breakroom-companion install`. The file must be a PEM owned by you (or root)
+that only its owner can write. It is recorded next to the server URL and
+applied on every start, including autostart, unless `BREAKROOM_CA_FILE` is
+already set. It is read once at start: restart the companion after changing it.
 
 Optional: `breakroom-companion install --autostart` adds
 `~/.config/autostart/breakroom.desktop`. WSL2 may not process autostart entries
@@ -104,8 +105,9 @@ docker compose exec server breakroom-admin invite create you@example.com
 ```
 
 [compose.yaml](compose.yaml) starts Postgres, Mailpit (catches the sign-in
-email at http://127.0.0.1:8025) and the server. Every published port is bound
-to `127.0.0.1`.
+email at http://127.0.0.1:8025), a one-shot `migrate` service and then the
+server. Every published port is bound to `127.0.0.1`. The server refuses to
+start while the database password is still the example `change-me`.
 
 Run the checks:
 
@@ -134,8 +136,11 @@ To try the Claude Code plugin from a checkout, see
 
 ## Operations
 
-Coming in M6: deployment and operations (production compose file, backups,
-runbook).
+[compose.prod.yaml](compose.prod.yaml) runs the server behind Caddy (TLS on
+80/443) on any Docker host: copy `.env.example` to `.env`, replace every
+placeholder (the file refuses to start with one missing), then
+`docker compose -f compose.prod.yaml up -d --build`. Run exactly one server
+container; never scale it. Backups and a runbook are still to come in M6.
 
 ## Links
 
