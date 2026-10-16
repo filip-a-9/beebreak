@@ -1,0 +1,70 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read # the workflow needs nothing else
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:17 # same major version as compose.yaml
+        # These credentials are NOT secrets: the database exists only for this
+        # run and is unreachable from outside the runner. Do not replace them
+        # with repository secrets.
+        env:
+          POSTGRES_USER: breakroom
+          POSTGRES_PASSWORD: breakroom-ci-throwaway
+          POSTGRES_DB: breakroom_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U breakroom -d breakroom_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false # no later step needs the token
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32" # keep in step with the uv version the Dockerfile pins
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Libraries PySide6 (Qt 6, offscreen platform plugin) links against and
+      # the runner image may not carry. Derived from `ldd` on libQt6Gui and
+      # libqoffscreen: EGL, GL, xkbcommon, fontconfig, D-Bus (plus glib, which
+      # Qt links directly). libX11 comes in through libgl1.
+      - name: Install Qt system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0t64
+
+      - run: uv sync --frozen
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy packages apps tests tools
+
+      - name: Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          BREAKROOM_TEST_DATABASE_URL: postgresql+psycopg://breakroom:breakroom-ci-throwaway@localhost:5432/breakroom_test
+        # No DISPLAY and no Secret Service on the runner: credentials take the
+        # 0600 file fallback.
+        run: uv run pytest
