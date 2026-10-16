@@ -1,0 +1,26 @@
+# Keep the build context to what the image needs; secrets and local state stay out.
+.git
+.gitignore
+.claude
+.claude.json
+.mcp.json
+CLAUDE.md
+CLAUDE.local.md
+.env*
+!.env.example
+.venv
+reports
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+tools
+docs
+integrations
+.pgdata
+.pgdata.lock
+dist
+scripts
+.github

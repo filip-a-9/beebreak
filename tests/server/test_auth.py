@@ -456,9 +456,17 @@ def test_default_mailer_is_smtp_with_starttls_flag(
             created.append({"host": host, "port": port, **kw})
 
     monkeypatch.setattr("breakroom_server.app.SmtpMailer", FakeSmtp)
-    config = dataclasses.replace(server_config, smtp_starttls=True, smtp_port=2525)
+    config = dataclasses.replace(server_config, smtp_tls="starttls", smtp_port=2525)
     create_app(config)
-    assert created == [{"host": "127.0.0.1", "port": 2525, "starttls": True}]
+    assert created == [
+        {
+            "host": "127.0.0.1",
+            "port": 2525,
+            "tls": "starttls",
+            "username": None,
+            "password": None,
+        }
+    ]
 
 
 def test_config_rate_limit_fields_default_and_are_strict(
@@ -468,12 +476,12 @@ def test_config_rate_limit_fields_default_and_are_strict(
     assert (config.rate_start_email, config.rate_start_ip) == (5, 20)
     assert (config.rate_verify_ip, config.rate_refresh_device) == (30, 30)
     assert config.rate_window_s == 900 and config.mailer == "smtp"
-    assert config.smtp_starttls is False
+    assert config.smtp_tls == "none"
 
     monkeypatch.setenv("BREAKROOM_RATE_START_EMAIL", "7")
     monkeypatch.setenv("BREAKROOM_SMTP_STARTTLS", "1")
     config = ServerConfig.from_env()
-    assert config.rate_start_email == 7 and config.smtp_starttls is True
+    assert config.rate_start_email == 7 and config.smtp_tls == "starttls"
 
     for name, bad in [
         ("BREAKROOM_RATE_START_IP", "0"),

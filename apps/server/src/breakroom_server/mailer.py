@@ -62,15 +62,22 @@ class SmtpMailer:
         host: str,
         port: int,
         mail_from: str,
-        starttls: bool = False,
+        tls: str = "none",
+        username: str | None = None,
+        password: str | None = None,
         timeout_s: float = 10,
     ) -> None:
+        if tls not in ("none", "starttls", "implicit"):
+            raise ValueError("tls must be none, starttls or implicit")
         self._host = host
         self._port = port
         self._mail_from = mail_from
-        self._starttls = starttls
+        self._tls = tls
+        self._username = username
+        self._password = password
         self._timeout_s = timeout_s
         # Verifies the certificate chain and hostname; bare starttls() does not.
+        # Used by both STARTTLS and implicit TLS.
         self._tls_context = ssl.create_default_context()
         self._queue: queue.Queue[tuple[Kind, str, str]] = queue.Queue(QUEUE_SIZE)
         self._closing = threading.Event()
@@ -113,9 +120,21 @@ class SmtpMailer:
                 _log.warning("mail dropped: send failed")
 
     def _deliver(self, msg: EmailMessage) -> None:
-        with smtplib.SMTP(self._host, self._port, timeout=self._timeout_s) as smtp:
-            if self._starttls:
+        smtp: smtplib.SMTP
+        if self._tls == "implicit":
+            smtp = smtplib.SMTP_SSL(
+                self._host,
+                self._port,
+                timeout=self._timeout_s,
+                context=self._tls_context,
+            )
+        else:
+            smtp = smtplib.SMTP(self._host, self._port, timeout=self._timeout_s)
+        with smtp:
+            if self._tls == "starttls":
                 smtp.starttls(context=self._tls_context)
+            if self._username is not None and self._password is not None:
+                smtp.login(self._username, self._password)
             smtp.send_message(msg)
 
 

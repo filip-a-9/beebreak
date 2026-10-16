@@ -6,11 +6,57 @@ numbers instead of falling back, so a misconfigured server refuses to start.
 
 import base64
 import binascii
+import ipaddress
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from sqlalchemy.engine import make_url
 
 MIN_SECRET_BYTES = 32
 MAILER_KINDS = ("smtp", "record")
+SMTP_TLS_MODES = ("none", "starttls", "implicit")
+# The value shipped in .env.example; a server using it is one anyone can guess.
+EXAMPLE_PASSWORD = "change-me"
+# Every placeholder .env.example ships for a value this process reads.
+EXAMPLE_VALUES = frozenset({EXAMPLE_PASSWORD, "change-me-user", "change-me-too"})
+
+
+def reject_weak_database_url(url: str) -> None:
+    """Refuse the .env.example database password. Never echoes the URL."""
+    try:
+        password = make_url(url).password
+    except Exception:
+        raise ValueError("BREAKROOM_DATABASE_URL is not a valid URL") from None
+    if password == EXAMPLE_PASSWORD:
+        raise ValueError(
+            "BREAKROOM_DATABASE_URL uses the example password; set a real secret"
+        )
+
+
+def _trusted_proxies() -> tuple[str, ...]:
+    raw = os.environ.get("BREAKROOM_TRUSTED_PROXIES", "").strip()
+    if not raw:
+        return ()
+    items = tuple(part.strip() for part in raw.split(","))
+    for item in items:
+        try:
+            ipaddress.ip_network(item)  # strict: uvicorn ignores host bits silently
+        except ValueError:
+            raise ValueError(
+                "BREAKROOM_TRUSTED_PROXIES must be a comma-separated list of "
+                "IP addresses or CIDR ranges"
+            ) from None
+    return items
+
+
+def _smtp_tls() -> str:
+    mode = os.environ.get("BREAKROOM_SMTP_TLS")
+    if mode is None:
+        # Deprecated alias, kept for one release.
+        return "starttls" if _flag("BREAKROOM_SMTP_STARTTLS") else "none"
+    if mode not in SMTP_TLS_MODES:
+        raise ValueError("BREAKROOM_SMTP_TLS must be none, starttls or implicit")
+    return mode
 
 
 def _required(name: str) -> str:
@@ -98,7 +144,11 @@ class ServerConfig:
     invite_ttl_s: int = 604_800
     ws_auth_timeout_s: float = 5
     ws_idle_timeout_s: float = 60
-    smtp_starttls: bool = False
+    smtp_tls: str = "none"  # none | starttls | implicit
+    smtp_username: str | None = None
+    smtp_password: str | None = field(default=None, repr=False)
+    # Peers whose X-Forwarded-For is believed (M6-03); empty trusts none.
+    trusted_proxies: tuple[str, ...] = ()
     mailer: str = "smtp"  # "record" keeps mail in memory (tests, local dev)
     rate_window_s: int = 900
     rate_start_email: int = 5
@@ -176,6 +226,16 @@ class ServerConfig:
             raise ValueError("chat_max_extensions must not be negative")
         if self.mailer not in MAILER_KINDS:
             raise ValueError("mailer must be smtp or record")
+        if self.smtp_tls not in SMTP_TLS_MODES:
+            raise ValueError("smtp_tls must be none, starttls or implicit")
+        if (self.smtp_username is None) != (self.smtp_password is None):
+            raise ValueError("SMTP username and password must be set together")
+        if self.smtp_username is not None and self.smtp_tls == "none":
+            raise ValueError("SMTP credentials need BREAKROOM_SMTP_TLS")
+        reject_weak_database_url(self.database_url)
+        for value in (self.smtp_username, self.smtp_password):
+            if value in EXAMPLE_VALUES:
+                raise ValueError("an SMTP credential is still the example value")
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -194,7 +254,10 @@ class ServerConfig:
             invite_ttl_s=_positive("BREAKROOM_INVITE_TTL_S", 604_800),
             ws_auth_timeout_s=_positive("BREAKROOM_WS_AUTH_TIMEOUT_S", 5),
             ws_idle_timeout_s=_positive("BREAKROOM_WS_IDLE_TIMEOUT_S", 60),
-            smtp_starttls=_flag("BREAKROOM_SMTP_STARTTLS"),
+            smtp_tls=_smtp_tls(),
+            smtp_username=os.environ.get("BREAKROOM_SMTP_USERNAME") or None,
+            smtp_password=os.environ.get("BREAKROOM_SMTP_PASSWORD") or None,
+            trusted_proxies=_trusted_proxies(),
             mailer=_mailer_kind(),
             rate_window_s=_positive("BREAKROOM_RATE_WINDOW_S", 900),
             rate_start_email=_positive("BREAKROOM_RATE_START_EMAIL", 5),

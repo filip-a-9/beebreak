@@ -44,7 +44,24 @@ def _parser() -> argparse.ArgumentParser:
     serve = sub.add_parser("serve", help="run the HTTP/WebSocket server")
     serve.add_argument("--host", default=DEFAULT_HOST)
     serve.add_argument("--port", type=int, default=DEFAULT_PORT)
+    serve.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="must be 1: hub, presence, limiters and matchmaking are in-process",
+    )
     return parser
+
+
+def _env_workers() -> int:
+    """uvicorn also reads WEB_CONCURRENCY; treat anything but 1 as a request."""
+    raw = os.environ.get("WEB_CONCURRENCY")
+    if raw is None:
+        return 1
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,11 +71,17 @@ def main(argv: list[str] | None = None) -> int:
         return exit_.code if isinstance(exit_.code, int) else 2
 
     if args.command == "migrate":
+        from breakroom_server.config import reject_weak_database_url
         from breakroom_server.db import upgrade_head
 
         url = os.environ.get("BREAKROOM_DATABASE_URL")
         if not url:
             print("BREAKROOM_DATABASE_URL is required", file=sys.stderr)
+            return 2
+        try:
+            reject_weak_database_url(url)
+        except ValueError as error:  # the message never carries the URL
+            print(error, file=sys.stderr)
             return 2
         try:
             upgrade_head(url)
@@ -68,8 +91,25 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
+    if args.workers != 1 or _env_workers() != 1:
+        print(
+            "serve runs exactly one worker: the realtime hub, presence, rate "
+            "limiters and the matchmaker lock live in this process",
+            file=sys.stderr,
+        )
+        return 2
+
+    from breakroom_server.config import ServerConfig
+
+    try:
+        config = ServerConfig.from_env()  # fail here, not inside uvicorn's factory
+    except ValueError as error:  # messages name the variable, never its value
+        print(error, file=sys.stderr)
+        return 2
+
     import uvicorn
 
+    proxies = config.trusted_proxies
     uvicorn.run(
         APP_FACTORY,
         factory=True,
@@ -77,8 +117,10 @@ def main(argv: list[str] | None = None) -> int:
         port=args.port,
         access_log=False,
         log_config=LOG_CONFIG,
-        # No proxy in M3: a forwarded address would let a client pick its limiter key.
-        proxy_headers=False,
+        # A forwarded address lets its sender pick the limiter key, so it is
+        # honoured only from the configured proxy peers; none by default.
+        proxy_headers=bool(proxies),
+        forwarded_allow_ips=",".join(proxies) if proxies else None,
     )
     return 0
 

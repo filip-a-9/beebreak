@@ -245,7 +245,7 @@ def test_cli_migrate_failure_does_not_print_the_url(
 
 
 def test_serve_runs_uvicorn_factory_on_loopback(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, server_env: None
 ) -> None:
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     import uvicorn
@@ -262,9 +262,23 @@ def test_serve_runs_uvicorn_factory_on_loopback(
                 "access_log": False,
                 "log_config": LOG_CONFIG,
                 "proxy_headers": False,
+                "forwarded_allow_ips": None,
             },
         )
     ]
+
+
+def test_serve_honours_forwarded_headers_only_from_configured_proxies(
+    monkeypatch: pytest.MonkeyPatch, server_env: None
+) -> None:
+    calls: list[dict[str, object]] = []
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: calls.append(k))
+    monkeypatch.setenv("BREAKROOM_TRUSTED_PROXIES", "172.29.7.0/24,10.0.0.2")
+    assert cli_main(["serve"]) == 0
+    assert calls[0]["proxy_headers"] is True
+    assert calls[0]["forwarded_allow_ips"] == "172.29.7.0/24,10.0.0.2"
 
 
 @requires_postgres

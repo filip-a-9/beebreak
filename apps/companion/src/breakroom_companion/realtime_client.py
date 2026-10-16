@@ -8,6 +8,7 @@ The token is sent only in the first frame, never in the URL.
 import asyncio
 import contextlib
 import logging
+import ssl
 from collections.abc import Callable
 
 from pydantic import ValidationError
@@ -85,7 +86,11 @@ class RealtimeClient:
         timeout_s: float,
         ping_interval_s: float,
         on_frame: Callable[[ServerFrame], None] | None = None,
+        *,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
+        # Only wss:// takes a context; websockets rejects one for ws://.
+        self._ssl = ssl_context if origin.startswith("https:") else None
         self._on_frame = on_frame
         self._url = _ws_url(origin)
         self._timeout_s = timeout_s
@@ -104,6 +109,7 @@ class RealtimeClient:
                 additional_headers=None,
                 user_agent_header=None,
                 proxy=None,  # never pick up proxies from the environment
+                ssl=self._ssl,
                 compression=None,
                 ping_interval=None,  # application-level pings only
                 open_timeout=self._timeout_s,

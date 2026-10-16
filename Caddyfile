@@ -1,0 +1,14 @@
+# TLS terminator and reverse proxy for compose.prod.yaml. Caddy obtains and
+# renews a public certificate for BREAKROOM_PUBLIC_HOST by itself (ports 80 and
+# 443 must be reachable from the internet for that).
+#
+# LAN test without a public name: set BREAKROOM_PUBLIC_HOST to the machine's
+# name or address and uncomment `tls internal` to use Caddy's own private CA.
+# The companion then needs that CA's root certificate in BREAKROOM_CA_FILE.
+{$BREAKROOM_PUBLIC_HOST} {
+	# tls internal
+
+	# WebSocket upgrades (/v1/realtime) are proxied without extra settings.
+	# Caddy replaces any client-sent X-Forwarded-For with the real peer address.
+	reverse_proxy server:8000
+}
