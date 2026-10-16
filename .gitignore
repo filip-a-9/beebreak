@@ -10,3 +10,4 @@ __pycache__/
 reports/
 .pgdata/
 .pgdata.lock
+dist/

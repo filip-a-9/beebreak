@@ -42,11 +42,11 @@ def test_every_hook_is_async_and_bounded() -> None:
         assert 0 < hook["timeout"] <= 5, event
 
 
-def test_every_hook_runs_the_reducer_module() -> None:
-    for event, hook in _commands():
-        assert hook["command"].endswith(
-            "/.venv/bin/python -m breakroom_agent_bridge.hook"
-        ), event
+def test_every_hook_launches_the_installed_hook_binary() -> None:
+    # The behaviour of the launcher is tested in test_plugin_launchers.
+    commands = {hook["command"] for _, hook in _commands()}
+    assert len(commands) == 1
+    assert "breakroom-hook" in commands.pop()
 
 
 def test_notification_matcher_is_exactly_the_two_waiting_types() -> None:

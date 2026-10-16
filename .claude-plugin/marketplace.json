@@ -1,0 +1,12 @@
+{
+  "name": "breakroom",
+  "description": "Breakroom: opt-in chat breaks while coding agents run",
+  "owner": { "name": "EDantes" },
+  "plugins": [
+    {
+      "name": "breakroom",
+      "source": "./integrations/claude-code",
+      "description": "Local activity status and the breakroom_status tool for Claude Code"
+    }
+  ]
+}

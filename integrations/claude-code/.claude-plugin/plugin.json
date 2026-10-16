@@ -4,8 +4,11 @@
   "description": "Opt-in chat break while coding agents run: local status for Claude Code.",
   "mcpServers": {
     "breakroom": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/../../.venv/bin/python",
-      "args": ["-m", "breakroom_agent_bridge.mcp_server"]
+      "command": "sh",
+      "args": [
+        "-c",
+        "PATH=\"${CLAUDE_PLUGIN_ROOT}/../../.venv/bin:$HOME/.local/bin:$PATH\"; exec breakroom-mcp"
+      ]
     }
   }
 }

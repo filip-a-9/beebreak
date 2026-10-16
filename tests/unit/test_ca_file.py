@@ -19,9 +19,10 @@ from uuid import uuid4
 import pytest
 from websockets.asyncio.server import ServerConnection, serve
 
+from breakroom_companion import install
 from breakroom_companion.api_client import ApiClient, ApiError
 from breakroom_companion.realtime_client import RealtimeClient, RealtimeError
-from breakroom_companion.remote_config import RemoteConfig
+from breakroom_companion.remote_config import CA_FILE_ENV, RemoteConfig
 
 TIMEOUT_S = 3.0
 
@@ -187,6 +188,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    do_POST = do_GET
+
     def log_message(self, format: str, *args: object) -> None:
         pass
 
@@ -227,6 +230,16 @@ def test_https_with_the_private_ca_reaches_the_server(
 
 def test_https_without_the_private_ca_fails_verification(https_origin: str) -> None:
     assert _api_code(https_origin, None) == "network"
+
+
+def test_uninstall_revoke_trusts_the_private_ca_from_env(
+    https_origin: str, cert_pair: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(CA_FILE_ENV, str(cert_pair[0]))
+    config = install.revoke_config(https_origin)
+    # The server refuses every token, so "rejected" means TLS verified and the
+    # request reached it; a CA left out of the client gives "offline".
+    assert install.revoke(config, "brr_x") == "rejected"
 
 
 def test_https_with_a_different_ca_fails_verification(
