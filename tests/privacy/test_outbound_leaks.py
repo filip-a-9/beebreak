@@ -23,6 +23,7 @@ import copy
 import json
 import logging
 import re
+import shutil
 import socket
 import tempfile
 import threading
@@ -34,7 +35,10 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+import keyring
+import keyring.core
 import pytest
+from keyring.backends import fail as keyring_fail
 from PySide6.QtCore import QObject, Slot
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
@@ -43,10 +47,16 @@ from websockets.asyncio.client import ClientConnection
 from breakroom_agent_bridge.ipc_client import send_event
 from breakroom_agent_bridge.reducer import reduce
 from breakroom_agent_bridge.session_key import derive_key
+from breakroom_companion import cli
 from breakroom_companion.api_client import ApiClient
 from breakroom_companion.break_state import BreakState
 from breakroom_companion.controller import Controller
-from breakroom_companion.credentials import FileCredentialStore, StoredCredentials
+from breakroom_companion.credentials import (
+    FileCredentialStore,
+    StoredCredentials,
+    default_credential_store,
+)
+from breakroom_companion.install import _desktop_exec_arg
 from breakroom_companion.privacy_preview import DEFAULT_DEVICE_NAME
 from breakroom_companion.realtime_client import RealtimeClient, RealtimeError
 from breakroom_companion.remote import RemoteWorker
@@ -59,6 +69,7 @@ from breakroom_server.models import Base, Device, User
 from breakroom_shared.api import Consent
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import StatusReply
+from breakroom_shared.paths import credentials_path, state_path
 from breakroom_shared.presence import build_presence
 from tests.e2e_support.server import LiveServer
 from tests.fixtures.hook_payloads import PAYLOADS, RAW_SESSION_ID
@@ -827,6 +838,8 @@ class Scenario:
     events: list[NormalizedEvent] = field(default_factory=list)
     exports: list[bytes] = field(default_factory=list)
     local_state: Path | None = None
+    proxy_port: int = 0
+    uninstall_files: dict[str, list[bytes]] = field(default_factory=dict)
 
 
 def step_sign_in(s: Scenario) -> None:
@@ -969,7 +982,85 @@ def step_export(s: Scenario) -> None:
         mp.undo()
 
 
-# The hook point for wave 3: add the uninstall step (M6-02) to this list.
+def isolate_home(root: Path, mp: pytest.MonkeyPatch) -> None:
+    """HOME and every XDG dir the companion reads, pointed into `root`."""
+    mp.setenv("HOME", str(root))
+    mp.setenv("XDG_CONFIG_HOME", str(root / "config"))
+    mp.setenv("XDG_STATE_HOME", str(root / "state"))
+    mp.setenv("XDG_RUNTIME_DIR", str(root / "run"))
+    mp.delenv("BREAKROOM_SERVER_URL", raising=False)
+    mp.delenv("BREAKROOM_CA_FILE", raising=False)
+    # Never the developer's real keyring: env for a fresh import, and the
+    # already-resolved backend replaced for a process that cached one.
+    mp.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.fail.Keyring")
+    mp.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+    mp.setattr(keyring.core, "_keyring_backend", keyring_fail.Keyring())  # type: ignore[no-untyped-call]
+    assert isinstance(
+        default_credential_store("http://127.0.0.1:9"), FileCredentialStore
+    )
+    (root / "run").mkdir(mode=0o700, exist_ok=True)
+
+
+def drive_uninstall(root: Path) -> list[Path]:
+    """Run the real `breakroom-companion uninstall` (in the environment
+    `isolate_home` set up); returns the paths that must be gone afterwards."""
+    gone = [
+        root / "state" / "breakroom",
+        root / "run" / "breakroom",
+        root / "config" / "autostart" / "breakroom.desktop",
+    ]
+    assert cli.main(["uninstall"]) == 0
+    return gone
+
+
+def mask_own_install_path(
+    blobs: dict[str, list[bytes]],
+) -> dict[str, list[bytes]]:
+    """Blank the Exec value of the autostart entry, and nothing else in it.
+
+    It is the companion's own install location (which may sit under the real
+    home, as on CI), written by `install` itself, not agent input."""
+    exec_line = f"Exec={_desktop_exec_arg(cli._exec_path())}".encode()
+    key = "file.config/autostart/breakroom.desktop"
+    out = dict(blobs)
+    if key in out:
+        out[key] = [b.replace(exec_line, b"Exec=<companion path>") for b in out[key]]
+    return out
+
+
+def step_uninstall(s: Scenario) -> None:
+    """The companion's real install, then uninstall (M6-02), in an isolated
+    HOME. The signed-in worker's login and the hook-run state are put where
+    uninstall looks, so it revokes the device over the proxy and deletes them.
+    The scan then covers its output (via the shared capfd), its request, the
+    files it handled before, and anything left in the tree afterwards."""
+    root = Path(tempfile.mkdtemp(dir="/tmp"))  # short: a socket path lives here
+    mp = pytest.MonkeyPatch()
+    try:
+        isolate_home(root, mp)
+        url = f"http://127.0.0.1:{s.proxy_port}"
+        assert cli.main(["install", "--server-url", url, "--autostart"]) == 0
+        shutil.copy(s.tmp_path / "creds0.json", credentials_path())
+        if s.local_state is not None:
+            shutil.copy(s.local_state, state_path())
+        before = mask_own_install_path(companion_file_blobs(root))
+        assert any(b"brr_" in b for k, v in before.items() for b in v)
+        gone = drive_uninstall(root)
+        left = companion_file_blobs(root)
+        s.uninstall_files = {f"uninstall.{k}": v for k, v in (before | left).items()}
+        assert left == {}  # no file, anywhere in the tree, survives
+        assert [p for p in gone if p.exists()] == []
+        # Uninstall revoked the signed-in device on the server (not the other).
+        with s.server.session_factory() as session:
+            revoked = session.scalars(
+                select(Device).where(Device.revoked_at.is_not(None))
+            ).all()
+        assert [d.name for d in revoked] == [DEFAULT_DEVICE_NAME]  # worker A's
+    finally:
+        mp.undo()
+        shutil.rmtree(root, ignore_errors=True)
+
+
 SCENARIO_STEPS: list[Callable[[Scenario], None]] = [
     step_sign_in,
     step_match,
@@ -977,6 +1068,7 @@ SCENARIO_STEPS: list[Callable[[Scenario], None]] = [
     step_chat,
     step_report,
     step_export,
+    step_uninstall,
 ]
 
 
@@ -1013,7 +1105,9 @@ def run_scenario(
 ) -> Scenario:
     a, rec_a = worker_factory(proxy_port)
     b, rec_b = worker_factory(proxy_port)
-    scenario = Scenario(qtbot, server, tmp_path, plan, a, b, rec_a, rec_b)
+    scenario = Scenario(
+        qtbot, server, tmp_path, plan, a, b, rec_a, rec_b, proxy_port=proxy_port
+    )
     for step in SCENARIO_STEPS:
         step(scenario)
     return scenario
@@ -1031,6 +1125,7 @@ def all_channels(
         | dump_database(s.server)
         | {"export": s.exports}
         | companion_file_blobs(s.tmp_path)
+        | s.uninstall_files
     )
 
 
@@ -1171,3 +1266,38 @@ def test_scanner_sees_a_corpus_value_in_an_account_export(
     assert len(blobs) == 2  # in-process export and the admin CLI file
     assert scan.find_corpus_leaks({"export": blobs}, [value]) == [f"export: {value.id}"]
     assert scan.find_corpus_leaks({"export": blobs}, CORPUS.bases[1:]) == []
+
+
+def test_scanner_sees_a_corpus_value_in_the_uninstall_channel(
+    capture: Capture,
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """The real uninstall, with a corpus value as the stored login and a stray
+    file beside Breakroom's own: the revoke request carries the first, and the
+    scan of the tree afterwards finds the second."""
+    value = CORPUS.bases[0]
+    root = Path(tempfile.mkdtemp(dir="/tmp"))
+    mp = pytest.MonkeyPatch()
+    try:
+        isolate_home(root, mp)
+        assert cli.main(["install", "--server-url", "http://127.0.0.1:9"]) == 0
+        FileCredentialStore(credentials_path(), "http://127.0.0.1:9").save(
+            StoredCredentials(
+                refresh_token=value.value,
+                refresh_expires_at=datetime.now(UTC) + timedelta(days=1),
+            )
+        )
+        (root / "config").mkdir(exist_ok=True)
+        (root / "config" / "stray.txt").write_text(value.value)
+        drive_uninstall(root)
+        left = {f"uninstall.{k}": v for k, v in companion_file_blobs(root).items()}
+    finally:
+        mp.undo()
+        shutil.rmtree(root, ignore_errors=True)
+    channels = capture.channels() | log_blobs(caplog, capfd) | left
+    hits = set(scan.find_corpus_leaks(channels, [value]))
+    assert hits == {
+        f"http: {value.id}",
+        f"uninstall.file.config/stray.txt: {value.id}",
+    }
