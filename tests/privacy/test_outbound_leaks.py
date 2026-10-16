@@ -17,6 +17,7 @@ catch a canary in each channel.
 
 import ast
 import asyncio
+import base64
 import contextlib
 import copy
 import json
@@ -25,9 +26,9 @@ import re
 import socket
 import tempfile
 import threading
-import urllib.parse
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -44,19 +45,26 @@ from breakroom_agent_bridge.reducer import reduce
 from breakroom_agent_bridge.session_key import derive_key
 from breakroom_companion.api_client import ApiClient
 from breakroom_companion.break_state import BreakState
-from breakroom_companion.credentials import FileCredentialStore
+from breakroom_companion.controller import Controller
+from breakroom_companion.credentials import FileCredentialStore, StoredCredentials
+from breakroom_companion.privacy_preview import DEFAULT_DEVICE_NAME
 from breakroom_companion.realtime_client import RealtimeClient, RealtimeError
 from breakroom_companion.remote import RemoteWorker
 from breakroom_companion.remote_config import RemoteConfig
+from breakroom_companion.state_store import FileStateStore
 from breakroom_companion.worker import IpcWorker
-from breakroom_server.models import Base, User
+from breakroom_server.account_data import export_account
+from breakroom_server.admin import main as admin_main
+from breakroom_server.models import Base, Device, User
 from breakroom_shared.api import Consent
 from breakroom_shared.events import NormalizedEvent
 from breakroom_shared.ipc import StatusReply
 from breakroom_shared.presence import build_presence
 from tests.e2e_support.server import LiveServer
 from tests.fixtures.hook_payloads import PAYLOADS, RAW_SESSION_ID
+from tests.fixtures.privacy_corpus import load_corpus, scan
 from tests.fixtures.privacy_negative import SENSITIVE_STRINGS
+from tests.server.conftest import TEST_SECRET
 
 pytest_plugins = ["tests.e2e_support.server"]  # live_server fixtures
 
@@ -84,26 +92,9 @@ _KEPT_KEYS = {"hook_event_name", "session_id", "tool_name", "notification_type"}
 # --- capture ---
 
 
-def _variants(canary: str) -> set[bytes]:
-    """The ways a string could be written into JSON, a URL or a header."""
-    forms = {
-        canary,
-        json.dumps(canary)[1:-1],
-        json.dumps(canary, ensure_ascii=False)[1:-1],
-        urllib.parse.quote(canary, safe=""),
-        urllib.parse.quote(canary),
-    }
-    return {f.encode("utf-8") for f in forms}
-
-
 def find_leaks(channels: dict[str, list[bytes]], canaries: list[str]) -> list[str]:
-    hits = []
-    for channel, blobs in channels.items():
-        for blob in blobs:
-            for canary in canaries:
-                if any(v in blob for v in _variants(canary)):
-                    hits.append(f"{channel}: {canary!r}")
-    return hits
+    """Each canary, in any encoding the corpus scanner knows, in any channel."""
+    return scan.find_leaks(channels, [(c, c) for c in canaries])
 
 
 class Capture:
@@ -335,6 +326,7 @@ def sign_in_worker(
     email: str,
     nickname: str,
     consent: Consent,
+    device_name: str = "test box",
 ) -> None:
     """Start the worker and take it through sign-in, nickname and consent."""
     mails = len(live_server.mailer.sent)
@@ -342,7 +334,7 @@ def sign_in_worker(
     qtbot.waitUntil(lambda: rec.states[-1:] == ["signed_out"], timeout=WAIT_MS)
     worker.begin_sign_in(email, live_server.invite(email))
     qtbot.waitUntil(lambda: len(live_server.mailer.sent) > mails, timeout=WAIT_MS)
-    worker.verify(live_server.last_code(), "test box")
+    worker.verify(live_server.last_code(), device_name)
     qtbot.waitUntil(lambda: rec.states[-1:] == ["connected"], timeout=WAIT_MS)
     worker.set_nickname(nickname)
     qtbot.waitUntil(lambda: rec.nickname == nickname, timeout=WAIT_MS)
@@ -759,3 +751,423 @@ def test_chat_and_report_requests_carry_only_chat_fields(
         assert find_leaks(channels, CANARIES + local_only) == []
     finally:
         proxy.close()
+
+
+# --- M7: the versioned corpus through every channel (M6-07) ---
+
+CORPUS = load_corpus()
+LOCAL_HOSTNAME = socket.gethostname()
+EDITED_DEVICE_NAME = "Work laptop 2"
+PLANTED_DEVICE = CORPUS.values[0]  # replaced below by a short enough value
+for _v in CORPUS.bases:
+    if _v.id == "hostname-2":  # 29 characters: a legal device name
+        PLANTED_DEVICE = _v
+ADMIN_EMAIL_A = "ada@example.com"
+ADMIN_EMAIL_B = "bob@example.com"
+
+
+def _corpus_hook_payloads() -> list[dict[str, Any]]:
+    """One real-shaped hook payload per corpus value, templates in rotation.
+
+    Every free-text field carries the value; for session ids the raw
+    `session_id` is the value too, since that is the field it arrives in.
+    """
+    templates = list(PAYLOADS.values())
+    out = []
+    for i, entry in enumerate(CORPUS.values):
+
+        def fill(node: Any, key: str = "", entry: Any = entry) -> Any:
+            if isinstance(node, dict):
+                return {k: fill(v, k) for k, v in node.items()}
+            if isinstance(node, list):
+                return [fill(v) for v in node]
+            if isinstance(node, str) and (
+                key not in _KEPT_KEYS
+                or (key == "session_id" and entry.category == "session_id")
+            ):
+                return entry.value
+            return node
+
+        out.append(fill(copy.deepcopy(templates[i % len(templates)])))
+    return out
+
+
+def _corpus_events() -> list[NormalizedEvent]:
+    events = []
+    for payload in _corpus_hook_payloads():
+        event = reduce(payload, salt=SALT, now=datetime.now(UTC), event_id=uuid4())
+        if event is not None:
+            events.append(event)
+    return events
+
+
+@dataclass
+class Plan:
+    """What a scenario run feeds in. Chat text, the report note and the device
+    name are typed on purpose, so the normal run keeps corpus values out of
+    them; the planting run puts one in each to prove the scan sees them."""
+
+    device_name_b: str = EDITED_DEVICE_NAME
+    chat_a: str = CHAT_BODY_A
+    chat_b: str = CHAT_BODY_B
+    note: str = REPORT_NOTE
+    hooks: bool = True
+
+
+@dataclass
+class Scenario:
+    qtbot: QtBot
+    server: LiveServer
+    tmp_path: Path
+    plan: Plan
+    a: RemoteWorker
+    b: RemoteWorker
+    rec_a: Recorder
+    rec_b: Recorder
+    events: list[NormalizedEvent] = field(default_factory=list)
+    exports: list[bytes] = field(default_factory=list)
+    local_state: Path | None = None
+
+
+def step_sign_in(s: Scenario) -> None:
+    """Default device name for one worker, an edited one for the other (M6-06)."""
+    sign_in_worker(
+        s.qtbot, s.server, s.a, s.rec_a, ADMIN_EMAIL_A, "ada_l", ALL_CONSENT,
+        DEFAULT_DEVICE_NAME,
+    )  # fmt: skip
+    sign_in_worker(
+        s.qtbot, s.server, s.b, s.rec_b, ADMIN_EMAIL_B, "bobby", ALL_CONSENT,
+        s.plan.device_name_b,
+    )  # fmt: skip
+    with s.server.session_factory() as session:
+        names = set(session.scalars(select(Device.name)))
+    assert names == {DEFAULT_DEVICE_NAME, s.plan.device_name_b}
+
+
+def step_match(s: Scenario) -> None:
+    presence = build_presence(
+        ALL_CONSENT,
+        task_category="other",
+        stack_tags=["python", "docker"],
+        remaining_time_bucket="unknown",
+    )
+    s.a.join_queue(presence)
+    s.b.join_queue(presence)
+    s.qtbot.waitUntil(
+        lambda: s.rec_a.phase == "matched" and s.rec_b.phase == "matched",
+        timeout=WAIT_MS,
+    )
+    s.qtbot.waitUntil(
+        lambda: s.a.chat_state.status is not None and s.b.chat_state.status is not None,
+        timeout=WAIT_MS,
+    )
+
+
+def step_hooks(s: Scenario) -> None:
+    """Corpus-filled hook payloads through the real reducer, IPC client and
+    server, then into a real Controller that persists its state to a file.
+
+    These events reach a standalone IpcWorker and Controller, while the
+    RemoteWorkers use a fixed presence, so a leak added in app.py's wire_break
+    glue is not covered (inherited from M3-06)."""
+    if not s.plan.hooks:
+        return
+    s.events = _corpus_events()
+    assert len(s.events) >= len(CORPUS.values) // 2
+    sock_dir = Path(tempfile.mkdtemp(dir="/tmp"))
+    sock_dir.chmod(0o700)
+    ipc = IpcWorker(
+        sock_dir / "s", StatusReply(kind="status", version=4, invitation="idle")
+    )
+    sink = EventSink(ipc)
+    ipc.start()
+    try:
+        for start in range(0, len(s.events), 10):
+            for event in s.events[start : start + 10]:
+                assert send_event(event, socket_path=ipc.socket_path, timeout=2.0)
+            # Let the companion drain, or the socket backlog fills up.
+            sent = min(start + 10, len(s.events))
+
+            def caught_up(n: int = sent) -> bool:
+                return len(sink.events) >= n
+
+            s.qtbot.waitUntil(caught_up, timeout=WAIT_MS)
+        s.qtbot.waitUntil(lambda: len(sink.events) == len(s.events), timeout=WAIT_MS)
+    finally:
+        ipc.stop()
+        sock_dir.joinpath("s").unlink(missing_ok=True)
+        sock_dir.rmdir()
+    s.local_state = s.tmp_path / "companion-state.json"
+    controller = Controller(store=FileStateStore(s.local_state))
+    for event in sink.events:
+        controller.on_event(event)
+    controller.set_stack_tags(("python", "docker"))
+    controller.set_enabled(True)
+    assert s.local_state.is_file()
+
+
+def step_chat(s: Scenario) -> None:
+    s.a.send_message(s.plan.chat_a)
+    s.qtbot.waitUntil(lambda: len(s.b.chat_state.messages) == 1, timeout=WAIT_MS)
+    s.b.send_message(s.plan.chat_b)
+    s.qtbot.waitUntil(lambda: len(s.a.chat_state.messages) == 2, timeout=WAIT_MS)
+    s.a.request_extension()
+    s.qtbot.waitUntil(
+        lambda: (
+            s.b.chat_state.status is not None
+            and s.b.chat_state.status.extension == "requested_by_peer"
+        ),
+        timeout=WAIT_MS,
+    )
+    s.b.answer_extension(False)
+    s.qtbot.waitUntil(
+        lambda: (
+            s.a.chat_state.status is not None
+            and s.a.chat_state.status.extension == "none"
+        ),
+        timeout=WAIT_MS,
+    )
+
+
+def step_report(s: Scenario) -> None:
+    s.a.report_peer("spam", s.plan.note, (2,))
+    s.qtbot.waitUntil(
+        lambda: s.rec_a.phase == "ended" and s.rec_b.phase == "ended",
+        timeout=WAIT_MS,
+    )
+
+
+def collect_exports(
+    server: LiveServer,
+    monkeypatch: pytest.MonkeyPatch,
+    out_dir: Path,
+    emails: list[str],
+) -> list[bytes]:
+    """Account export (M6-04) both ways: `export_account` and the admin CLI."""
+    monkeypatch.setenv("BREAKROOM_DATABASE_URL", server.config.database_url)
+    monkeypatch.setenv(
+        "BREAKROOM_SERVER_SECRET", base64.urlsafe_b64encode(TEST_SECRET).decode()
+    )
+    blobs: list[bytes] = []
+    for n, email in enumerate(emails):
+        with server.session_factory() as session:
+            data = export_account(session, email)
+        blobs.append(json.dumps(data, sort_keys=True).encode("utf-8"))
+        target = out_dir / f"export{n}.json"
+        assert admin_main(["account", "export", email, "--out", str(target)]) == 0
+        blobs.append(target.read_bytes())
+    return blobs
+
+
+def step_export(s: Scenario) -> None:
+    mp = pytest.MonkeyPatch()
+    try:
+        out = s.tmp_path / "exports"
+        out.mkdir()
+        s.exports = collect_exports(s.server, mp, out, [ADMIN_EMAIL_A, ADMIN_EMAIL_B])
+    finally:
+        mp.undo()
+
+
+# The hook point for wave 3: add the uninstall step (M6-02) to this list.
+SCENARIO_STEPS: list[Callable[[Scenario], None]] = [
+    step_sign_in,
+    step_match,
+    step_hooks,
+    step_chat,
+    step_report,
+    step_export,
+]
+
+
+def companion_file_blobs(root: Path) -> dict[str, list[bytes]]:
+    """Every regular file the companion side wrote under `root`: state,
+    credentials fallback, and the SQLite file of the in-process server."""
+    out: dict[str, list[bytes]] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            out[f"file.{path.relative_to(root)}"] = [path.read_bytes()]
+    return out
+
+
+def log_blobs(
+    caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
+) -> dict[str, list[bytes]]:
+    out = capfd.readouterr()
+    return {
+        "server_logs": [
+            caplog.text.encode("utf-8"),
+            out.out.encode("utf-8"),
+            out.err.encode("utf-8"),
+        ]
+    }
+
+
+def run_scenario(
+    qtbot: QtBot,
+    server: LiveServer,
+    tmp_path: Path,
+    plan: Plan,
+    worker_factory: Callable[[int], tuple[RemoteWorker, Recorder]],
+    proxy_port: int,
+) -> Scenario:
+    a, rec_a = worker_factory(proxy_port)
+    b, rec_b = worker_factory(proxy_port)
+    scenario = Scenario(qtbot, server, tmp_path, plan, a, b, rec_a, rec_b)
+    for step in SCENARIO_STEPS:
+        step(scenario)
+    return scenario
+
+
+def all_channels(
+    s: Scenario,
+    capture: Capture,
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+) -> dict[str, list[bytes]]:
+    return (
+        capture.channels()
+        | log_blobs(caplog, capfd)
+        | dump_database(s.server)
+        | {"export": s.exports}
+        | companion_file_blobs(s.tmp_path)
+    )
+
+
+def test_corpus_never_leaves_through_any_channel(
+    qtbot: QtBot,
+    server_factory: Callable[..., LiveServer],
+    capture: Capture,
+    worker_factory: Callable[[int], tuple[RemoteWorker, Recorder]],
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    server = server_factory(match_sweep_interval_s=0.05)
+    proxy = RecordingProxy(server.port, capture)
+    try:
+        scenario = run_scenario(
+            qtbot, server, tmp_path, Plan(), worker_factory, proxy.port
+        )
+    finally:
+        proxy.close()
+    assert CORPUS.version == 1  # the corpus version this run used
+
+    # Sanity: the scan looked at real traffic, state and exports.
+    channels = all_channels(scenario, capture, caplog, capfd)
+    assert any(b"/v1/queue" in h for h in channels["http"])
+    assert any(b'"type":"auth"' in f for f in channels["ws"])
+    assert channels["db.messages"] and channels["db.reports"]
+    assert any(CHAT_BODY_A.encode() in blob for blob in channels["export"])
+    assert any(EDITED_DEVICE_NAME.encode() in blob for blob in channels["export"])
+    assert any(b"python" in blob for blob in channels["file.companion-state.json"])
+    assert any(b"brr_" in blob for blob in channels["file.creds0.json"])
+    assert len(scenario.events) >= len(CORPUS.values) // 2
+
+    local_only = [e.local_session_key for e in scenario.events] + [
+        str(e.event_id) for e in scenario.events
+    ]
+    assert scan.find_corpus_leaks(channels, CORPUS.values) == []
+    assert scan.find_marker_leaks(channels, CORPUS.marker) == []
+    protected = [*CANARIES, *local_only]
+    if len(LOCAL_HOSTNAME) >= scan.MIN_NEEDLE:
+        protected.append(LOCAL_HOSTNAME)
+    assert find_leaks(channels, protected) == []
+
+
+def test_scanner_sees_corpus_values_planted_in_every_new_channel(
+    qtbot: QtBot,
+    server_factory: Callable[..., LiveServer],
+    capture: Capture,
+    worker_factory: Callable[[int], tuple[RemoteWorker, Recorder]],
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """The same run, with a corpus value typed into the chat, the report note
+    and the device name: the scan must then find each where it travelled."""
+    caplog.set_level(logging.DEBUG)
+    chat, note = CORPUS.bases[0], CORPUS.bases[1]
+    plan = Plan(
+        device_name_b=PLANTED_DEVICE.value,
+        chat_a=chat.value,
+        note=note.value,
+        hooks=False,
+    )
+    server = server_factory(match_sweep_interval_s=0.05)
+    proxy = RecordingProxy(server.port, capture)
+    try:
+        scenario = run_scenario(
+            qtbot, server, tmp_path, plan, worker_factory, proxy.port
+        )
+    finally:
+        proxy.close()
+    channels = all_channels(scenario, capture, caplog, capfd)
+    planted = [chat, note, PLANTED_DEVICE]
+    hits = set(scan.find_corpus_leaks(channels, planted))
+    for channel, value in [
+        ("http", chat),  # M5 message request
+        ("raw", chat),  # the TCP bytes of it
+        ("db.messages", chat),
+        ("export", chat),  # M6-04 export carries the user's own message
+        ("db.reports", note),  # M5 report
+        ("export", note),
+        ("http", PLANTED_DEVICE),  # M6-06 sign-in with an edited device name
+        ("db.devices", PLANTED_DEVICE),
+        ("export", PLANTED_DEVICE),
+    ]:
+        assert f"{channel}: {value.id}" in hits, (channel, value.id)
+
+
+def test_scanner_sees_a_corpus_value_in_companion_files_and_logs(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    value = CORPUS.bases[0]
+    # Credentials fallback: the real store writes the planted token.
+    FileCredentialStore(tmp_path / "credentials.json", "http://x").save(
+        StoredCredentials(
+            refresh_token=value.value,
+            refresh_expires_at=datetime.now(UTC) + timedelta(days=1),
+        )
+    )
+    # Companion state: the real state file, with a planted tag.
+    state = tmp_path / "companion-state.json"
+    state.write_text(json.dumps({"version": 1, "note": value.value}))
+    # Companion log and console output.
+    caplog.set_level(logging.DEBUG)
+    logging.getLogger("breakroom_companion.remote").warning("leaked %s", value.value)
+    print(value.value)
+    channels = companion_file_blobs(tmp_path) | log_blobs(caplog, capfd)
+    hits = set(scan.find_corpus_leaks(channels, [value]))
+    assert hits == {
+        f"file.credentials.json: {value.id}",
+        f"file.companion-state.json: {value.id}",
+        f"server_logs: {value.id}",
+    }
+
+
+def test_scanner_sees_a_corpus_value_in_an_account_export(
+    live_server: LiveServer,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    value = CORPUS.bases[0]
+    with live_server.session_factory() as session:
+        user = User(
+            email_canonical=ADMIN_EMAIL_A,
+            nickname="ada_l",
+            created_at=datetime.now(UTC),
+        )
+        session.add(user)
+        session.flush()
+        session.add(
+            Device(user_id=user.id, name=value.value, created_at=user.created_at)
+        )
+        session.commit()
+    blobs = collect_exports(live_server, monkeypatch, tmp_path, [ADMIN_EMAIL_A])
+    assert len(blobs) == 2  # in-process export and the admin CLI file
+    assert scan.find_corpus_leaks({"export": blobs}, [value]) == [f"export: {value.id}"]
+    assert scan.find_corpus_leaks({"export": blobs}, CORPUS.bases[1:]) == []
