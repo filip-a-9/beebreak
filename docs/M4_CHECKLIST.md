@@ -38,13 +38,14 @@ saved:
 
 - button `Find a break partner`;
 - while searching: `Looking for a break partner…` and a `Cancel` button;
-- when matched: `Matched with <nickname>`, a line `In common: <labels>` only
+- when matched: `Chatting with <nickname>`, a line `In common: <labels>` only
   when both people shared something in common (for example `In common:
-  Python`), and `End` and `Block` buttons;
+  Python`), and an `Open chat` button; `End` and `Block` are in the chat
+  window (M5);
 - `Nobody is around right now. Try again later.` with an `OK` button when the
   search expired;
-- `Break ended.` with an `OK` button when a match ended (either side ending it,
-  a block, or the 15 minute limit);
+- `Break ended.` when a match ended (either side ending it, a block, or the 15
+  minute limit); its `OK` button appears once the chat window is closed;
 - `Block` asks `Block this person?` / `You won't be matched with this person
   again.` with Yes and No.
 
@@ -124,7 +125,8 @@ docker compose exec -T postgres psql -U breakroom breakroom -c "\dt"
 ```
 
 Expect: `postgres`, `mailpit` and `server` running; health prints
-`{"status":"ok"}`; the migration query prints `0002`; the table list contains
+`{"status":"ok"}`; the migration query prints `0003` (the M5
+migration); the table list contains
 `queue_entries`, `matches`, `match_participants` and `blocks`. (The server
 container runs `breakroom-server migrate` on every start.)
 
@@ -180,21 +182,23 @@ docker compose exec server breakroom-admin queue list
 ```
 
 Expect: both windows show `Looking for a break partner…` for a moment, then A
-shows `Matched with Bea` and B shows `Matched with Filip`. The shared line is
+shows `Chatting with Bea` and B shows `Chatting with Filip`. The shared line is
 `In common: Python` on both (Python is the only tag both shared; neither
 shows Docker, a time label or a task kind). `matches` prints exactly one line
 naming `Bea` and `Filip`; `queue list` prints nothing. Repeat the whole step
 once more (End first, see M4-C05) and again expect one line, not two. A and B
 must not be matched with anyone else at any time.
 
-**M4-C05 — End from one side ends it for both.** In A click **End**.
+**M4-C05 — End from one side ends it for both.** In A's chat window click
+**End**.
 
 ```
 docker compose exec server breakroom-admin matches
 ```
 
-Expect: both windows show `Break ended.` with an OK button; `matches` prints
-nothing. Click OK in both: the Find button is back. B can also end it: repeat
+Expect: both main windows show `Break ended.`; `matches` prints nothing.
+Close both chat windows: an OK button appears. Click OK in both: the Find
+button is back. B can also end it: repeat
 M4-C04 and End from B; A shows `Break ended.` too.
 
 **M4-C06 — Gate: scarcity.** B stays idle (do not click Find in B). In A click
@@ -237,7 +241,7 @@ OK.
 
 **M4-C09 — Gate: server restart while both are searching.** Click Find in A
 and in B, then restart the server immediately (a match usually happens before
-the restart; if both already show `Matched with ...`, End the break and try
+the restart; if both already show `Chatting with ...`, End the break and try
 again with the restart command typed ahead):
 
 ```
@@ -253,14 +257,15 @@ docker compose exec server breakroom-admin matches | cut -f1,2 | tr '\t' '\n' | 
 
 Expect: both windows show `Offline – retrying` and then `Connected as ...`
 again without any sign-in. At most one match results (both windows show
-`Matched with ...` for each other, or both show `Nobody is around right now.
+`Chatting with ...` for each other, or both show `Nobody is around right now.
 Try again later.` if the 90 s ran out). `matches` has at most one line, and
 the second command (which prints a nickname that appears in two lines) prints
 nothing. Neither window ever shows a match with a different person.
 
 ## Block and rematch
 
-**M4-C10 — Gate: block.** Match A and B (Find in both). In B click **Block**
+**M4-C10 — Gate: block.** Match A and B (Find in both). In B's chat window
+click **Block**
 and answer **Yes** to `Block this person?`.
 
 ```
@@ -281,7 +286,7 @@ docker compose exec server breakroom-admin block list Bea
 
 Expect: `block remove` prints nothing and exits 0 (a second run exits 1 with
 `no such block`); `block list Bea` prints nothing. Click OK, Find in both:
-they match again (`Matched with ...`). End the break afterwards.
+they match again (`Chatting with ...`). End the break afterwards.
 
 **M4-C11 — Invitation path, with a real Claude session.** Needs the demo
 thresholds from M4-C03 in A, and an idle A (no break, no search). In T4, from a
@@ -298,7 +303,7 @@ Click **Accept**. Expect: the invitation goes away and A shows `Looking for a
 break partner…` (no extra click; accepting starts the search with the
 invitation's time label, which `queue list` shows only as a field name:
 `fields=presence_id,stack_tags,remaining_time_bucket`). In B click Find: both
-show `Matched with ...`. While A is searching or matched, send Claude another
+show `Chatting with ...`. While A is searching or matched, send Claude another
 long `sleep` in T4: the invitation does **not** appear in A. End the break in
 A, and immediately send Claude `Run the Bash command "sleep 60 && echo
 done"` again: **no invitation** appears for the 45 s cooldown after the break
@@ -316,7 +321,7 @@ the raw result`. Expect the keys `companion`, `invitation`, `last_event_at`,
   search and expect `queue` `searching`.
 - While A is matched (Find in A and B): ask for `breakroom_leave_queue` again.
   Expect `{"result": "not_searching"}`; the match continues and `matches`
-  still has the line. `breakroom_status` shows `queue` `matched`.
+  still has the line. `breakroom_status` shows `queue` `chatting`.
 - Neither result contains `Bea`, `python`, a bucket or a tag; Claude has no
   tool to start a search or end a match (`/mcp` lists `breakroom_status` and
   `breakroom_leave_queue` only).
@@ -340,8 +345,8 @@ entries and both companions idle and connected.
    off in B), `task_category` empty. Then click Find in A so they match.
 4. After the match, run `Q`: both rows are `matched` and all of
    `task_category`, `stack_tags`, `remaining_time_bucket` are empty and
-   `has_presence_id` is `f`. (The `matches` table still holds the shared tag
-   `python`; that is the match record, deleted 30 days after it ends.)
+   `has_presence_id` is `f`. (The live `matches` row still holds the shared
+   tag `python`; an ended match keeps none.)
 
 ```
 docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT shared_tags, shared_category FROM matches"
@@ -393,7 +398,7 @@ never committed. Tear the stack down when finished: `docker compose down -v`
     "M4-C14": {"result": "pass", "note": ""}
   },
   "observations": {
-    "migration_version": "0002",
+    "migration_version": "0003",
     "gate_match_lines": 1,
     "shared_line_shown": "In common: Python",
     "search_expired_after_s": 90,

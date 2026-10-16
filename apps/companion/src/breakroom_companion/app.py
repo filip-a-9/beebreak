@@ -227,6 +227,7 @@ def wire_break(
     remote.state_changed.connect(on_state)
     remote.me_changed.connect(on_me)
     remote.break_changed.connect(on_break)
+    remote.error.connect(window.show_error)
     window.find_requested.connect(lambda: send("unknown"))
     window.cancel_requested.connect(remote.leave_queue)
     window.block_requested.connect(remote.block_peer)

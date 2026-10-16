@@ -32,6 +32,7 @@ from breakroom_companion.break_state import (
     Joined,
     JoinFailed,
     Joining,
+    PeerBlocked,
     SignedOut,
     Sync,
     reduce,
@@ -569,6 +570,7 @@ class RemoteWorker(QObject):
             return
         await self._authed(lambda token: api.report(token, request))
         self._apply_chat(Reported(match_id))
+        self._apply(PeerBlocked(match_id))  # a report blocks the peer too
 
     async def _close_chat(self) -> None:
         self._apply_chat(Closed())
@@ -592,7 +594,12 @@ class RemoteWorker(QObject):
     async def _join_queue(self, presence: OutboundPresence) -> None:
         api = self._api
         assert api is not None
-        if not self._signed_in or self.state != "connected":
+        if not self._signed_in:
+            return
+        if self.state != "connected":
+            # Not queued for later: a search the user never saw start is worse
+            # than a clear retry (X2).
+            self._emit_error("offline")
             return
         if self._break.phase not in ("none", "nobody_available", "ended"):
             return
@@ -668,6 +675,8 @@ class RemoteWorker(QObject):
         else:
             await self._authed(lambda token: api.end_match(token, match_id))
         if not live:
+            if block:
+                self._apply(PeerBlocked(match_id))
             return
         self._apply(
             Frame(
@@ -680,6 +689,8 @@ class RemoteWorker(QObject):
             )
         )
         self._apply_chat(Ended(match_id, "ended"))
+        if block:
+            self._apply(PeerBlocked(match_id))
 
     async def _dismiss_break(self) -> None:
         self._apply(Dismiss())

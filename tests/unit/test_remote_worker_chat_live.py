@@ -31,6 +31,7 @@ from tests.unit.test_remote_worker_live import (
     PRESENCE,
     Client,
     Rec,
+    entry_rows,
     phase_is,
     sign_in,
     wait,
@@ -48,7 +49,13 @@ class ChatRec(Rec):
     def __init__(self, worker: RemoteWorker) -> None:
         super().__init__(worker)
         self.chats: list[ChatState] = []
+        self.errors: list[str] = []
         worker.chat_changed.connect(self.on_chat)
+        worker.error.connect(self.on_error)
+
+    @Slot(str)
+    def on_error(self, code: str) -> None:
+        self.errors.append(code)
 
     @Slot(object)
     def on_chat(self, state: object) -> None:
@@ -293,3 +300,67 @@ def test_a_message_sent_offline_is_resent_with_the_same_id_exactly_once(
     (row,) = stored(server, ada.rec.chat.match_id)
     assert row.client_message_id == pending_id
     assert ada.rec.chat.ended is None
+
+
+# --- Find while the connection is down (X2) ---
+
+
+def test_find_while_offline_reports_offline_and_sends_no_join(
+    qtbot: QtBot,
+    server_factory: Callable[..., LiveServer],
+    make_chat_client: Callable[..., ChatClient],
+) -> None:
+    server = server_factory(**CHAT)
+    ada = make_chat_client(server, "a", reconnect_s=1.0)
+    sign_in(qtbot, server, ada, "ada@example.com", "ada_l")
+    drop_socket(ada)
+    wait(qtbot, lambda: ada.rec.connection[-1:] == ["offline"])
+    before = len(ada.rec.errors)  # the drop itself may report "network"
+
+    ada.worker.join_queue(PRESENCE)
+
+    wait(qtbot, lambda: ada.rec.errors[before:] == ["offline"])
+    assert ada.rec.last.phase == "none"
+    assert entry_rows(server) == 0
+
+
+# --- the main window's Block after the end (X4) ---
+
+
+def test_report_and_block_marks_the_break_blocked(
+    qtbot: QtBot,
+    server_factory: Callable[..., LiveServer],
+    make_chat_client: Callable[..., ChatClient],
+) -> None:
+    _, ada, bob = start_chat(qtbot, server_factory, make_chat_client)
+    ada.worker.report_peer("harassment", None, ())
+    wait(qtbot, lambda: ada.rec.last.phase == "ended" and ada.rec.chat.reported)
+    wait(qtbot, lambda: bob.rec.last.phase == "ended")
+    wait(qtbot, lambda: ada.rec.last.blocked)
+    assert not bob.rec.last.blocked
+
+
+def test_block_marks_the_break_blocked(
+    qtbot: QtBot,
+    server_factory: Callable[..., LiveServer],
+    make_chat_client: Callable[..., ChatClient],
+) -> None:
+    _, ada, bob = start_chat(qtbot, server_factory, make_chat_client)
+    ada.worker.block_peer()
+    wait(qtbot, lambda: ada.rec.last.phase == "ended")
+    wait(qtbot, lambda: bob.rec.last.phase == "ended")
+    wait(qtbot, lambda: ada.rec.last.blocked)
+    assert not bob.rec.last.blocked
+
+
+def test_end_leaves_block_on_offer(
+    qtbot: QtBot,
+    server_factory: Callable[..., LiveServer],
+    make_chat_client: Callable[..., ChatClient],
+) -> None:
+    _, ada, bob = start_chat(qtbot, server_factory, make_chat_client)
+    ada.worker.end_match()
+    wait(qtbot, lambda: ada.rec.last.phase == "ended")
+    wait(qtbot, lambda: bob.rec.last.phase == "ended")
+    assert not ada.rec.last.blocked
+    assert not bob.rec.last.blocked

@@ -830,7 +830,9 @@ def test_block_confirmed_after_the_peer_ended_is_still_sent_and_stays_ended(
     settle(qtbot, rig)
 
     assert rig.rec.last.phase == "ended" and rig.rec.last.match is not None
-    assert len(rig.rec.states) == count
+    # The only change: the ended screen stops offering Block (X4).
+    assert len(rig.rec.states) == count + 1
+    assert rig.rec.last.blocked
 
 
 def test_end_match_does_nothing_once_ended(

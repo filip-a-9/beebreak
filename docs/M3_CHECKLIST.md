@@ -143,7 +143,8 @@ On the privacy page:
 
 Save with all boxes off. Expect: the dialog shows "You are all set." with a
 Close button (it does not close by itself); click Close. The window shows
-`Connecting…` then `Connected as Filip`. If the window shows `Finish setup`
+`Connected as Filip` (a brief `Connecting…` may come first; on a local stack it
+often lasts too short to see). If the window shows `Finish setup`
 instead, the nickname or privacy page was skipped.
 
 Now the server log shows the sign-in as access lines, and nothing else:

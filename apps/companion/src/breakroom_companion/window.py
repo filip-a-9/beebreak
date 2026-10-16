@@ -8,7 +8,7 @@ server text, re-validated against the Nickname pattern and shown as plain text.
 from collections.abc import Iterable
 
 from pydantic import TypeAdapter, ValidationError
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -60,6 +60,12 @@ NOBODY = "Nobody is around right now. Try again later."
 BREAK_ENDED = "Break ended."
 BLOCK_TITLE = "Block this person?"
 BLOCK_CONFIRM = "You won't be matched with this person again."
+# Worker error codes with a line in the break area; all others show nothing
+# here (the chat window and onboarding show their own).
+BREAK_ERROR_TEXT: dict[str, str] = {
+    "offline": "Not connected. Try again in a moment.",
+}
+ERROR_SECONDS = 5  # how long a failed-action line stays (also the chat window)
 
 TAG_LABELS: dict[StackTag, str] = {
     "python": "Python",
@@ -173,6 +179,14 @@ class CompanionWindow(QWidget):
         self.shared_label = QLabel()
         self.shared_label.setTextFormat(Qt.TextFormat.PlainText)
         self.shared_label.setWordWrap(True)
+        self.break_error_label = QLabel()
+        self.break_error_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.break_error_label.setWordWrap(True)
+        self.break_error_label.setVisible(False)
+        self._break_error_timer = QTimer(self)
+        self._break_error_timer.setSingleShot(True)
+        self._break_error_timer.setInterval(ERROR_SECONDS * 1000)
+        self._break_error_timer.timeout.connect(self._clear_break_error)
         self.find_button = QPushButton(FIND)
         self.cancel_button = QPushButton(CANCEL)
         self.block_button = QPushButton(BLOCK)
@@ -206,6 +220,7 @@ class CompanionWindow(QWidget):
         layout.addLayout(buttons)
         layout.addWidget(self.break_label)
         layout.addWidget(self.shared_label)
+        layout.addWidget(self.break_error_label)
         break_buttons = QHBoxLayout()
         for button in self._break_buttons:
             break_buttons.addWidget(button)
@@ -272,6 +287,8 @@ class CompanionWindow(QWidget):
 
     def set_break(self, state: BreakState) -> None:
         self._break = state
+        if self._break_active:
+            self._clear_break_error()
         self._render_break()
         offered = self._invitation == "suggested" and not self._break_active
         self.accept_button.setVisible(offered)
@@ -279,6 +296,21 @@ class CompanionWindow(QWidget):
         if state.phase in ("matched", "nobody_available"):
             self.show()
             self.raise_()
+
+    def show_error(self, code: str) -> None:
+        """A failed break action, as a fixed line that clears itself. The
+        server's own text is never shown."""
+        text = BREAK_ERROR_TEXT.get(code)
+        if text is None:
+            return
+        self.break_error_label.setText(text)
+        self.break_error_label.setVisible(True)
+        self._break_error_timer.start()
+
+    def _clear_break_error(self) -> None:
+        self._break_error_timer.stop()
+        self.break_error_label.setText("")
+        self.break_error_label.setVisible(False)
 
     def set_chat_held(self, held: bool) -> None:
         """The worker holds an ended chat nobody has closed yet: its window
@@ -321,8 +353,13 @@ class CompanionWindow(QWidget):
         )
         self.open_chat_button.setVisible(phase == "matched" or self._chat_held)
         # End and Block live in the chat window while chatting (M5-06). After
-        # the peer ended it, Block is still offered while the match is known.
-        can_block = phase == "ended" and self._break.match is not None
+        # the peer ended it, Block is still offered while the match is known,
+        # unless this user already blocked or reported them (X4).
+        can_block = (
+            phase == "ended"
+            and self._break.match is not None
+            and not self._break.blocked
+        )
         self.block_button.setVisible(can_block)
         self.ok_button.setVisible(phase in ("nobody_available", "ended"))
 

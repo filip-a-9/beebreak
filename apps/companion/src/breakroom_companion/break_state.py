@@ -4,7 +4,7 @@ Pure and Qt-free: `RemoteWorker` reduces server replies and frames into a
 `BreakState` and emits it as `break_changed`.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -28,6 +28,8 @@ class BreakState:
     phase: BreakPhase = "none"
     entry: QueueEntryView | None = None
     match: MatchView | None = None
+    # This device blocked or reported the peer of `match` (X4).
+    blocked: bool = False
 
 
 # --- events ---
@@ -72,7 +74,17 @@ class Dismiss:
     pass
 
 
-BreakEvent = Joining | Joined | JoinFailed | Sync | Frame | SignedOut | Dismiss
+@dataclass(frozen=True)
+class PeerBlocked:
+    """This device blocked the peer of `match_id`, or reported them (which
+    blocks too)."""
+
+    match_id: UUID
+
+
+BreakEvent = (
+    Joining | Joined | JoinFailed | Sync | Frame | SignedOut | Dismiss | PeerBlocked
+)
 
 # The phases that may start a new search.
 _IDLE = ("none", "nobody_available", "ended")
@@ -106,6 +118,12 @@ def reduce(state: BreakState, event: BreakEvent, now: datetime) -> BreakState:
             return _sync(state, queue, match_view, in_flight)
         case Frame(frame=frame):
             return _frame(state, frame)
+        case PeerBlocked(match_id=match_id):
+            if state.phase not in ("matched", "ended") or state.match is None:
+                return state
+            if state.match.match_id != match_id:
+                return state
+            return replace(state, blocked=True)
     return state  # pragma: no cover
 
 
@@ -142,7 +160,7 @@ def _sync(
     if state.phase == "matched" and state.match is not None:
         # The match is gone (ended while this device was offline): the chat
         # window shows how it ended; `Dismiss` clears it like a `match.ended`.
-        return BreakState(phase="ended", match=state.match)
+        return BreakState(phase="ended", match=state.match, blocked=state.blocked)
     return _NONE
 
 
@@ -177,7 +195,9 @@ def _frame(
                 and state.match is not None
                 and state.match.match_id == match_id
             ):
-                return BreakState(phase="ended", match=state.match)
+                return BreakState(
+                    phase="ended", match=state.match, blocked=state.blocked
+                )
             return state
     return state  # pragma: no cover
 

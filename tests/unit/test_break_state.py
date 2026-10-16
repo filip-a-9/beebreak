@@ -15,6 +15,7 @@ from breakroom_companion.break_state import (
     Joined,
     JoinFailed,
     Joining,
+    PeerBlocked,
     SignedOut,
     Sync,
     reduce,
@@ -102,6 +103,8 @@ EVENTS: dict[str, BreakEvent] = {
     "match_ended_other": match_ended(OTHER_MATCH.match_id),
     "signed_out": SignedOut(),
     "dismiss": Dismiss(),
+    "peer_blocked_current": PeerBlocked(MATCH.match_id),
+    "peer_blocked_other": PeerBlocked(OTHER_MATCH.match_id),
 }
 
 NONE = BreakState()
@@ -144,6 +147,13 @@ CHANGES: dict[tuple[BreakPhase, str], BreakState] = {
     ("nobody_available", "match_created"): MATCHED,
     ("ended", "dismiss"): NONE,
     ("nobody_available", "dismiss"): NONE,
+    # This device blocked or reported the peer (X4).
+    ("matched", "peer_blocked_current"): BreakState(
+        phase="matched", match=MATCH, blocked=True
+    ),
+    ("ended", "peer_blocked_current"): BreakState(
+        phase="ended", match=MATCH, blocked=True
+    ),
 }
 for _phase in STATES:
     if _phase != "none":
@@ -234,3 +244,23 @@ def test_f1_a_new_match_replaces_a_finished_result(phase: BreakPhase) -> None:
 def test_f1_the_finished_match_itself_does_not_come_back() -> None:
     assert reduce(STATES["ended"], Sync(None, MATCH), NOW) == STATES["ended"]
     assert reduce(STATES["ended"], match_created(MATCH), NOW) == STATES["ended"]
+
+
+# --- X4: a block or report from this device ---
+
+BLOCKED_LIVE = BreakState(phase="matched", match=MATCH, blocked=True)
+BLOCKED_ENDED = BreakState(phase="ended", match=MATCH, blocked=True)
+
+
+@pytest.mark.parametrize(
+    "event", [match_ended(MATCH.match_id), Sync(None, None)], ids=["frame", "sync"]
+)
+def test_the_end_after_a_block_keeps_it_blocked(event: BreakEvent) -> None:
+    assert reduce(BLOCKED_LIVE, event, NOW) == BLOCKED_ENDED
+
+
+def test_a_new_match_after_a_block_is_not_blocked() -> None:
+    assert reduce(BLOCKED_ENDED, match_created(OTHER_MATCH), NOW) == BreakState(
+        phase="matched", match=OTHER_MATCH
+    )
+    assert reduce(BLOCKED_ENDED, Dismiss(), NOW) == NONE

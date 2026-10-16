@@ -788,3 +788,51 @@ def test_a_failed_message_in_an_ended_chat_is_not_clickable(
     window.set_chat(chat_state(match_id=match_id, pending=(pending,), ended="ended"))
     assert window.transcript.findChildren(QPushButton) == []
     assert "not sent" in _texts(window)
+
+
+# --- X3: long messages are not clipped ---
+
+C06_LINE = (
+    '<b>bold</b> <a href="http://example.com">link</a> <img src="x"> '
+    "&amp; CANARY-M5-7f3a"
+)
+LONG_WORDS = " ".join(["supercalifragilistic"] * 15)
+
+
+def _settle(qtbot: QtBot, window: ChatWindow) -> None:
+    qtbot.wait(50)  # layout and the deferred scroll run on the event loop
+    layout = window.transcript.layout()
+    assert layout is not None
+    layout.activate()
+
+
+@pytest.mark.parametrize("mine", [False, True])
+@pytest.mark.parametrize("body", [C06_LINE, LONG_WORDS])
+def test_a_long_message_gets_the_height_its_wrapped_text_needs(
+    window: ChatWindow, qtbot: QtBot, body: str, mine: bool
+) -> None:
+    window.resize(window.minimumSizeHint().width(), 400)
+    window.set_chat(chat_state(messages=(message_view(1, mine=mine, body=body),)))
+    _settle(qtbot, window)
+    (label,) = window._body_labels
+    assert label.text() == body
+    viewport = window.scroll_area.viewport()
+    assert label.width() <= viewport.width()
+    assert label.height() >= label.heightForWidth(label.width())
+
+
+def test_scrolled_to_the_bottom_the_last_line_of_a_long_message_shows(
+    window: ChatWindow, qtbot: QtBot
+) -> None:
+    window.resize(window.minimumSizeHint().width(), 300)
+    earlier = tuple(message_view(seq) for seq in range(1, 15))
+    last = message_view(15, body=LONG_WORDS)
+    window.set_chat(chat_state(messages=(*earlier, last)))
+    _settle(qtbot, window)
+    bar = window.scroll_area.verticalScrollBar()
+    bar.setValue(bar.maximum())
+    label = window._body_labels[-1]
+    bottom = label.mapTo(window.transcript, label.rect().bottomLeft()).y()
+    visible_bottom = bar.value() + window.scroll_area.viewport().height()
+    assert label.height() >= label.heightForWidth(label.width())
+    assert bottom <= visible_bottom

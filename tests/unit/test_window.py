@@ -499,6 +499,7 @@ def _break_visible(window: CompanionWindow) -> set[str]:
         "ok": window.ok_button,
         "text": window.break_label,
         "shared": window.shared_label,
+        "error": window.break_error_label,
     }
     return {name for name, w in named.items() if w.isVisibleTo(window)}
 
@@ -791,3 +792,48 @@ def test_open_chat_is_only_offered_while_matched(window: CompanionWindow) -> Non
     for phase in ("none", "searching", "nobody_available", "ended"):
         window.set_break(BreakState(phase=phase, entry=_entry()))
         assert not window.open_chat_button.isVisibleTo(window)
+
+
+# --- X2: Find while the connection is down ---
+
+
+def test_find_failing_offline_shows_a_line_until_its_timer_fires(
+    window: CompanionWindow,
+) -> None:
+    window.show()
+    window.set_ready(True)
+    window.show_error("offline")
+    assert _break_visible(window) == {"find", "error"}
+    assert window.break_error_label.text()
+    assert window._break_error_timer.isActive()
+    window._break_error_timer.timeout.emit()
+    assert _break_visible(window) == {"find"}
+
+
+def test_a_new_search_clears_the_offline_line(window: CompanionWindow) -> None:
+    window.show()
+    window.set_ready(True)
+    window.show_error("offline")
+    window.set_break(BreakState(phase="joining"))
+    assert "error" not in _break_visible(window)
+
+
+def test_errors_with_no_main_window_line_show_nothing(
+    window: CompanionWindow,
+) -> None:
+    window.show()
+    window.set_ready(True)
+    for code in ("network", "rate_limited", "invalid_request", "unauthorized"):
+        window.show_error(code)
+    assert _break_visible(window) == {"find"}
+
+
+# --- X4: no second Block after this user's own block or report ---
+
+
+def test_ended_by_this_users_block_or_report_offers_no_block(
+    window: CompanionWindow,
+) -> None:
+    window.show()
+    window.set_break(BreakState(phase="ended", match=_match(), blocked=True))
+    assert _break_visible(window) == {"text", "ok"}

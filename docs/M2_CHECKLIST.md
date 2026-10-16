@@ -19,13 +19,22 @@ step says "replay", it uses `tools/replay_trace.py TRACE.jsonl
 **Terminals.** T1: the companion. T2: the Claude session under test ("A").
 T3: a long-lived probe Claude session ("P") used only to ask for
 `breakroom_status`, because a session that is waiting on a prompt cannot be
-asked anything. Start both Claude sessions with
-`claude --plugin-dir integrations/claude-code`.
+asked anything. Start P as a pre-allowed session (below); A is
+started per step.
 
-**Pre-allowed tool.** Steps that need a command to run without a prompt start
-the session as `claude --plugin-dir integrations/claude-code --allowedTools
-"Bash(sleep:*)"`. Steps that need a prompt use plain `claude --plugin-dir
-integrations/claude-code` in default permission mode.
+**Claude Code commands (checked on 2.1.300).** Claude Code auto-approves
+`sleep` as read-only, and refuses a foreground `sleep 60` (the model then
+backgrounds it, so no long tool is seen). So:
+
+- **Prompting session** (steps that need a permission prompt): `claude
+  --plugin-dir integrations/claude-code --settings
+  '{"permissions":{"ask":["Bash(sleep:*)"]}}'`, default permission mode.
+- **Pre-allowed session** (a command runs without a prompt): `claude
+  --plugin-dir integrations/claude-code --allowedTools "Bash(timeout:*)
+  Bash(tail:*)"` (`Bash(timeout:*)` alone does not cover it).
+- **Long command of N seconds**: `timeout N tail -n0 -f pyproject.toml; echo
+  ZEBRA-7731`. Keep the path inside the project; `/dev/null` or an absolute
+  path outside it triggers a read-outside-project prompt.
 
 **Reading `breakroom_status` from P.** Ask P: "Call the breakroom_status tool
 and show the raw result." Fields: `companion`, `invitation`, `last_event_at`,
@@ -70,6 +79,11 @@ committed, and neither is any unreviewed trace.
 
 ## Setup
 
+Sign the companion in first (M3 checklist, M3-C04, with its server running):
+since M4 the companion raises no invitation unless it is connected with a
+nickname and consent saved (`controller.py:125`). A signed-out companion
+never invites, so every "invitation appears" step would fail as written.
+
 **M2-C01 — Install and automated checks.**
 `uv sync && uv run ruff format --check . && uv run ruff check . && uv run mypy packages apps tests tools && uv run pytest`
 Expect: all green.
@@ -113,9 +127,9 @@ allow-list differs). Ask P for `breakroom_status`: `companion` is `running`,
 
 ## Waiting for the user
 
-**M2-C04 — Permission wait (trace).** In T2 (default permission mode, no
-allow-list) send: `ZEBRA-7731: run the Bash command "sleep 5 && echo
-ZEBRA-7731"`. When the permission prompt appears, **leave it open for 40 s**
+**M2-C04 — Permission wait (trace).** In T2 (a prompting session) send:
+`ZEBRA-7731: run the Bash command "sleep 5 && echo ZEBRA-7731"`. When the
+permission prompt appears, **leave it open for 40 s**
 (past the 20 s threshold, before the 90 s wait limit). During that time ask P
 for `breakroom_status`.
 Expect: no invitation in the window; P shows `activity: waiting_input` and
@@ -123,18 +137,25 @@ Expect: no invitation in the window; P shows `activity: waiting_input` and
 answers. Record pass: R as `m2-C04`, same scenario.
 Replay expect: 0 invitations; `waiting_input` seconds greater than 0.
 
-**M2-C05 — Denied prompt (trace).** Same prompt as M2-C04 (default mode).
-When the prompt appears, answer **No** (deny). Let Claude respond until it
-stops. Then ask P for `breakroom_status` after 10 s more.
-Expect: no invitation; P does not show `waiting_input` once Claude has
-responded after the denial. Record pass: R as `m2-C05`, same scenario; open
-the trace and write down, in order, the event types after the
-`waiting_input` line (this answers whether any hook fires on denial).
-Replay expect: 0 invitations; the replay timeline leaves `waiting_input`
-(into `idle` or `unknown`), it does not end the trace still waiting.
+**M2-C05 — Denied prompt (trace).** Same prompt as M2-C04 (prompting
+session). When the prompt appears, answer **No** (deny). Claude does not
+respond: it asks "What should Claude do instead?" and fires no hook after the
+`waiting_input`. Do not type anything in A. Ask P for `breakroom_status` at
+once, then again after the wait limit (90 s with the C02 values).
+Expect: no invitation; P shows `activity: waiting_input` right after the
+denial and not after the wait limit (the session drops to `unknown` after
+`BREAKROOM_WAITING_MAX_S`; typing the next prompt in A ends the wait sooner).
+Until then the denied prompt blocks invitations from every session; this is
+accepted. Record pass: R as `m2-C05`, same scenario; open the trace and write
+down, in order, the event types after the `waiting_input` line (expected:
+none).
+Replay expect: 0 invitations; the timeline goes from `waiting_input` to
+`unknown` at the wait limit.
 
-**M2-C06 — Approved long tool, not pre-allowed (trace).** Default mode. Send:
-`ZEBRA-7731: run the Bash command "sleep 60 && echo ZEBRA-7731"`. Approve when
+**M2-C06 — Approved long tool, not pre-allowed (trace).** Plain `claude
+--plugin-dir integrations/claude-code`, default mode (no allow-list, so the
+long command prompts). Send: `ZEBRA-7731: run the Bash command "timeout 60
+tail -n0 -f pyproject.toml; echo ZEBRA-7731"`. Approve when
 asked, then watch the window for the full 60 s.
 Expect: **no invitation** while the command runs (documented limitation: no
 hook fires on approval, so the session stays `waiting_input` until the tool
@@ -142,17 +163,17 @@ completes, M2 README). After the command finishes, the window stays idle.
 Record pass: R as `m2-C06`, same scenario.
 Replay expect: 0 invitations.
 
-**M2-C07 — Same long tool, pre-allowed (trace).** Restart T2 with
-`--allowedTools "Bash(sleep:*)"`. Send the same prompt as M2-C06 (no prompt
-appears).
-Expect: an invitation appears in the window about 20 s into the sleep (during
+**M2-C07 — Same long tool, pre-allowed (trace).** Restart T2 as a
+pre-allowed session. Send the same prompt as M2-C06 (no prompt appears).
+Expect: an invitation appears in the window about 20 s into the command (during
 the silence, not at completion). Click Decline. Record pass: R as `m2-C07`,
 same scenario, no clicking.
 Replay expect: 1 invitation with `--respond none`, near `first_invitation_s`
 20 (see the note on replay thresholds).
 
-**M2-C08 — Cancelled tool, Esc (trace).** T2 with the pre-allow flag. Send
-`ZEBRA-7731: run the Bash command "sleep 90"`. After about 5 s press **Esc**.
+**M2-C08 — Cancelled tool, Esc (trace).** T2 as a pre-allowed session. Send
+`ZEBRA-7731: run the Bash command "timeout 90 tail -n0 -f pyproject.toml; echo
+ZEBRA-7731"`. After about 5 s press **Esc**.
 Then watch the window for 40 s without typing.
 This step is a **measurement**, not a pass/fail on invitations. Docs say a
 cancelled tool fires no completion hook and `Stop` does not run on a user
@@ -171,9 +192,11 @@ window, invitation that cannot be answered).
 
 ## Failure, stop
 
-**M2-C09 — Tool failure (trace).** T2 with the pre-allow flag. Send
-`ZEBRA-7731: run the Bash command "ls /nonexistent-ZEBRA-7731"` and let
-Claude answer. In the window nothing is expected. After the answer, wait 40 s
+**M2-C09 — Failing command (trace).** T2 as a pre-allowed session. Send
+`ZEBRA-7731: run the Bash command "ls nonexistent-ZEBRA-7731"` (a path
+relative to the project; an absolute one prompts) and let Claude answer. A
+failing command (exit 2) arrives as an ordinary `tool_completed`, not as a
+separate failure event. In the window nothing is expected. After the answer, wait 40 s
 (longer than `BREAKROOM_STALE_AFTER_S`), then ask P for `breakroom_status`.
 Expect: no invitation. Record pass: R as `m2-C09`, same scenario.
 Replay expect: 0 invitations; the aggregate activity at the end of the replay
@@ -191,14 +214,14 @@ M2-C09 replay timeline, no transition label claims completion either.
 ## Several sessions
 
 **M2-C11 — One waits, one works.** Companion running. Three terminals with
-Claude: A (default mode, no allow-list), B (pre-allow flag). First, in A,
+Claude: A (prompting session), B (pre-allowed session). First, in A,
 send `ZEBRA-7731: run the Bash command "sleep 5 && echo ZEBRA-7731"` and
 leave the prompt open. Within 5 s, in B send `ZEBRA-7731: run the Bash
-command "sleep 100"`. Watch the window for 40 s.
+command "timeout 100 tail -n0 -f pyproject.toml; echo ZEBRA-7731"`. Watch the window for 40 s.
 Expect: **no invitation** while A's prompt is open (B alone would invite at
 20 s). Then approve A's prompt, and keep watching.
 Expect: an invitation appears within about 10 s of approving (B is still
-sleeping; A's command finishes in 5 s). Do this inside A's 90 s wait limit;
+running; A's command finishes in 5 s). Do this inside A's 90 s wait limit;
 if A passed 90 s first, redo the step (A would be `unknown`, which proves
 nothing). Decline the invitation. Record pass: skip (the recorder cannot tell
 sessions apart in a way that adds evidence); the two-session timeline is
@@ -206,9 +229,11 @@ covered by synthetic scenario 9 in the replay regression set.
 
 ## Range label
 
-**M2-C12 — Task list, label shape.** T2 with the pre-allow flag. Send:
-`ZEBRA-7731: create a task list with 4 tasks and do them one at a time; each
-task is the Bash command "sleep 15".` Watch the window for the whole run.
+**M2-C12 — Task list, label shape.** T2 as a pre-allowed session. Send:
+`ZEBRA-7731: use the TaskCreate tool to create 4 tasks, then do them one at a
+time and mark each done with TaskUpdate; each task is the Bash command
+"timeout 15 tail -n0 -f pyproject.toml; echo ZEBRA-7731".` (Without the tool
+names the model may skip the task list.) Watch the window for the whole run.
 Expect: either **no invitation** or an invitation with one of the labels
 `~5–10 min left`, `~10–20 min left`, `20+ min left`, or no label at all.
 Never any text containing "under 5" or "<5", and never a label on the idle
@@ -222,10 +247,10 @@ exist in your Claude Code version, mark `blocked`.
 
 **M2-C13 — Decline survives a restart.** Stop the companion. Set
 `export BREAKROOM_COOLDOWN_S=300` in T1 and start it (restart after changing
-env). Run a pre-allowed `sleep 60` as in M2-C07 and click **Decline** when the
+env). Run the pre-allowed 60 s command as in M2-C07 and click **Decline** when the
 invitation appears. Ctrl+C the companion, check
 `cat ~/.local/state/breakroom/companion-state.json`, restart it with the same
-exports, and run `sleep 60` again for 40 s.
+exports, and run the same command again for 40 s.
 Expect: the file is JSON with `"enabled": true` and a non-null
 `"cooldown_until"` in the future; after the restart, **no invitation** during
 the second run.
@@ -233,9 +258,10 @@ the second run.
 **M2-C14 — Disable survives a restart.** Uncheck "Suggest breaks". Ctrl+C,
 restart.
 Expect: the window starts with the disabled text and the box unchecked; P
-shows `invitation: disabled`; a pre-allowed `sleep 60` brings no invitation.
-Re-check the box: window returns to idle, and the state file shows
-`"enabled": true`.
+shows `invitation: disabled`; the pre-allowed 60 s command brings no
+invitation. Re-check the box: window returns to idle (if no run qualifies at
+that moment), and the state file shows `"enabled": true`. Re-checking it while
+a run already qualifies invites at once; that is by design (the run is real).
 
 **M2-C15 — Corrupt state starts off.** Ctrl+C the companion, then
 `echo 'not json' > ~/.local/state/breakroom/companion-state.json` and start
@@ -253,7 +279,7 @@ recorder. Run:
 
 ```
 for f in reports/m2-C*.jsonl; do
-  echo "$f: $(wc -l < "$f") lines, hits: $(grep -ciE "ZEBRA-7731|sk-test-DO-NOT-LEAK|needs your permission|permission to use|sleep|nonexistent|$(basename "$PWD")|$HOME" "$f")"
+  echo "$f: $(wc -l < "$f") lines, hits: $(grep -ciE "ZEBRA-7731|sk-test-DO-NOT-LEAK|needs your permission|permission to use|sleep|pyproject|nonexistent|$(basename "$PWD")|$HOME" "$f")"
 done
 ```
 

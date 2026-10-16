@@ -429,3 +429,9 @@ def test_a_failed_join_after_an_earlier_break_is_still_free(rig: Rig) -> None:
     rig.remote.push_break(BreakState(phase="joining"))
     rig.remote.push_break(BreakState(phase="none"))
     assert rig.controller._cooldown_until is None
+
+
+def test_an_offline_find_failure_reaches_the_main_window(rig: Rig) -> None:
+    rig.ready()
+    rig.remote.push_error("offline")
+    assert rig.window.break_error_label.isVisibleTo(rig.window)

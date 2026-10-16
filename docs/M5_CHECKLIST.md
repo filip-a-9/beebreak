@@ -492,7 +492,9 @@ and expect `Connected as Bea` after the sign-in.
 ## Retention, Claude Code, privacy
 
 **M5-C16 — Message bodies are purged, report evidence is kept.** This step
-shortens the message retention to 60 s (the purge runs about once a minute).
+shortens the message retention to 60 s (the purge runs about once a minute),
+and the report window with it: the server refuses to start when the report
+window outlasts the retention.
 
 ```
 cat > reports/compose.m5-retention.yaml <<'EOF'
@@ -500,6 +502,7 @@ services:
   server:
     environment:
       BREAKROOM_MESSAGE_RETENTION_S: "60"
+      BREAKROOM_REPORT_WINDOW_S: "60"
 EOF
 docker compose logs server >> reports/m5-server-logs.txt 2>&1
 docker compose -f compose.yaml -f reports/compose.m5-retention.yaml up -d server

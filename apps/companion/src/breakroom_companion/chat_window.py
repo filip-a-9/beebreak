@@ -31,6 +31,7 @@ from breakroom_companion.report_dialog import ReportDialog, display_text
 from breakroom_companion.window import (
     BLOCK_CONFIRM,
     BLOCK_TITLE,
+    ERROR_SECONDS,
     IN_COMMON,
     CompanionWindow,
     safe_nickname,
@@ -67,7 +68,6 @@ ERROR_TEXT: dict[str, str] = {
     "not_found": "That chat is no longer available.",
     "network": "Network problem. Try again.",
 }
-ERROR_SECONDS = 5
 NOT_SENT_ENDED = "not sent"
 ENDED_LINES: dict[ChatEnd, str] = {
     "ended": "The chat ended.",
@@ -168,8 +168,13 @@ class ChatWindow(QWidget):
         )
 
         self.transcript = QWidget()
-        self._rows = QVBoxLayout(self.transcript)
-        self._rows.setAlignment(Qt.AlignmentFlag.AlignTop)
+        # Rows on top via a stretch, not an alignment flag: an aligned layout
+        # is laid out at its sizeHint height, which ignores height-for-width
+        # and squeezes wrapped rows (X3).
+        transcript_layout = QVBoxLayout(self.transcript)
+        self._rows = QVBoxLayout()
+        transcript_layout.addLayout(self._rows)
+        transcript_layout.addStretch()
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setWidget(self.transcript)
@@ -485,7 +490,10 @@ class ChatWindow(QWidget):
         label = self._body_label(body)
         align = Qt.AlignmentFlag.AlignRight if mine else Qt.AlignmentFlag.AlignLeft
         label.setAlignment(align)
-        column.addWidget(label, 0, align)
+        # No alignment flag here: with one, the layout sizes the label at its
+        # sizeHint width and computes the wrapped height for the wrong width,
+        # clipping the last lines (X3). The text itself is aligned above.
+        column.addWidget(label)
         if pending is not None:
             if pending.status == "failed" and self._state.ended is not None:
                 mark = QLabel(NOT_SENT_ENDED)  # nothing can be retried any more
