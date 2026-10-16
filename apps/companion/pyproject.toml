@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-breakroom-companion = "breakroom_companion.app:main"
+breakroom-companion = "breakroom_companion.cli:main"
 
 [tool.uv.sources]
 breakroom-shared = { workspace = true }
