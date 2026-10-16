@@ -34,11 +34,10 @@ services:
   # One-shot: applies migrations, then exits. `server` starts only after it
   # finished successfully.
   migrate:
-    # Same image as `server` (one name, one build; BuildKit reuses the cache).
+    # Runs the image `server` builds. No `build:` here, so it is built once;
+    # `never` makes compose wait for that local build instead of pulling.
     image: breakroom-server:prod
-    build: &server-build
-      context: .
-      dockerfile: apps/server/Dockerfile
+    pull_policy: never
     command: ["breakroom-server", "migrate"]
     environment:
       BREAKROOM_DATABASE_URL: postgresql+psycopg://breakroom:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/breakroom
@@ -50,7 +49,11 @@ services:
 
   server:
     image: breakroom-server:prod
-    build: *server-build
+    # Always build locally; never look this name up in a registry.
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
     environment:
       BREAKROOM_DATABASE_URL: postgresql+psycopg://breakroom:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/breakroom
       BREAKROOM_SERVER_SECRET: ${BREAKROOM_SERVER_SECRET:?set BREAKROOM_SERVER_SECRET in .env}
