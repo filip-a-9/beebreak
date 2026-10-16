@@ -38,6 +38,7 @@ from breakroom_server.auth import (
 )
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory, make_engine
+from breakroom_server.logging_config import request_id_var
 from breakroom_server.mailer import Mailer, RecordingMailer, SmtpMailer
 from breakroom_server.matchmaking import Matchmaker
 from breakroom_server.models import email_canonical
@@ -164,6 +165,7 @@ class AccessLogMiddleware:
             return
         started = time.perf_counter()
         status = 500
+        request_token = request_id_var.set(uuid.uuid4().hex)
 
         async def tracking_send(message: Message) -> None:
             nonlocal status
@@ -185,6 +187,7 @@ class AccessLogMiddleware:
                 state.get("user_id", "-"),
                 state.get("device_id", "-"),
             )
+            request_id_var.reset(request_token)
 
 
 def _default_mailer(config: ServerConfig) -> Mailer:
