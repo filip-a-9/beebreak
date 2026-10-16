@@ -31,6 +31,8 @@ SENT_ONLY_NOTE = (
     "have turned on."
 )
 EXAMPLE_TAG: StackTag = "python"
+DEFAULT_DEVICE_NAME = "WSL device"
+SIGN_IN_HEADING = "Sent when you sign in"
 NEVER_SHARED_HEADING = "Never shared"
 # ARCHITECTURE §4 "Protected local content".
 NEVER_SHARED: tuple[str, ...] = (
@@ -60,6 +62,22 @@ def example_json(consent: Consent, tags: Sequence[StackTag] = ()) -> str:
     ).model_dump_json(indent=2)
 
 
+ALREADY_SENT_ITEM = "Device name: the name you chose at sign-in"
+
+
+def sign_in_items(
+    device_name: str | None = None, *, already_sent: bool = False
+) -> tuple[str, ...]:
+    """What leaves the machine at sign-in. After sign-in the name is not stored
+    locally, so the list says so instead of showing a possibly wrong name."""
+    name_item = (
+        ALREADY_SENT_ITEM
+        if already_sent
+        else f"Device name: {device_name or DEFAULT_DEVICE_NAME}"
+    )
+    return ("Email", "Nickname", name_item)
+
+
 def _plain(text: str) -> QLabel:
     label = QLabel(text)
     label.setTextFormat(Qt.TextFormat.PlainText)
@@ -73,6 +91,8 @@ class PrivacyPreviewDialog(QDialog):
         consent: Consent,
         parent: QWidget | None = None,
         tags: Sequence[StackTag] = (),
+        device_name: str | None = None,
+        already_sent: bool = False,
     ) -> None:
         super().__init__(parent)
         self._tags: tuple[StackTag, ...] = tuple(tags)
@@ -82,6 +102,9 @@ class PrivacyPreviewDialog(QDialog):
         self.sent_only_label = _plain(SENT_ONLY_NOTE)
         self.example_edit = QPlainTextEdit()
         self.example_edit.setReadOnly(True)
+        self.signin_label = _plain(SIGN_IN_HEADING)
+        self.signin_list_label = _plain("")
+        self.set_device_name(device_name, already_sent=already_sent)
         self.never_label = _plain(NEVER_SHARED_HEADING)
         bullets = "\n".join(f"\N{BULLET} {item}" for item in NEVER_SHARED)
         self.never_list_label = _plain(bullets)
@@ -94,6 +117,8 @@ class PrivacyPreviewDialog(QDialog):
             self.note_label,
             self.sent_only_label,
             self.example_edit,
+            self.signin_label,
+            self.signin_list_label,
             self.never_label,
             self.never_list_label,
             buttons,
@@ -108,3 +133,12 @@ class PrivacyPreviewDialog(QDialog):
         if tags is not None:
             self._tags = tuple(tags)
         self.example_edit.setPlainText(example_json(consent, self._tags))
+
+    def set_device_name(
+        self, device_name: str | None, *, already_sent: bool = False
+    ) -> None:
+        """Show the name that will be sent at sign-in (None: the default), or,
+        once it was sent, that it is the name chosen then."""
+        items = sign_in_items(device_name, already_sent=already_sent)
+        bullets = "\n".join(f"\N{BULLET} {item}" for item in items)
+        self.signin_list_label.setText(bullets)

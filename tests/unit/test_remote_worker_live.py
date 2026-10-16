@@ -109,7 +109,7 @@ def sign_in(
     sent = len(server.mailer.sent)
     client.worker.begin_sign_in(email, server.invite(email))
     wait(qtbot, lambda: len(server.mailer.sent) > sent)
-    client.worker.verify(server.last_code())
+    client.worker.verify(server.last_code(), "test box")
     wait(qtbot, lambda: client.rec.connection[-1:] == ["connected"])
     client.worker.set_nickname(nickname)
     client.worker.set_consent(Consent(version=1))

@@ -43,6 +43,7 @@ class Calls:
     consents: list[Consent] = field(default_factory=list)
     sign_ins: list[tuple[str, str | None]] = field(default_factory=list)
     codes: list[str] = field(default_factory=list)
+    device_names: list[str] = field(default_factory=list)
     starts: int = 0
     sign_outs: int = 0
     stops: int = 0
@@ -72,8 +73,9 @@ class FakeRemoteWorker(RemoteWorker):
     def begin_sign_in(self, email: str, invite_code: str | None) -> None:
         self.calls.sign_ins.append((email, invite_code))
 
-    def verify(self, code: str) -> None:
+    def verify(self, code: str, device_name: str) -> None:
         self.calls.codes.append(code)
+        self.calls.device_names.append(device_name)
 
     def set_nickname(self, nickname: str) -> None:
         self.calls.nicknames.append(nickname)

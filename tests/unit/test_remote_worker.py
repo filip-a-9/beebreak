@@ -123,7 +123,7 @@ def sign_in(
     sent_before = len(server.mailer.sent)
     client.worker.begin_sign_in(email, server.invite(email))
     wait_for(qtbot, lambda: len(server.mailer.sent) > sent_before)
-    client.worker.verify(server.last_code())
+    client.worker.verify(server.last_code(), "test box")
     wait_state(qtbot, client, "connected")
     if nickname is not None:
         client.worker.set_nickname(nickname)
@@ -197,11 +197,11 @@ def test_wrong_code_keeps_signing_in_and_a_retry_succeeds(
     )
     wait_for(qtbot, lambda: len(live_server.mailer.sent) > 0)
 
-    client.worker.verify("ZZZZZZZZ")
+    client.worker.verify("ZZZZZZZZ", "test box")
     wait_for(qtbot, lambda: client.rec.errors == ["invalid_code"])
     assert client.rec.states[-1] == "signing_in"
 
-    client.worker.verify(live_server.last_code())
+    client.worker.verify(live_server.last_code(), "test box")
     wait_state(qtbot, client, "connected")
 
 
@@ -212,7 +212,7 @@ def test_verify_without_a_challenge_is_an_error(
     client.worker.start()
     wait_state(qtbot, client, "signed_out")
 
-    client.worker.verify("ABCD2345")
+    client.worker.verify("ABCD2345", "test box")
 
     wait_for(qtbot, lambda: client.rec.errors == ["invalid_request"])
     assert live_server.requests == []

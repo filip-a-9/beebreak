@@ -124,7 +124,7 @@ def make_peer(
         sent = len(server.mailer.sent)
         worker.begin_sign_in(email, server.invite(email))
         qtbot.waitUntil(lambda: len(server.mailer.sent) > sent, timeout=WAIT_MS)
-        worker.verify(server.last_code())
+        worker.verify(server.last_code(), "test box")
         qtbot.waitUntil(lambda: rec.states[-1:] == ["connected"], timeout=WAIT_MS)
         worker.set_nickname(name)
         qtbot.waitUntil(lambda: rec.nickname == name, timeout=WAIT_MS)

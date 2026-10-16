@@ -13,8 +13,6 @@ import asyncio
 import contextlib
 import logging
 import random
-import re
-import socket
 import threading
 from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime
@@ -55,6 +53,9 @@ from breakroom_companion.chat_state import SignedOut as ChatSignedOut
 from breakroom_companion.chat_state import reduce as chat_reduce
 from breakroom_companion.config import worker_start_timeout_s, worker_stop_timeout_s
 from breakroom_companion.credentials import CredentialStore, StoredCredentials
+from breakroom_companion.privacy_preview import (
+    DEFAULT_DEVICE_NAME as DEFAULT_DEVICE_NAME,  # re-export, see below
+)
 from breakroom_companion.realtime_client import (
     RealtimeClient,
     RealtimeError,
@@ -97,15 +98,9 @@ REFRESH_LEAD_S = 60.0
 # The server's default access lifetime; the fallback when our clock disagrees.
 NOMINAL_ACCESS_TTL_S = 900.0
 MIN_REFRESH_DELAY_S = 0.05
-_BAD_DEVICE_CHARS = re.compile(r"[^A-Za-z0-9 ._-]")
-
-
-def _device_name() -> str:
-    try:
-        name = _BAD_DEVICE_CHARS.sub("", socket.gethostname()).strip()[:40]
-    except OSError:
-        name = ""
-    return name or "companion"
+# DEFAULT_DEVICE_NAME ("WSL device") is defined in privacy_preview, which must
+# not import this network module, and re-exported here. It is shown and
+# editable at sign-in; the machine hostname is never sent.
 
 
 def refresh_delay_s(ttl_s: float) -> float:
@@ -172,8 +167,8 @@ class RemoteWorker(QObject):
     def begin_sign_in(self, email: str, invite_code: str | None) -> None:
         self._submit(self._begin_sign_in(email, invite_code))
 
-    def verify(self, code: str) -> None:
-        self._submit(self._verify(code))
+    def verify(self, code: str, device_name: str) -> None:
+        self._submit(self._verify(code, device_name))
 
     def set_nickname(self, nickname: str) -> None:
         self._submit(self._update_me(lambda api, tok: api.set_nickname(tok, nickname)))
@@ -720,13 +715,13 @@ class RemoteWorker(QObject):
             raise
         self._challenge_id = reply.challenge_id
 
-    async def _verify(self, code: str) -> None:
+    async def _verify(self, code: str, device_name: str) -> None:
         assert self._api is not None
         if self._signed_in or self._challenge_id is None:
             self._emit_error("invalid_request")
             return
         try:
-            session = await self._api.verify(self._challenge_id, code, _device_name())
+            session = await self._api.verify(self._challenge_id, code, device_name)
         except ApiError as exc:
             if exc.code in ("expired", "unauthorized"):
                 self._challenge_id = None

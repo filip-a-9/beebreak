@@ -32,10 +32,10 @@ from PySide6.QtWidgets import (
 )
 
 from breakroom_companion.privacy_preview import PrivacyPreviewDialog
-from breakroom_companion.remote import RemoteWorker
+from breakroom_companion.remote import DEFAULT_DEVICE_NAME, RemoteWorker
 from breakroom_companion.state_store import MAX_STACK_TAGS, normalize_tags
 from breakroom_companion.window import TAG_LABELS
-from breakroom_shared.api import Consent, Me, Nickname
+from breakroom_shared.api import Consent, DeviceName, Me, Nickname
 from breakroom_shared.presence import StackTag
 
 PAGE_EMAIL, PAGE_CODE, PAGE_NICKNAME, PAGE_PRIVACY, PAGE_DONE = range(5)
@@ -45,6 +45,9 @@ EMAIL_LABEL = "Email"
 INVITE_LABEL = "Invite code (first sign-in only)"
 CODE_INTRO = "We emailed you an 8-character code. Type it here."
 CODE_LABEL = "Code"
+DEVICE_NAME_LABEL = (
+    "Name for this device. Letters, digits, space, . _ and -, up to 40 characters."
+)
 NICKNAME_INTRO = "Choose a nickname. Letters, digits, _ and -, 3 to 24 characters."
 NICKNAME_LABEL = "Nickname"
 PRIVACY_INTRO = (
@@ -60,6 +63,7 @@ SENT_ONLY = (
 )
 TAGS_INTRO = "Pick up to 5 tags. They stay on this computer until you start a break."
 SHOW_SHARED_LABEL = "Show what is shared"
+SHOW_SENT_LABEL = "Show what is sent"
 DONE_TEXT = "You are all set."
 BACK, NEXT, SAVE, CLOSE, CANCEL = "Back", "Next", "Save", "Close", "Cancel"
 
@@ -77,6 +81,7 @@ ERROR_TEXT: dict[str, str] = {
 
 _EMAIL_RE = re.compile(r"[^@\s]{1,64}@[^@\s]+\.[^@\s]+")
 _NICKNAME = TypeAdapter(Nickname)
+_DEVICE_NAME = TypeAdapter(DeviceName)
 
 
 def valid_email(raw: str) -> bool:
@@ -104,6 +109,14 @@ def valid_code(raw: str) -> bool:
 def valid_nickname(raw: str) -> bool:
     try:
         _NICKNAME.validate_python(raw)
+    except ValidationError:
+        return False
+    return True
+
+
+def valid_device_name(raw: str) -> bool:
+    try:
+        _DEVICE_NAME.validate_python(raw.strip())
     except ValidationError:
         return False
     return True
@@ -165,6 +178,9 @@ class OnboardingDialog(QDialog):
         # page 1
         self.code_edit = QLineEdit()
         self.code_edit.setMaxLength(9)
+        # The server has no rename route, so the name is fixed once signed in.
+        self.device_name_edit = QLineEdit(DEFAULT_DEVICE_NAME)
+        self.device_name_edit.setMaxLength(40)
         self.code_error = _error_label()
         # page 2
         self.nickname_edit = QLineEdit()
@@ -175,6 +191,7 @@ class OnboardingDialog(QDialog):
         self.stack_box = QCheckBox(STACK_LABEL)
         self.time_box = QCheckBox(TIME_LABEL)
         self.show_shared_button = QPushButton(SHOW_SHARED_LABEL)
+        self.show_sent_button = QPushButton(SHOW_SENT_LABEL)
         self.tags_intro = _label(TAGS_INTRO)
         self.tag_list = QListWidget()
         self.tag_items: dict[StackTag, QListWidgetItem] = {}
@@ -210,7 +227,13 @@ class OnboardingDialog(QDialog):
         )
         self.stack.addWidget(
             _page(
-                _label(CODE_INTRO), _label(CODE_LABEL), self.code_edit, self.code_error
+                _label(CODE_INTRO),
+                _label(CODE_LABEL),
+                self.code_edit,
+                _label(DEVICE_NAME_LABEL),
+                self.device_name_edit,
+                self.show_sent_button,
+                self.code_error,
             )
         )
         self.stack.addWidget(
@@ -249,14 +272,21 @@ class OnboardingDialog(QDialog):
         layout.addWidget(self.stack)
         layout.addLayout(buttons)
 
-        for edit in (self.email_edit, self.invite_edit, self.code_edit):
+        for edit in (
+            self.email_edit,
+            self.invite_edit,
+            self.code_edit,
+            self.device_name_edit,
+        ):
             edit.textChanged.connect(self._refresh)
+        self.device_name_edit.textChanged.connect(self._device_name_changed)
         self.nickname_edit.textChanged.connect(self._refresh)
         for box in (self.category_box, self.stack_box, self.time_box):
             box.toggled.connect(self._consent_toggled)
         self.stack_box.toggled.connect(self._sync_tag_list)
         self.tag_list.itemChanged.connect(self._tag_changed)
         self.show_shared_button.clicked.connect(self.show_preview)
+        self.show_sent_button.clicked.connect(self.show_preview)
         self.next_button.clicked.connect(self._next)
         self.back_button.clicked.connect(self._back)
         self.cancel_button.clicked.connect(self.reject)
@@ -348,7 +378,9 @@ class OnboardingDialog(QDialog):
                 not invite.strip() or valid_code(invite)
             )
         if page == PAGE_CODE:
-            return valid_code(self.code_edit.text())
+            return valid_code(self.code_edit.text()) and valid_device_name(
+                self.device_name_edit.text()
+            )
         if page == PAGE_NICKNAME:
             return valid_nickname(self.nickname_edit.text())
         return True
@@ -385,7 +417,9 @@ class OnboardingDialog(QDialog):
         elif page == PAGE_CODE:
             self._begin_pending = False
             self._busy = True
-            self.worker.verify(self.code_edit.text().strip())
+            self.worker.verify(
+                self.code_edit.text().strip(), self.device_name_edit.text().strip()
+            )
         elif page == PAGE_NICKNAME:
             self._busy = True
             self.worker.set_nickname(self.nickname_edit.text())
@@ -404,6 +438,11 @@ class OnboardingDialog(QDialog):
             self._go(PAGE_EMAIL)
 
     @Slot()
+    def _device_name_changed(self) -> None:
+        if self.preview is not None and not self._verified:
+            self.preview.set_device_name(self.device_name_edit.text().strip())
+
+    @Slot()
     def _consent_toggled(self) -> None:
         if self.preview is not None and self.preview.isVisible():
             self.preview.set_consent(self.consent(), self.selected_tags())
@@ -412,11 +451,18 @@ class OnboardingDialog(QDialog):
     def show_preview(self) -> None:
         if self.preview is None:
             self.preview = PrivacyPreviewDialog(
-                self.consent(), self, self.selected_tags()
+                self.consent(),
+                self,
+                self.selected_tags(),
+                self.device_name_edit.text().strip(),
+                already_sent=self._verified,
             )
             self.preview.setModal(False)
         else:
             self.preview.set_consent(self.consent(), self.selected_tags())
+            self.preview.set_device_name(
+                self.device_name_edit.text().strip(), already_sent=self._verified
+            )
         self.preview.show()
         self.preview.raise_()
 
