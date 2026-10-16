@@ -15,8 +15,6 @@ import select
 import shutil
 import signal
 import socket
-import ssl
-import stat
 import struct
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -63,14 +61,12 @@ def autostart_path() -> Path:
 
 
 def validate_ca_file(path: str) -> str:
-    """Absolute path of a readable PEM CA file that only its owner can modify."""
+    """Absolute path of a CA file, refused unless the companion would accept it
+    at start (RemoteConfig runs the one check: type, mode, owner, PEM)."""
     try:
         resolved = Path(path).expanduser().resolve(strict=True)
-        info = resolved.stat()
-        if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o022:
-            raise CaFileRefused("CA file is not allowed")
-        ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(str(resolved))
-    except (OSError, ssl.SSLError, ValueError):
+        RemoteConfig(server_url=DEFAULT_SERVER_URL, ca_file=resolved)
+    except (OSError, ValueError):
         raise CaFileRefused("CA file is not allowed") from None
     return str(resolved)
 
