@@ -226,6 +226,33 @@ def _check_not_busy(
         raise ApiError("already_matched")
 
 
+def _check_match_budget(
+    session: Session, config: ServerConfig, now: datetime, user_id: UUID
+) -> None:
+    """429 when the user already joined `matches_per_window_user` matches inside
+    `rate_window_s`: cycling rematches to read peers' tags stops there."""
+    window = timedelta(seconds=config.rate_window_s)
+    started = list(
+        session.scalars(
+            select(Match.created_at)
+            .join(MatchParticipant, MatchParticipant.match_id == Match.id)
+            .where(
+                MatchParticipant.user_id == user_id,
+                Match.created_at > now - window,
+            )
+            .order_by(Match.created_at.desc())
+            .limit(config.matches_per_window_user)
+        )
+    )
+    if len(started) < config.matches_per_window_user:
+        return
+    oldest = started[-1]
+    if oldest.tzinfo is None:
+        oldest = oldest.replace(tzinfo=now.tzinfo)
+    wait = max(1, int((oldest + window - now).total_seconds()) + 1)
+    raise ApiError("rate_limited", {"Retry-After": str(wait)})
+
+
 def join_queue(
     session: Session,
     config: ServerConfig,
@@ -256,6 +283,7 @@ def join_queue(
         raise ApiError("invalid_request")
 
     _check_not_busy(session, now, user_id)
+    _check_match_budget(session, config, now, user_id)
     entry = QueueEntry(
         user_id=user_id,
         device_id=device_id,
@@ -407,6 +435,7 @@ def post_queue(
 @router.get("/v1/queue/current")
 def get_queue(request: Request, principal: CurrentPrincipal) -> QueueSnapshot:
     state = request.app.state
+    check_limit(state.limiters.queue_read_user, str(principal.user_id))
     now: datetime = state.clock()
     with state.session_factory() as session:
         entry, match = current_state(session, state.config, now, principal.user_id)
@@ -416,6 +445,7 @@ def get_queue(request: Request, principal: CurrentPrincipal) -> QueueSnapshot:
 @router.delete("/v1/queue/current", status_code=204)
 def delete_queue(request: Request, principal: CurrentPrincipal) -> Response:
     state = request.app.state
+    check_limit(state.limiters.queue_action_user, str(principal.user_id))
     now: datetime = state.clock()
     with state.session_factory() as session:
         entry_id = leave_queue(session, now, principal.user_id)
@@ -431,6 +461,7 @@ def _end(
     request: Request, principal: CurrentPrincipal, match_id: UUID, *, block: bool
 ) -> Response:
     state = request.app.state
+    check_limit(state.limiters.queue_action_user, str(principal.user_id))
     now: datetime = state.clock()
     with state.session_factory() as session:
         peer_id = end_match(session, now, principal.user_id, match_id, block=block)

@@ -30,6 +30,7 @@ from breakroom_server.models import (
 )
 from breakroom_server.ratelimit import RateLimiter
 from breakroom_server.tokens import (
+    derive_successor,
     hash_token,
     hmac_code,
     new_code,
@@ -88,8 +89,11 @@ class Limiters:
     start_email: RateLimiter
     start_ip: RateLimiter
     verify_ip: RateLimiter
+    verify_email: RateLimiter  # counts failed verifies only
     refresh_device: RateLimiter
     queue_user: RateLimiter
+    queue_action_user: RateLimiter
+    queue_read_user: RateLimiter
     message_user: RateLimiter  # own window: rate_message_window_s
     report_user: RateLimiter
     extension_user: RateLimiter
@@ -101,8 +105,11 @@ def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
         start_email=RateLimiter(config.rate_start_email, window, clock),
         start_ip=RateLimiter(config.rate_start_ip, window, clock),
         verify_ip=RateLimiter(config.rate_verify_ip, window, clock),
+        verify_email=RateLimiter(config.rate_verify_email, window, clock),
         refresh_device=RateLimiter(config.rate_refresh_device, window, clock),
         queue_user=RateLimiter(config.rate_queue_user, window, clock),
+        queue_action_user=RateLimiter(config.rate_queue_action_user, window, clock),
+        queue_read_user=RateLimiter(config.rate_queue_read_user, window, clock),
         message_user=RateLimiter(
             config.rate_message_user, float(config.rate_message_window_s), clock
         ),
@@ -195,15 +202,9 @@ def start_challenge(
         deliver = invite is not None
 
     # The code is generated either way so both paths store the same shape.
+    # Earlier open challenges stay valid: a stranger's start must not cancel the
+    # owner's code. The per-email verify budget bounds guessing across them.
     code = new_code()
-    session.execute(
-        update(AuthChallenge)
-        .where(
-            AuthChallenge.email_canonical == email,
-            AuthChallenge.consumed_at.is_(None),
-        )
-        .values(consumed_at=now)
-    )
     challenge = AuthChallenge(
         email_canonical=email,
         code_hmac=hmac_code(config.secret, code),
@@ -253,6 +254,7 @@ def verify_challenge(
     challenge_id: uuid.UUID,
     raw_code: str,
     device_name: str,
+    verify_email: RateLimiter,
 ) -> SignedIn:
     challenge = session.get(AuthChallenge, challenge_id)
     if challenge is None or challenge.consumed_at is not None:
@@ -261,10 +263,15 @@ def verify_challenge(
         raise ApiError("expired")
     if challenge.attempts >= config.code_max_attempts:
         raise ApiError("invalid_code")
+    # Failed guesses across all of an email's open challenges share one budget.
+    wait = verify_email.blocked(challenge.email_canonical)
+    if wait is not None:
+        raise ApiError("rate_limited", {"Retry-After": str(max(1, int(wait)))})
 
     code = normalize_code(raw_code)
     given = hmac_code(config.secret, code if code is not None else "")
     if code is None or not hmac.compare_digest(challenge.code_hmac, given):
+        verify_email.hit(challenge.email_canonical)
         # The cap is part of the UPDATE, so parallel guesses cannot pass it.
         session.execute(
             update(AuthChallenge)
@@ -340,11 +347,23 @@ def _account_for(session: Session, challenge: AuthChallenge, now: datetime) -> U
 
 
 def issue_tokens(
-    session: Session, config: ServerConfig, device: Device, now: datetime
+    session: Session,
+    config: ServerConfig,
+    device: Device,
+    now: datetime,
+    *,
+    parent_token: str | None = None,
 ) -> TokenPair:
-    """New access + refresh pair for the device; the previous access dies."""
-    access = new_token("bra_")
-    refresh = new_token("brr_")
+    """New access + refresh pair for the device; the previous access dies.
+
+    A rotation passes the used raw token, which makes the pair reproducible
+    for the grace window (see `refresh_tokens`); a sign-in gets random tokens.
+    """
+    if parent_token is None:
+        access = new_token("bra_")
+        refresh = new_token("brr_")
+    else:
+        access, refresh = derive_successor(config.secret, parent_token)
     access_expires = now + timedelta(seconds=config.access_ttl_s)
     refresh_expires = now + timedelta(seconds=config.refresh_ttl_s)
     device.access_hash = hash_token(access)
@@ -412,12 +431,51 @@ def refresh_tokens(
         .values(used_at=now)
     )
     if marked.rowcount != 1:  # type: ignore[attr-defined]
+        replayed = _replay_in_grace(session, config, device, raw_token, now)
+        if replayed is not None:
+            return Refreshed(replayed, None)
         revoke_device(session, device, now)
         session.commit()
         return Refreshed(None, device.id)
-    tokens = issue_tokens(session, config, device, now)
+    tokens = issue_tokens(session, config, device, now, parent_token=raw_token)
     session.commit()
     return Refreshed(tokens, None)
+
+
+def _replay_in_grace(
+    session: Session,
+    config: ServerConfig,
+    device: Device,
+    raw_token: str,
+    now: datetime,
+) -> TokenPair | None:
+    """The same successor pair, if the token was rotated at most the grace ago
+    and nothing newer has been issued since; else None (a real reuse)."""
+    used_at = session.scalar(
+        select(RefreshToken.used_at).where(
+            RefreshToken.token_hash == hash_token(raw_token)
+        )
+    )
+    if used_at is None or now - used_at > timedelta(seconds=config.refresh_grace_s):
+        return None
+    access, refresh = derive_successor(config.secret, raw_token)
+    successor = session.get(RefreshToken, hash_token(refresh))
+    session.refresh(device)
+    if (
+        successor is None
+        or successor.device_id != device.id
+        or successor.used_at is not None
+        or device.revoked_at is not None
+        or device.access_hash != hash_token(access)
+        or device.access_expires_at is None
+    ):
+        return None
+    return TokenPair(
+        access_token=access,
+        access_expires_at=device.access_expires_at,
+        refresh_token=refresh,
+        refresh_expires_at=successor.expires_at,
+    )
 
 
 def logout_device(session: Session, device_id: uuid.UUID, now: datetime) -> None:

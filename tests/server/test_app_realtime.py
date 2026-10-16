@@ -8,7 +8,7 @@ from starlette.websockets import WebSocketDisconnect
 from breakroom_server.db import SessionFactory
 from breakroom_server.mailer import RecordingMailer
 from breakroom_shared.api import WS_CLOSE
-from tests.server.conftest import bearer, sign_in
+from tests.server.conftest import FixedClock, bearer, sign_in
 
 
 def test_create_app_installs_hub(app: FastAPI) -> None:
@@ -38,6 +38,7 @@ def test_refresh_reuse_closes_live_socket(
     client: TestClient,
     session_factory: SessionFactory,
     mailer: RecordingMailer,
+    clock: FixedClock,
 ) -> None:
     session = sign_in(client, session_factory, mailer)
     first_refresh = session["tokens"]["refresh_token"]
@@ -48,6 +49,7 @@ def test_refresh_reuse_closes_live_socket(
         ws.send_json({"type": "auth", "version": 1, "access_token": access})
         assert ws.receive_json()["type"] == "session.ready"
         assert ws.receive_json()["type"] == "sync"
+        clock.advance(client.app.state.config.refresh_grace_s + 1)  # type: ignore[attr-defined]
         replay = client.post("/v1/auth/refresh", json={"refresh_token": first_refresh})
         assert replay.status_code == 401
         with pytest.raises(WebSocketDisconnect) as info:

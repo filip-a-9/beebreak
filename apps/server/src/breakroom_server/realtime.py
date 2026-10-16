@@ -228,6 +228,15 @@ def _still_authorized(factory: SessionFactory, principal: Principal) -> bool:
     return revoked_at is None and status == "active"
 
 
+async def _may_push(
+    factory: SessionFactory, principal: Principal, now: datetime
+) -> bool:
+    """Checked before each batch of pushed frames, not only on client frames."""
+    if principal.access_expires_at <= now:
+        return False
+    return await run_in_threadpool(_still_authorized, factory, principal)
+
+
 class _Close(Exception):
     def __init__(self, code: int) -> None:
         super().__init__(code)
@@ -288,6 +297,8 @@ async def realtime(websocket: WebSocket) -> None:
             if conn.kick_code is not None:
                 raise _Close(conn.kick_code)
             if principal is not None:
+                if conn.outbound and not await _may_push(factory, principal, clock()):
+                    raise _Close(WS_CLOSE["unauthorized"])
                 await _flush(websocket, conn)
             if recv is None:
                 recv = asyncio.ensure_future(websocket.receive())
