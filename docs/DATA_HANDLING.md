@@ -68,6 +68,7 @@ user.
 | Blocks: blocker, blocked, time | `blocks` | Operator (a block is never shown to the blocked person) | Until the account is deleted | `account delete`; the admin CLI can remove a block |
 | Reports: reporter, reported, match id, reason, optional note (500 chars), status, times | `reports` | Operator. The reported person is not told | Open reports are kept until resolved; resolved reports are deleted 90 days after resolution (`BREAKROOM_REPORT_RETENTION_S`) | Automatic purge. `account delete` is refused while the user is on either side of an open report |
 | Report evidence: copies of the messages the reporter ticked (author role, body, time) | `report_messages` | Operator | Same as the report | Deleted with the report |
+| Backups: database dumps (every table above) | `backups/` on the host, mode 0600, optionally age or gpg encrypted | Operator | Not decided yet; the runbook's 14-day cron prune is an example | Delete the file. An older backup still holds accounts deleted since it was taken |
 
 Not stored in the database: the in-memory rate-limit counters (lost on server
 restart). Server logs hold fixed strings, counts and opaque row ids, never an

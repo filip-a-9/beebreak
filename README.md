@@ -140,7 +140,7 @@ To try the Claude Code plugin from a checkout, see
 80/443) on any Docker host: copy `.env.example` to `.env`, replace every
 placeholder (the file refuses to start with one missing), then
 `docker compose -f compose.prod.yaml up -d --build`. Run exactly one server
-container; never scale it. Backups and a runbook are still to come in M6.
+container; never scale it. Backups, restore and operations are in `docs/RUNBOOK.md` (`scripts/backup.sh`, `scripts/restore.sh`).
 
 ## Links
 
