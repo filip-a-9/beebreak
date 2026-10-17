@@ -63,8 +63,6 @@ from breakroom_shared.api import (
 
 _log = logging.getLogger(__name__)
 
-# The purge runs at most this often (seconds of injected-clock time).
-_PURGE_INTERVAL_S = 60
 _BUCKET_ORDER = ("under_5m", "5_10m", "10_20m", "20m_plus")
 _UNKNOWN_BUCKET_DISTANCE = 1
 
@@ -694,7 +692,9 @@ class Matchmaker:
 
     def _purge(self, now: datetime) -> None:
         last = self._last_purge
-        if last is not None and now - last < timedelta(seconds=_PURGE_INTERVAL_S):
+        if last is not None and now - last < timedelta(
+            seconds=self._config.purge_interval_s
+        ):
             return
         self._last_purge = now
         cutoff = now - timedelta(seconds=self._config.retention_s)

@@ -464,3 +464,29 @@ def test_two_users_are_both_connected(
 
     assert ada.rec.states[-1] == bob.rec.states[-1] == "connected"
     assert "offline" not in ada.rec.states + bob.rec.states
+
+
+def test_a_command_cancelled_before_it_runs_is_closed_not_dropped(
+    tmp_path: Path,
+) -> None:
+    import gc
+    import warnings
+
+    config = RemoteConfig(server_url="http://127.0.0.1:1")
+    worker = RemoteWorker(config, FileCredentialStore(tmp_path / "c.json", "x"))
+
+    async def scenario() -> None:
+        main = asyncio.create_task(worker._main())
+        while not worker._ready.is_set():
+            await asyncio.sleep(0)
+        task = worker._spawn(worker._sign_out())
+        task.cancel()  # before its first step: the guard body never runs
+        await asyncio.gather(task, return_exceptions=True)
+        worker._set_stop_event()
+        await main
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        asyncio.run(scenario())
+        gc.collect()
+    assert [w for w in caught if issubclass(w.category, RuntimeWarning)] == []

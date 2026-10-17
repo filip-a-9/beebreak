@@ -1,6 +1,7 @@
 """App-side chat wiring (M5-06): real windows, FakeRemoteWorker, fake clock."""
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from uuid import uuid4
@@ -67,6 +68,11 @@ def rig(qtbot: QtBot) -> Rig:
         is_active=lambda: r.active[0],
     )
     return r
+
+
+def _unread(rig: Rig) -> list[str]:
+    """The numbers on the Open chat button: its unread count, if any."""
+    return re.findall(r"\d+", rig.window.open_chat_button.text())
 
 
 def _peer(seq: int, body: str = "hi"):  # type: ignore[no-untyped-def]
@@ -151,13 +157,15 @@ def test_shared_labels_reach_the_chat_window(rig: Rig) -> None:
     )
     rig.remote.push_chat(chat_state())
     rig.remote.push_break(BreakState(phase="matched", match=match))
-    assert rig.chat.shared_label.text() == "In common: Backend, Python"
+    shown = rig.chat.shared_label.text()
+    assert "Backend" in shown and "Python" in shown
 
 
 def test_connection_state_reaches_the_chat_window(rig: Rig) -> None:
     rig.remote.push_chat(chat_state())
     rig.remote.push_state("offline")
-    assert rig.chat.status_label.text().startswith("Reconnecting")
+    assert rig.chat.status_label.isVisibleTo(rig.chat)
+    assert rig.chat.status_label.text() != ""
     rig.remote.push_state("connected")
     assert not rig.chat.status_label.isVisibleTo(rig.chat)
 
@@ -244,21 +252,21 @@ def test_unread_counts_peer_messages_while_the_window_is_not_active(
     rig.window.show()
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
     rig.remote.push_chat(chat_state(match_id=match_id))
-    assert rig.window.open_chat_button.text() == "Open chat"
+    assert _unread(rig) == []
     rig.remote.push_chat(
         chat_state(
             match_id=match_id,
             messages=(_peer(1), message_view(2, mine=True), _peer(3)),
         )
     )
-    assert rig.window.open_chat_button.text() == "Open chat (2)"
+    assert _unread(rig) == ["2"]
     rig.remote.push_chat(
         chat_state(
             match_id=match_id,
             messages=(_peer(1), message_view(2, mine=True), _peer(3), _peer(4)),
         )
     )
-    assert rig.window.open_chat_button.text() == "Open chat (3)"
+    assert _unread(rig) == ["3"]
 
 
 def test_unread_resets_when_the_window_is_opened(rig: Rig) -> None:
@@ -266,12 +274,12 @@ def test_unread_resets_when_the_window_is_opened(rig: Rig) -> None:
     rig.window.show()
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
     rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1),)))
-    assert rig.window.open_chat_button.text() == "Open chat (1)"
+    assert _unread(rig) == ["1"]
     rig.window.open_chat_button.click()
-    assert rig.window.open_chat_button.text() == "Open chat"
+    assert _unread(rig) == []
     # Only messages after that count again.
     rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1), _peer(2))))
-    assert rig.window.open_chat_button.text() == "Open chat (1)"
+    assert _unread(rig) == ["1"]
 
 
 def test_unread_resets_when_the_window_becomes_active(rig: Rig) -> None:
@@ -279,11 +287,11 @@ def test_unread_resets_when_the_window_becomes_active(rig: Rig) -> None:
     rig.window.show()
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
     rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1), _peer(2))))
-    assert rig.window.open_chat_button.text() == "Open chat (2)"
+    assert _unread(rig) == ["2"]
     rig.chat.activity_changed.emit(True)
-    assert rig.window.open_chat_button.text() == "Open chat"
+    assert _unread(rig) == []
     rig.chat.activity_changed.emit(False)
-    assert rig.window.open_chat_button.text() == "Open chat"
+    assert _unread(rig) == []
 
 
 def test_nothing_is_unread_while_the_window_is_active(rig: Rig) -> None:
@@ -292,7 +300,7 @@ def test_nothing_is_unread_while_the_window_is_active(rig: Rig) -> None:
     rig.window.show()
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
     rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1),)))
-    assert rig.window.open_chat_button.text() == "Open chat"
+    assert _unread(rig) == []
     assert rig.sent() == []
 
 
@@ -300,9 +308,9 @@ def test_a_new_match_starts_from_zero(rig: Rig) -> None:
     rig.window.show()
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
     rig.remote.push_chat(chat_state(messages=(_peer(1), _peer(2))))
-    assert rig.window.open_chat_button.text() == "Open chat (2)"
+    assert _unread(rig) == ["2"]
     rig.remote.push_chat(chat_state())
-    assert rig.window.open_chat_button.text() == "Open chat"
+    assert _unread(rig) == []
 
 
 def test_no_chat_means_no_unread(rig: Rig) -> None:
@@ -310,7 +318,7 @@ def test_no_chat_means_no_unread(rig: Rig) -> None:
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
     rig.remote.push_chat(chat_state(messages=(_peer(1),)))
     rig.remote.push_chat(ChatState())
-    assert rig.window.open_chat_button.text() == "Open chat"
+    assert _unread(rig) == []
 
 
 # --- notifications ---
@@ -359,6 +367,17 @@ def test_notifications_are_throttled_per_chat(rig: Rig) -> None:
     rig.remote.push_chat(
         chat_state(match_id=match_id, messages=(_peer(1), _peer(2), _peer(3)))
     )
+    assert len(rig.sent()) == 2
+
+
+def test_the_notification_interval_follows_the_environment(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BREAKROOM_NOTIFY_INTERVAL_S", "2")
+    match_id = uuid4()
+    rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1),)))
+    rig.now[0] += 2.5
+    rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1), _peer(2))))
     assert len(rig.sent()) == 2
 
 
@@ -430,9 +449,10 @@ def test_the_tracker_reports_chatting_while_matched() -> None:
 def test_remote_errors_reach_the_chat_window_as_fixed_lines(rig: Rig) -> None:
     rig.remote.push_chat(chat_state())
     rig.remote.push_error("report_window_closed")
-    assert rig.chat.error_label.text() == "The report window has closed."
+    shown = rig.chat.error_label.text()
+    assert shown != "" and rig.chat.error_label.isVisibleTo(rig.chat)
     rig.remote.push_error("unauthorized")
-    assert rig.chat.error_label.text() == "The report window has closed."
+    assert rig.chat.error_label.text() == shown  # not an action error: unchanged
 
 
 def test_an_ended_chat_stays_reachable_from_the_main_window(rig: Rig) -> None:

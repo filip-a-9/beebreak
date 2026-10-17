@@ -49,12 +49,16 @@ def _run(
     args: list[str],
     tmp_path: Path,
     bin_dir: Path | None = None,
+    project: str | None = "breakroom-test",
     **extra: str,
 ) -> subprocess.CompletedProcess[str]:
     import base64
 
+    base_env = {k: v for k, v in os.environ.items() if k != "COMPOSE_PROJECT_NAME"}
+    if project is not None:
+        base_env["COMPOSE_PROJECT_NAME"] = project
     env = {
-        **os.environ,
+        **base_env,
         "PATH": f"{bin_dir}:{os.environ['PATH']}" if bin_dir else os.environ["PATH"],
         "FAKE_LOG": str(tmp_path / "docker.log"),
         "FAKE_RESTORED": str(tmp_path / "restored.bin"),
@@ -78,6 +82,26 @@ def test_scripts_are_valid_bash_and_executable(script: Path) -> None:
     assert script.stat().st_mode & stat.S_IXUSR
     result = subprocess.run(["bash", "-n", str(script)], capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+# --- unnamed compose project ---------------------------------------------------
+
+
+@pytest.mark.parametrize("project", [None, ""])
+@pytest.mark.parametrize("script", [BACKUP, RESTORE])
+def test_scripts_refuse_an_unnamed_compose_project_before_any_docker_call(
+    tmp_path: Path, fake_docker: Path, script: Path, project: str | None
+) -> None:
+    dump = tmp_path / "x.dump"
+    dump.write_bytes(DUMP_BYTES)
+    args = ["--out-dir", str(tmp_path / "out")] if script == BACKUP else [str(dump)]
+    if script == RESTORE:
+        args.append("--force")
+    result = _run(script, args, tmp_path, fake_docker, project=project)
+    assert result.returncode != 0
+    assert result.stderr.strip()
+    assert _calls(tmp_path) == []
+    assert not (tmp_path / "out").exists()
 
 
 # --- backup ------------------------------------------------------------------

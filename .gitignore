@@ -11,3 +11,4 @@ reports/
 .pgdata/
 .pgdata.lock
 dist/
+backups/

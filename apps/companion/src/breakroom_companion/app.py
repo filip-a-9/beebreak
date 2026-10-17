@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QApplication
 from breakroom_companion.break_state import BreakPhase, BreakState
 from breakroom_companion.chat_state import ChatState
 from breakroom_companion.chat_window import ChatWindow
+from breakroom_companion.config import notify_interval_s
 from breakroom_companion.controller import Controller
 from breakroom_companion.credentials import default_credential_store
 from breakroom_companion.desktop_notify import DesktopNotifier
@@ -35,7 +36,6 @@ TICK_INTERVAL_MS = 1000
 EXIT_START_FAILED = 1
 EXIT_ALREADY_RUNNING = 2
 NOTIFY_TITLE = "Breakroom"
-NOTIFY_INTERVAL_S = 10.0  # at most one notification per chat in this time
 
 
 class BreakTracker:
@@ -250,7 +250,7 @@ def wire_chat(
 
     The window opens, without taking focus, once per new match id. A new peer
     message while the window is not active raises one notification per chat per
-    `NOTIFY_INTERVAL_S` that names the nickname only (rule 16).
+    `notify_interval_s()` that names the nickname only (rule 16).
     """
     if remote is None:
         return
@@ -277,7 +277,7 @@ def wire_chat(
     def notify(nickname: str) -> None:
         last = seen["notified"]
         now = clock()
-        if isinstance(last, float) and now - last < NOTIFY_INTERVAL_S:
+        if isinstance(last, float) and now - last < notify_interval_s():
             return
         seen["notified"] = now
         notifier.notify(NOTIFY_TITLE, f"New message from {safe_nickname(nickname)}")

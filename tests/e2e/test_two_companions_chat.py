@@ -405,15 +405,6 @@ def test_drop_of_a_for_longer_than_the_hold_ends_the_chat_disconnected(
     assert (row.status, row.end_reason) == ("ended", "disconnected")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FINDING: A was offline when the server ended the chat, so it never got "
-        "match.ended; its reconnect sync has no match and RemoteWorker reduces "
-        "that to Ended(None, None) -> 'ended'. The wire protocol carries no end "
-        "reason in a sync, so A cannot show 'The connection was lost.'"
-    ),
-)
 def test_the_dropped_side_also_sees_disconnected(
     qtbot: QtBot, make_pair: PairFactory
 ) -> None:

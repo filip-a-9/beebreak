@@ -13,6 +13,7 @@ WORKER_START_TIMEOUT_ENV = "BREAKROOM_WORKER_START_TIMEOUT_S"
 WORKER_STOP_TIMEOUT_ENV = "BREAKROOM_WORKER_STOP_TIMEOUT_S"
 PROBE_TIMEOUT_ENV = "BREAKROOM_PROBE_TIMEOUT_S"
 GC_INTERVAL_ENV = "BREAKROOM_GC_INTERVAL_S"
+NOTIFY_INTERVAL_ENV = "BREAKROOM_NOTIFY_INTERVAL_S"
 
 
 def _positive_seconds(name: str, default: float) -> float:
@@ -49,6 +50,11 @@ def probe_timeout_s() -> float:
 def gc_interval_s() -> float:
     """Seconds between the GUI thread's checks for due cyclic collections."""
     return _positive_seconds(GC_INTERVAL_ENV, 1.0)
+
+
+def notify_interval_s() -> float:
+    """Minimum seconds between desktop notifications for one chat."""
+    return _positive_seconds(NOTIFY_INTERVAL_ENV, 10.0)
 
 
 def _positive(name: str, default: int) -> int:

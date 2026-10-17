@@ -4,7 +4,7 @@ Both sides parse with these models only. Task metadata travels only inside
 OutboundPresence (presence.py), carried by QueueJoinRequest (spec §4 rule 13).
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import (
@@ -13,7 +13,9 @@ from pydantic import (
     ConfigDict,
     Field,
     RootModel,
+    SerializerFunctionWrapHandler,
     StringConstraints,
+    model_serializer,
 )
 
 # Re-exported: Consent moved to its own module to avoid an import cycle.
@@ -186,12 +188,15 @@ class ExtensionRequest(_Model):
 ReportReason = Literal["harassment", "spam", "sexual", "hate", "other"]
 
 
+MAX_REPORT_SEQS = 50  # ReportRequest.message_seqs length limit
+
+
 class ReportRequest(_Model):
     match_id: UUID
     reason: ReportReason
     # Normalized by the server, at most MAX_NOTE_CHARS after normalization.
     note: str | None = Field(default=None, max_length=2000)
-    message_seqs: tuple[Seq, ...] = Field(default=(), max_length=50)
+    message_seqs: tuple[Seq, ...] = Field(default=(), max_length=MAX_REPORT_SEQS)
 
 
 class QueueSnapshot(_Model):
@@ -256,6 +261,19 @@ class WsSync(_Model):
     server_time: AwareDatetime
     queue: QueueEntryView | None
     match: MatchView | None
+    # How the user's latest chat ended, when `match` is None and one has ended.
+    # `ended_match_id` names that chat, so a companion applies the reason only
+    # to the chat it actually had. Both are omitted from the wire when None.
+    ended_reason: MatchEndReason | None = None
+    ended_match_id: UUID | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_ended_fields(self, handler: SerializerFunctionWrapHandler) -> Any:
+        data = handler(self)
+        for key in ("ended_reason", "ended_match_id"):
+            if data.get(key) is None:
+                data.pop(key, None)
+        return data
 
 
 class WsQueueJoined(_Model):

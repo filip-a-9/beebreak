@@ -54,10 +54,6 @@ from breakroom_shared.api import (
     TokenPair,
 )
 
-# A chat message is at most 1000 characters after normalization, but a client
-# that JSON-escapes non-ASCII (ensure_ascii) sends up to 12 bytes per character.
-MAX_BODY_BYTES = 16 * 1024
-
 access_log = logging.getLogger("breakroom_server.access")
 _log = logging.getLogger(__name__)
 
@@ -256,7 +252,7 @@ def create_app(
     app.state.mailer = mailer
     app.state.limiters = limiters
 
-    app.add_middleware(BodyLimitMiddleware, max_bytes=MAX_BODY_BYTES)
+    app.add_middleware(BodyLimitMiddleware, max_bytes=config.max_body_bytes)
     app.add_middleware(UnhandledErrorMiddleware)
     app.add_middleware(AccessLogMiddleware)
 

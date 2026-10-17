@@ -174,3 +174,44 @@ def test_auth_retention_zero_rejected_when_constructed(name: str) -> None:
             secret=b"s" * 32,
             **cast("dict[str, Any]", {name: 0}),
         )
+
+
+SERVER_LIMIT_DEFAULTS = {
+    "max_page": 100,
+    "extension_attempts": 4,
+    "max_body_bytes": 16 * 1024,
+    "purge_interval_s": 60,
+}
+
+
+def test_server_limit_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    config = ServerConfig.from_env()
+    for name, value in SERVER_LIMIT_DEFAULTS.items():
+        assert getattr(config, name) == value
+
+
+@pytest.mark.parametrize("name", sorted(SERVER_LIMIT_DEFAULTS))
+def test_server_limits_read_from_env(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    _env(monkeypatch)
+    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", "7")
+    assert getattr(ServerConfig.from_env(), name) == 7
+
+
+@pytest.mark.parametrize("name", sorted(SERVER_LIMIT_DEFAULTS))
+@pytest.mark.parametrize("value", ["0", "-1", "x"])
+def test_server_limits_must_be_positive(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    _env(monkeypatch)
+    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", value)
+    with pytest.raises(ValueError):
+        ServerConfig.from_env()
+    with pytest.raises(ValueError):
+        ServerConfig(
+            database_url="sqlite://",
+            secret=b"s" * 32,
+            **cast("dict[str, Any]", {name: 0}),
+        )

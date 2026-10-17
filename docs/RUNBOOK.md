@@ -66,6 +66,13 @@ companion. `invite list` shows state, `invite revoke <id>` ends an invite.
 
 ## Backup schedule
 
+**Both scripts need `COMPOSE_PROJECT_NAME` set to a non-empty value.** Without
+it they exit with status 2 before any container is touched: the directory-derived
+default is the development stack's project, and `restore.sh --force` drops the
+database it finds. Production examples below use `breakroom`; use whatever
+name your production stack was started with (`dc ps` shows it as the prefix of the
+container names). The drill uses its own name, `breakroom-m6drill`.
+
 `scripts/backup.sh` writes `pg_dump --format=custom` of the `postgres` service
 to `backups/breakroom-<UTC time>.dump` (mode 0600) and prints size and SHA-256.
 Add `--age-recipient <key>` or `--gpg-recipient <id>` to encrypt (the dump is
@@ -79,7 +86,7 @@ Cron example (daily at 03:15, encrypted, keeping 14 days; the 14 is an example,
 not a decided policy):
 
 ```cron
-15 3 * * * cd /srv/breakroom && scripts/backup.sh --age-recipient age1... >>/var/log/breakroom-backup.log 2>&1 && find backups -name 'breakroom-*' -mtime +14 -delete
+15 3 * * * cd /srv/breakroom && COMPOSE_PROJECT_NAME=breakroom scripts/backup.sh --age-recipient age1... >>/var/log/breakroom-backup.log 2>&1 && find backups -name 'breakroom-*' -mtime +14 -delete
 ```
 
 Check the log now and then: a backup that silently stops is found on the day
@@ -95,6 +102,7 @@ Decide the backup lifetime on purpose, and after any restore see
 ## Restore
 
 ```sh
+export COMPOSE_PROJECT_NAME=breakroom   # required; see "Backup schedule"
 scripts/restore.sh backups/breakroom-<time>.dump            # into a fresh database
 scripts/restore.sh backups/breakroom-<time>.dump.age --age-identity key.txt
 scripts/restore.sh backups/breakroom-<time>.dump --force    # replace a database in use
@@ -122,12 +130,17 @@ erasure request (`account delete`) since then, run the deletion again.
 ### Restore drill
 
 Done once, and repeated after any change to the scripts, the database layout
-or the hosting:
+or the hosting. Run it under its own project name, never the development or
+production one (`down -v` destroys that project's database volume). Every
+command below runs with `COMPOSE_PROJECT_NAME=breakroom-m6drill` and
+`dc` pointed at the drill's compose file; `docs/M6_CHECKLIST.md` M6-C13 has the
+guarded `dcd` and `drill` shell functions that do both:
 
 1. Start the stack and sign in once; note a refresh token.
-2. `scripts/backup.sh`.
-3. `dc down -v` (destroys the database volume).
-4. `scripts/restore.sh backups/<file>`.
+2. `COMPOSE_PROJECT_NAME=breakroom-m6drill scripts/backup.sh`.
+3. `COMPOSE_PROJECT_NAME=breakroom-m6drill dc down -v` (destroys the drill's
+   database volume).
+4. `COMPOSE_PROJECT_NAME=breakroom-m6drill scripts/restore.sh backups/<file>`.
 5. `dc up -d`; `curl .../v1/health` returns 200.
 6. Sign in again with the same email, and refresh the token noted in step 1.
    Both must work.

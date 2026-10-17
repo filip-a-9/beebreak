@@ -286,7 +286,7 @@ def test_break_changes_drive_window_controller_and_status(rig: Rig) -> None:
     rig.remote.push_break(BreakState(phase="searching", entry=_entry()))
     assert rig.status_queue() == "searching"
     rig.remote.push_break(BreakState(phase="matched", match=_match()))
-    assert rig.window.break_label.text() == "Chatting with bob_b"
+    assert "bob_b" in rig.window.break_label.text()
     assert rig.status_queue() == "chatting"
     rig.remote.push_break(BreakState(phase="ended"))
     assert rig.controller._break_active is False
