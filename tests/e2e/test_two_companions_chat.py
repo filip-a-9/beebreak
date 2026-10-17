@@ -31,7 +31,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -49,7 +49,7 @@ from breakroom_companion.remote_config import RemoteConfig
 from breakroom_server.models import Block, Match, Report, ReportMessage, User
 from breakroom_shared.api import Consent
 from breakroom_shared.presence import OutboundPresence
-from tests.e2e_support.server import LiveServer
+from tests.e2e_support.server import JumpClock, LiveServer
 
 pytest_plugins = ["tests.e2e_support.server"]  # live_server fixtures
 
@@ -339,10 +339,12 @@ def test_forty_interleaved_messages_give_identical_transcripts(
 def test_short_drop_of_a_keeps_the_chat_live_and_a_catches_up(
     qtbot: QtBot, make_pair: PairFactory
 ) -> None:
-    # Hold of 5 s: the real outage is the 0.3 s sleep plus Bob's three POST
-    # round trips plus Ada's reconnect (backoff <= 0.2 s), so a loaded machine
-    # still has several seconds before the server could end the chat.
-    server, ada, bob = make_pair(proxy_a=True, chat_disconnect_s=5, **LONG_TTL)
+    # The server clock never moves in this test, so the 60 s hold cannot run
+    # out however slow the machine is; the drop lasts until Ada's companion has
+    # seen it (`offline`) and Bob's messages have gone through.
+    server, ada, bob = make_pair(
+        proxy_a=True, chat_disconnect_s=60, clock=JumpClock(), **LONG_TTL
+    )
     assert ada.proxy is not None
     bob.worker.send_message("before")
     qtbot.waitUntil(lambda: len(ada.rec.chat.messages) == 1, timeout=WAIT_MS)
@@ -352,7 +354,7 @@ def test_short_drop_of_a_keeps_the_chat_live_and_a_catches_up(
     for i in range(3):
         bob.worker.send_message(f"during-{i}")
     qtbot.waitUntil(lambda: len(bob.rec.chat.messages) == 4, timeout=WAIT_MS)
-    time.sleep(0.3)
+    qtbot.waitUntil(lambda: "offline" in ada.rec.states[marks:], timeout=WAIT_MS)
     ada.proxy.restore()
 
     qtbot.waitUntil(
@@ -413,15 +415,23 @@ def test_the_dropped_side_also_sees_disconnected(
     assert ada.rec.chat.ended == "disconnected"
 
 
+def _no_end_within(qtbot: QtBot, seconds: float, *peers: Peer) -> None:
+    """Nobody's chat ends during `seconds` of real time (the sweep runs every
+    0.05 s, so this spans many sweeps)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        assert all(p.rec.chat.ended is None for p in peers)
+        qtbot.wait(50)
+
+
 def test_accepted_extension_moves_the_end_declined_one_does_not(
     qtbot: QtBot, make_pair: PairFactory
 ) -> None:
     # Accepted: the chat must outlive the original deadline and end after the
-    # extended one. Server time never runs early, so the lower bounds are tight
-    # (50 ms for clock rounding); the upper bounds are loose.
-    # TTL 8 s from match creation leaves ample time for request and accept
-    # (a few HTTP round trips); the extension adds 4 s.
-    server, ada, bob = make_pair(match_ttl_s=8, chat_extension_s=EXT_ACCEPT_S)
+    # extended one. The server reads a JumpClock, so the test moves the server's
+    # time to just past each deadline instead of waiting for it.
+    clock = JumpClock()
+    server, ada, bob = make_pair(clock=clock, **LONG_TTL, chat_extension_s=EXT_ACCEPT_S)
     original = ada.rec.chat.status.ends_at if ada.rec.chat.status else None
     assert original is not None
     ada.worker.request_extension()
@@ -444,6 +454,14 @@ def test_accepted_extension_moves_the_end_declined_one_does_not(
         EXT_ACCEPT_S, abs=0.01
     )
 
+    # Past the original deadline, before the extended one: the chat lives on.
+    clock.jump_to(original + timedelta(seconds=1))
+    _no_end_within(qtbot, 0.5, ada, bob)
+    assert _match(server, ada.rec.chat).status == "active"
+
+    # Past the extended deadline: the sweep ends it as expired.
+    jumped_at = time.time()
+    clock.jump_to(extended + timedelta(seconds=0.1))
     qtbot.waitUntil(
         lambda: ada.rec.chat.ended is not None and bob.rec.chat.ended is not None,
         timeout=WAIT_MS,
@@ -452,22 +470,23 @@ def test_accepted_extension_moves_the_end_declined_one_does_not(
     for peer in (ada, bob):
         end = peer.rec.ended_at()
         assert end is not None
-        assert end >= extended.timestamp() - 0.05  # not before the extended deadline
-        # in particular, not at the old one
-        assert end >= original.timestamp() + EXT_ACCEPT_S - 0.1
+        assert end >= jumped_at  # not before the extended deadline was reached
     row = _match(server, ada.rec.chat)
     assert row.ended_at is not None and row.end_reason == "expired"
-    assert (
-        row.ended_at.replace(tzinfo=UTC) - extended
-    ).total_seconds() < 5  # ended by the sweep, soon after the deadline
+    ended = row.ended_at.replace(tzinfo=UTC)
+    assert ended >= extended  # never early
+    assert (ended - extended).total_seconds() < 5  # soon after the deadline
 
 
 def test_declined_extension_ends_at_the_original_deadline(
     qtbot: QtBot, make_pair: PairFactory
 ) -> None:
-    # TTL 8 s leaves ample time to request and decline; a 6 s extension makes
-    # the "no extension applied" bound below wide (see there).
-    server, ada, bob = make_pair(match_ttl_s=8, chat_extension_s=EXT_DECLINE_S)
+    # A 6 s extension, were it applied, would keep the chat alive well past the
+    # jump to just after the original deadline below.
+    clock = JumpClock()
+    server, ada, bob = make_pair(
+        clock=clock, **LONG_TTL, chat_extension_s=EXT_DECLINE_S
+    )
     assert ada.rec.chat.status is not None
     original = ada.rec.chat.status.ends_at
     ada.worker.request_extension()
@@ -485,7 +504,9 @@ def test_declined_extension_ends_at_the_original_deadline(
         timeout=WAIT_MS,
     )
     assert ada.rec.chat.status.ends_at == original
+    _no_end_within(qtbot, 0.3, ada, bob)  # the deadline has not been reached yet
 
+    clock.jump_to(original + timedelta(seconds=0.1))
     qtbot.waitUntil(
         lambda: ada.rec.chat.ended is not None and bob.rec.chat.ended is not None,
         timeout=WAIT_MS,
@@ -495,7 +516,7 @@ def test_declined_extension_ends_at_the_original_deadline(
     assert row.ended_at is not None and row.extensions_used == 0
     lateness = (row.ended_at.replace(tzinfo=UTC) - original).total_seconds()
     # Never early; an applied extension would add 6 s, so ending less than 5 s
-    # after the deadline (100 sweeps of slack) shows none was applied.
+    # after the deadline shows none was applied.
     assert -0.05 <= lateness < EXT_DECLINE_S - 1
 
 

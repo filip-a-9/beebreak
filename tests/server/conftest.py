@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, inspect, select, text
 from sqlalchemy.orm import sessionmaker
 
 from breakroom_server.app import create_app
@@ -91,15 +91,50 @@ def database_url(tmp_path: Path) -> str:
     return f"sqlite:///{tmp_path / 'breakroom-test.db'}"
 
 
+def _reset_schema(engine: Engine) -> None:
+    """A database with the model tables, all empty, and identities restarted.
+
+    SQLite gets a fresh temp file per test, so it only needs `create_all`. On
+    PostgreSQL the schema is built once and each test truncates it: dropping
+    and recreating every table per test dominated the directory's time. Real
+    commits stay possible (the race tests use several connections). If another
+    test (the migration tests) left the tables missing or different, rebuild.
+    """
+    if engine.dialect.name != "postgresql":
+        Base.metadata.create_all(engine)
+        return
+    wanted = {table.name for table in Base.metadata.sorted_tables}
+    with engine.connect() as conn:
+        present = set(inspect(conn).get_table_names())
+    if not wanted <= present or "alembic_version" in present:
+        Base.metadata.drop_all(engine)
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+        Base.metadata.create_all(engine)
+        return
+    names = ", ".join(f'"{name}"' for name in sorted(wanted))
+    with engine.begin() as conn:
+        conn.execute(text(f"TRUNCATE {names} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _drop_schema_when_done() -> Iterator[None]:
+    yield
+    if TEST_DATABASE_URL is not None and "postgres" in TEST_DATABASE_URL:
+        engine = make_engine(TEST_DATABASE_URL)
+        try:
+            Base.metadata.drop_all(engine)
+        finally:
+            engine.dispose()
+
+
 @pytest.fixture
 def engine(database_url: str) -> Iterator[Engine]:
     engine = make_engine(database_url)
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    _reset_schema(engine)
     try:
         yield engine
     finally:
-        Base.metadata.drop_all(engine)
         engine.dispose()
 
 

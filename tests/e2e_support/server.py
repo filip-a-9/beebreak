@@ -1,9 +1,9 @@
 """A real Breakroom server on a loopback port, for end-to-end tests (rule 11).
 
-`create_app` on a temp SQLite file, RecordingMailer, real clock, run by uvicorn
-in a thread on 127.0.0.1:0. `LiveServer.restart()` brings the same app back on
-the same port and database. Request counting lets tests prove a client stayed
-off the network.
+`create_app` on a temp SQLite file, RecordingMailer, real clock (or a `JumpClock`), run
+by uvicorn in a thread on 127.0.0.1:0. `LiveServer.restart()` brings the same app back
+on the same port and database. Request counting lets tests prove a client stayed off the
+network.
 
 Use the `live_server` fixture (defaults), or `server_factory(**config)` to
 override ServerConfig fields such as `access_ttl_s`. Import the fixtures into a
@@ -15,7 +15,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,26 @@ from breakroom_server.tokens import new_code
 from tests.server.conftest import TEST_SECRET, add_invite
 
 START_TIMEOUT_S = 10.0
+
+
+class JumpClock:
+    """The real clock plus an offset that only a test moves, forward.
+
+    Lets an end-to-end test reach a server deadline (a match's end, an
+    extension's end) without waiting for it, while the server, the sweep and the
+    database all keep running for real; the server just reads this clock.
+    """
+
+    def __init__(self) -> None:
+        self._offset_s = 0.0
+
+    def __call__(self) -> datetime:
+        return datetime.now(UTC) + timedelta(seconds=self._offset_s)
+
+    def jump_to(self, when: datetime) -> None:
+        """Make `when` the current time, if it is in the future."""
+        ahead = (when - datetime.now(UTC)).total_seconds()
+        self._offset_s = max(self._offset_s, ahead)
 
 
 class _Counting:
@@ -56,6 +76,7 @@ class LiveServer:
     session_factory: SessionFactory
     requests: list[str] = field(default_factory=list)
     port: int = 0
+    clock: Callable[[], datetime] | None = None
     _server: uvicorn.Server | None = None
     _thread: threading.Thread | None = None
 
@@ -77,7 +98,7 @@ class LiveServer:
         raise AssertionError("no sign-in code was sent")
 
     def _run(self) -> None:
-        app: FastAPI = create_app(self.config, mailer=self.mailer)
+        app: FastAPI = create_app(self.config, mailer=self.mailer, clock=self.clock)
         config = uvicorn.Config(
             _Counting(app, self.requests),
             host="127.0.0.1",
@@ -124,6 +145,7 @@ class LiveServer:
 
 
 def start_server(tmp_path: Path, **overrides: Any) -> LiveServer:
+    clock = overrides.pop("clock", None)
     url = f"sqlite:///{tmp_path / 'live.db'}"
     engine = make_engine(url)
     Base.metadata.create_all(engine)
@@ -138,6 +160,7 @@ def start_server(tmp_path: Path, **overrides: Any) -> LiveServer:
         config=ServerConfig(**params),
         mailer=RecordingMailer(),
         session_factory=sessionmaker(engine, expire_on_commit=False),
+        clock=clock,
     )
     live.start()
     return live
