@@ -90,8 +90,28 @@ def _check_0002_to_0003_round_trip(url: str) -> None:
     try:
         assert not M5_TABLES & set(inspect(engine).get_table_names())
         sessions = sessionmaker(engine, expire_on_commit=False)
-        a = add_ready_user(sessions, "Ada")
-        b = add_ready_user(sessions, "Bob")
+        # Raw rows: the ORM model already has columns that revision 0002 lacks.
+        users = sa.table(
+            "users",
+            sa.column("id", sa.Uuid()),
+            sa.column("email_canonical", sa.String()),
+            sa.column("status", sa.String()),
+            sa.column("created_at", sa.DateTime(timezone=True)),
+        )
+        ids = [uuid.uuid4(), uuid.uuid4()]
+        with engine.begin() as conn:
+            conn.execute(
+                sa.insert(users),
+                [
+                    {
+                        "id": uid,
+                        "email_canonical": f"u{i}@example.com",
+                        "status": "active",
+                        "created_at": START_TIME,
+                    }
+                    for i, uid in enumerate(ids)
+                ],
+            )
         match_id = uuid.uuid4()
         matches = sa.table(
             "matches",
@@ -117,10 +137,7 @@ def _check_0002_to_0003_round_trip(url: str) -> None:
             )
             conn.execute(
                 sa.insert(participants),
-                [
-                    {"match_id": match_id, "user_id": u.user_id, "active": True}
-                    for u in (a, b)
-                ],
+                [{"match_id": match_id, "user_id": uid, "active": True} for uid in ids],
             )
 
         command.upgrade(config, "head")
@@ -353,8 +370,22 @@ def _check_0003_to_0004_round_trip(url: str) -> None:
     engine = make_engine(url)
     try:
         assert "deleted_account_tombstones" not in inspect(engine).get_table_names()
-        sessions = sessionmaker(engine, expire_on_commit=False)
-        add_ready_user(sessions, "Ada")
+        old_users = sa.table(  # the ORM model has columns revision 0003 lacks
+            "users",
+            sa.column("id", sa.Uuid()),
+            sa.column("email_canonical", sa.String()),
+            sa.column("status", sa.String()),
+            sa.column("created_at", sa.DateTime(timezone=True)),
+        )
+        with engine.begin() as conn:
+            conn.execute(
+                sa.insert(old_users).values(
+                    id=uuid.uuid4(),
+                    email_canonical="ada@example.com",
+                    status="active",
+                    created_at=START_TIME,
+                )
+            )
 
         command.upgrade(config, "head")
         assert _diff(url) == []

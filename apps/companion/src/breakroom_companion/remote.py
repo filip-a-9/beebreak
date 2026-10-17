@@ -67,6 +67,7 @@ from breakroom_shared.api import (
     WS_CLOSE,
     Consent,
     ExtensionAction,
+    GitHubStartResponse,
     MatchEndReason,
     MatchView,
     Me,
@@ -76,6 +77,7 @@ from breakroom_shared.api import (
     ReportReason,
     ReportRequest,
     SendMessageRequest,
+    SessionResponse,
     TokenPair,
     WsChatMessage,
     WsChatStatus,
@@ -97,6 +99,8 @@ _log = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 REFRESH_LEAD_S = 60.0
+# Consecutive network failures a waiting GitHub sign-in survives.
+GITHUB_POLL_RETRIES = 3
 # The server's default access lifetime; the fallback when our clock disagrees.
 NOMINAL_ACCESS_TTL_S = 900.0
 MIN_REFRESH_DELAY_S = 0.05
@@ -124,6 +128,8 @@ class RemoteWorker(QObject):
     state_changed = Signal(str)  # ConnectionState
     me_changed = Signal(object)  # Me | None
     error = Signal(str)  # ErrorCode, "network" or "replaced"
+    methods_changed = Signal(object)  # AuthMethods (GitHub sign-in)
+    github_started = Signal(object)  # GitHubStartResponse: code to show
     break_changed = Signal(object)  # BreakState (M4-05)
     chat_changed = Signal(object)  # ChatState (M5-05)
 
@@ -149,6 +155,7 @@ class RemoteWorker(QObject):
         self._refresh_token: str | None = None
         self._refresh_after_s = MIN_REFRESH_DELAY_S
         self._challenge_id: UUID | None = None
+        self._github_task: asyncio.Task[None] | None = None
         self._break = BreakState()
         self._join_in_flight = False
         self._frames_seen = 0  # bumped per applied queue/match/sync frame
@@ -171,6 +178,15 @@ class RemoteWorker(QObject):
 
     def verify(self, code: str, device_name: str) -> None:
         self._submit(self._verify(code, device_name))
+
+    def fetch_methods(self) -> None:
+        """Ask the server which sign-in methods it offers (`methods_changed`)."""
+        self._submit(self._fetch_methods())
+
+    def begin_github_sign_in(self, device_name: str) -> None:
+        """Start GitHub sign-in: `github_started` carries the code to show; the
+        worker then polls the server until the user approves or it fails."""
+        self._submit(self._begin_github(device_name))
 
     def set_nickname(self, nickname: str) -> None:
         self._submit(self._update_me(lambda api, tok: api.set_nickname(tok, nickname)))
@@ -325,6 +341,7 @@ class RemoteWorker(QObject):
             self._emit_error("network")
 
     async def _shutdown(self) -> None:
+        await self._stop_github()
         await self._cancel_chat_tasks()
         await self._cancel_connection()
         if self._api is not None:
@@ -756,6 +773,83 @@ class RemoteWorker(QObject):
             raise
         self._challenge_id = reply.challenge_id
 
+    async def _fetch_methods(self) -> None:
+        assert self._api is not None
+        try:
+            methods = await self._api.auth_methods()
+        except ApiError:
+            _log.warning("could not read the sign-in methods")
+            return  # the dialog keeps its email-only default
+        with contextlib.suppress(RuntimeError):
+            self.methods_changed.emit(methods)
+
+    async def _begin_github(self, device_name: str) -> None:
+        if self._signed_in:
+            return
+        assert self._api is not None
+        await self._stop_github()
+        self._challenge_id = None
+        self._set_state("signing_in")
+        try:
+            started = await self._api.github_start()
+        except ApiError:
+            self._set_state("signed_out")
+            raise
+        with contextlib.suppress(RuntimeError):
+            self.github_started.emit(started)
+        self._github_task = asyncio.create_task(self._github_poll(started, device_name))
+
+    async def _stop_github(self) -> None:
+        task, self._github_task = self._github_task, None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _github_poll(
+        self, started: GitHubStartResponse, device_name: str
+    ) -> None:
+        """Poll the server every `interval_s` until it signs us in or fails.
+
+        Runs outside the command lock so a sign-out can cancel it. Transient
+        network failures are retried a few times; any other failure ends it.
+        """
+        assert self._api is not None
+        interval = float(started.interval_s)
+        deadline = asyncio.get_running_loop().time() + started.expires_in_s
+        failures = 0
+        try:
+            while True:
+                await asyncio.sleep(max(1.0, interval))
+                if asyncio.get_running_loop().time() > deadline:
+                    raise ApiError("expired")
+                try:
+                    reply = await self._api.github_poll(
+                        started.challenge_id, device_name
+                    )
+                except ApiError as exc:
+                    if exc.code != "network" or failures >= GITHUB_POLL_RETRIES:
+                        raise
+                    failures += 1
+                    continue
+                failures = 0
+                if reply.session is not None:
+                    self._github_task = None
+                    await self._complete_sign_in(reply.session)
+                    return
+                assert reply.interval_s is not None
+                interval = float(reply.interval_s)
+        except ApiError as exc:
+            self._github_task = None
+            self._set_state("signed_out")
+            self._emit_error(exc.code)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _log.warning("GitHub sign-in failed")
+            self._github_task = None
+            self._set_state("signed_out")
+            self._emit_error("network")
+
     async def _verify(self, code: str, device_name: str) -> None:
         assert self._api is not None
         if self._signed_in or self._challenge_id is None:
@@ -769,6 +863,10 @@ class RemoteWorker(QObject):
                 self._set_state("signed_out")
             raise
         self._challenge_id = None
+        await self._complete_sign_in(session)
+
+    async def _complete_sign_in(self, session: SessionResponse) -> None:
+        """Keep the new login: adopt, persist, tell the UI, connect."""
         self._adopt(session.tokens)
         try:
             await self._persist(session.tokens)  # persist first, then tell the UI
@@ -879,6 +977,7 @@ class RemoteWorker(QObject):
     async def _sign_out(self) -> None:
         if not self._signed_in:
             # Signing in but not finished: just abandon it.
+            await self._stop_github()
             self._challenge_id = None
             self._set_state("signed_out")
             return

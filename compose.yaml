@@ -59,6 +59,7 @@ services:
       BREAKROOM_SERVER_SECRET: ${BREAKROOM_SERVER_SECRET:?set BREAKROOM_SERVER_SECRET in .env}
       BREAKROOM_SMTP_HOST: mailpit
       BREAKROOM_SMTP_PORT: "1025"
+      BREAKROOM_GITHUB_CLIENT_ID: ${BREAKROOM_GITHUB_CLIENT_ID:-}
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped

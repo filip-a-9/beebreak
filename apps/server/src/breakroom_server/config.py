@@ -8,7 +8,9 @@ import base64
 import binascii
 import ipaddress
 import os
+import re
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from sqlalchemy.engine import make_url
 
@@ -66,6 +68,22 @@ def _log_format() -> str:
     if value not in LOG_FORMATS:
         raise ValueError("BREAKROOM_LOG_FORMAT must be text or json")
     return value
+
+
+GITHUB_CLIENT_ID_RE = re.compile(r"[A-Za-z0-9._-]{1,100}")
+
+
+def _base_url(name: str, default: str) -> str:
+    """An http(s) base URL without a trailing slash. Never echoes the value."""
+    value = os.environ.get(name, default).rstrip("/")
+    _check_base_url(name, value)
+    return value
+
+
+def _check_base_url(name: str, value: str) -> None:
+    parts = urlsplit(value)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise ValueError(f"{name} must be an http or https URL")
 
 
 def _required(name: str) -> str:
@@ -196,6 +214,15 @@ class ServerConfig:
     matches_per_window_user: int = 10  # matches a user may join per rate_window_s
     # Logging (M6-08): text | json.
     log_format: str = "text"
+    # GitHub sign-in (device flow). Empty client id = GitHub sign-in off. The
+    # base URLs are settings so tests can point them at a local fake.
+    github_client_id: str = ""
+    github_oauth_url: str = "https://github.com"
+    github_api_url: str = "https://api.github.com"
+    github_timeout_s: float = 10
+    # Polls of /v1/auth/github/poll per address per rate_window_s. A waiting
+    # companion polls every ~5 s, so this is far above the other limits.
+    rate_github_poll_ip: int = 1200
     # Server limits that were literals (backlog fixes).
     max_page: int = 100  # messages per page
     extension_attempts: int = 4  # retries of an extension action under contention
@@ -205,6 +232,15 @@ class ServerConfig:
     max_body_bytes: int = 16 * 1024
     # The matchmaker purge runs at most this often (injected-clock seconds).
     purge_interval_s: int = 60
+
+    @property
+    def email_enabled(self) -> bool:
+        """Email codes are on unless the SMTP host is empty (and not recording)."""
+        return self.mailer == "record" or bool(self.smtp_host.strip())
+
+    @property
+    def github_enabled(self) -> bool:
+        return bool(self.github_client_id)
 
     def __post_init__(self) -> None:
         if len(self.secret) < MIN_SECRET_BYTES:
@@ -252,6 +288,8 @@ class ServerConfig:
             "extension_attempts",
             "max_body_bytes",
             "purge_interval_s",
+            "github_timeout_s",
+            "rate_github_poll_ip",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -271,6 +309,17 @@ class ServerConfig:
             raise ValueError("SMTP username and password must be set together")
         if self.smtp_username is not None and self.smtp_tls == "none":
             raise ValueError("SMTP credentials need BREAKROOM_SMTP_TLS")
+        if self.github_client_id and not GITHUB_CLIENT_ID_RE.fullmatch(
+            self.github_client_id
+        ):
+            raise ValueError("BREAKROOM_GITHUB_CLIENT_ID is not a valid client id")
+        _check_base_url("BREAKROOM_GITHUB_OAUTH_URL", self.github_oauth_url)
+        _check_base_url("BREAKROOM_GITHUB_API_URL", self.github_api_url)
+        if not (self.email_enabled or self.github_enabled):
+            raise ValueError(
+                "no sign-in method is configured: set BREAKROOM_SMTP_HOST "
+                "(email codes) or BREAKROOM_GITHUB_CLIENT_ID (GitHub)"
+            )
         reject_weak_database_url(self.database_url)
         for value in (self.smtp_username, self.smtp_password):
             if value in EXAMPLE_VALUES:
@@ -336,6 +385,15 @@ class ServerConfig:
             rate_queue_read_user=_positive("BREAKROOM_RATE_QUEUE_READ_USER", 300),
             matches_per_window_user=_positive("BREAKROOM_MATCHES_PER_WINDOW_USER", 10),
             log_format=_log_format(),
+            github_client_id=os.environ.get("BREAKROOM_GITHUB_CLIENT_ID", "").strip(),
+            github_oauth_url=_base_url(
+                "BREAKROOM_GITHUB_OAUTH_URL", "https://github.com"
+            ),
+            github_api_url=_base_url(
+                "BREAKROOM_GITHUB_API_URL", "https://api.github.com"
+            ),
+            github_timeout_s=_positive_float("BREAKROOM_GITHUB_TIMEOUT_S", 10),
+            rate_github_poll_ip=_positive("BREAKROOM_RATE_GITHUB_POLL_IP", 1200),
             max_page=_positive("BREAKROOM_MAX_PAGE", 100),
             extension_attempts=_positive("BREAKROOM_EXTENSION_ATTEMPTS", 4),
             max_body_bytes=_positive("BREAKROOM_MAX_BODY_BYTES", 16 * 1024),

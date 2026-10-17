@@ -55,13 +55,13 @@ user.
 
 | What | Where stored | Who can read | Retention | Deletion |
 |---|---|---|---|---|
-| Account: canonical email, nickname, nickname skeleton, status, created time | `users` | Operator. Other users see only the nickname (while matched) | Until the account is deleted | `breakroom-admin account delete` |
+| Account: canonical email (email accounts) or numeric GitHub user id (GitHub accounts; never both), nickname, nickname skeleton, status, created time | `users` | Operator. Other users see only the nickname (while matched) | Until the account is deleted | `breakroom-admin account delete` |
 | Consent: version, time, three flags (category, stack tags, time bucket) | `user_preferences` | Operator | Until the account is deleted | `account delete` |
 | Devices: name, hashed access token, token expiry, revoked, created, last seen and connected times | `devices` | Operator | Until the account is deleted. Name is a generic default (`WSL device`) the user can edit before sign-in; the machine hostname is never sent | `account delete`; sign-out revokes the device but keeps the row |
 | Refresh tokens: SHA-256 hash, device, expiry, used time | `refresh_tokens` | Operator | Deleted 7 days after the token expires, used or not (`BREAKROOM_REFRESH_TOKEN_RETENTION_S`); an unexpired token is kept | Automatic purge |
-| Sign-in challenges: email, HMAC of the emailed code, attempts, expiry, consumed time | `auth_challenges` | Operator | Deleted 24 h after use or expiry (`BREAKROOM_CHALLENGE_RETENTION_S`). A code is valid for 10 minutes (`BREAKROOM_CODE_TTL_S`) | Automatic purge |
-| Beta invites: email, HMAC of the invite code, expiry, redeemed and revoked times, who redeemed | `beta_invites` | Operator | An invite is valid for 7 days (`BREAKROOM_INVITE_TTL_S`); expired, redeemed or revoked rows are deleted after 30 days (`BREAKROOM_INVITE_RETENTION_S`) | Automatic purge; `invite revoke` ends validity |
-| Account tombstone: keyed hash (HMAC under a subkey of the server secret) of the email of an account that was disabled for abuse and then deleted, created time. No email, no user id | `deleted_account_tombstones` | Operator (the hash cannot be reversed to an email without the secret and a guess) | 1 year (`BREAKROOM_TOMBSTONE_RETENTION_S`). Purpose: abuse prevention, so a banned person cannot return as a new user unnoticed. Lawful basis: legitimate interest, PROPOSED for the lawyer review | Automatic purge; `invite create --override-tombstone` removes it when the operator decides to invite that address |
+| Sign-in challenges: email, HMAC of the emailed code, attempts, expiry, consumed time; for GitHub sign-in no identity at all, only the GitHub device code (a secret valid for about 15 minutes, cleared when the challenge is used or refused; a never-polled one stays until the purge), the poll interval and next poll time. The GitHub access token is never stored | `auth_challenges` | Operator | Deleted 24 h after use or expiry (`BREAKROOM_CHALLENGE_RETENTION_S`). A code is valid for 10 minutes (`BREAKROOM_CODE_TTL_S`) | Automatic purge |
+| Beta invites: email and HMAC of the invite code, or a GitHub numeric id (no code, no username), expiry, redeemed and revoked times, who redeemed | `beta_invites` | Operator | An invite is valid for 7 days (`BREAKROOM_INVITE_TTL_S`); expired, redeemed or revoked rows are deleted after 30 days (`BREAKROOM_INVITE_RETENTION_S`) | Automatic purge; `invite revoke` ends validity |
+| Account tombstone: keyed hash (HMAC under a subkey of the server secret) of the email, or of `github:<id>`, of an account that was disabled for abuse and then deleted, created time. No email, no user id | `deleted_account_tombstones` | Operator (the hash cannot be reversed to an email without the secret and a guess) | 1 year (`BREAKROOM_TOMBSTONE_RETENTION_S`). Purpose: abuse prevention, so a banned person cannot return as a new user unnoticed. Lawful basis: legitimate interest, PROPOSED for the lawyer review | Automatic purge; `invite create --override-tombstone` removes it when the operator decides to invite that address |
 | Queue entries: presence id, task category, stack tags, time bucket (only while queued), status, times, device, match | `queue_entries` | Operator | The four presence columns are cleared the moment the entry ends. The row is deleted 30 days after it ends (`BREAKROOM_RETENTION_S`). A search lasts 90 s (`BREAKROOM_QUEUE_TTL_S`) | Automatic purge; `account delete` |
 | Matches (also the chat): times, end reason, shared tags and category, extension count and requester, last message number | `matches` | Operator. Both participants see the shared tags and category | Deleted 30 days after the chat ends (`BREAKROOM_RETENTION_S`) | Automatic purge |
 | Match participants: who took part, active flag, offline-since time, count of messages sent | `match_participants` | Operator | Deleted with the match, 30 days after it ends | Automatic purge; `account delete` |
@@ -76,6 +76,8 @@ restart). Server logs hold fixed strings, counts and opaque row ids, never an
 email, code, token, nickname, message body, report note, device name or IP
 address.
 
+GitHub sign-in (OAuth device flow, driven by the server): the server sends GitHub its client id (no scope, no secret), receives a device code and a user code, and later one access token. It uses the token for one `GET /user`, keeps only the numeric `id`, and drops the token; it is never written to the database or to a log, and never reaches the companion. The companion sees only the user code and the page to open. A GitHub username is used once at invite time to find the id and is not stored. Servers with an empty SMTP host send no email at all.
+
 Sign-in emails are sent through the configured SMTP host (Mailpit in local
 development), over STARTTLS or implicit TLS in production. SMTP credentials
 come only from the environment and are never logged. The provider for the hosted beta is to be named before the beta.
@@ -85,7 +87,7 @@ come only from the environment and are never logged. The provider for the hosted
 Email `<contact address>`. The operator exports or deletes an account with the
 admin CLI and answers within 14 days.
 
-- Export (`breakroom-admin account export`): your own rows as JSON, including
+- Export (`breakroom-admin account export <email>` or `--github-id <id>`): your own rows as JSON, including
   your own message bodies while they exist and your own messages copied into
   reports you filed. Reports filed against you appear
   only as a date, status and resolution date, with no reporter, note or

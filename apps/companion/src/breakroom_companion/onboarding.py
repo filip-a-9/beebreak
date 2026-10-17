@@ -6,7 +6,9 @@ echoed back and never logged. Server replies reach the dialog only as the
 worker's signals and error codes, each mapped to a fixed string below.
 
 Pages: 0 email + invite code, 1 code, 2 nickname (only if none yet),
-3 privacy choices, 4 done. Cancel after the code was verified leaves the user
+3 privacy choices, 4 done, 5 method choice and 6 GitHub (only when the server
+offers GitHub sign-in; the dialog starts on page 0 and moves on when the
+server's methods arrive). Cancel after the code was verified leaves the user
 signed in with setup incomplete; the account row offers "Finish setup".
 """
 
@@ -14,9 +16,11 @@ import contextlib
 import re
 from collections.abc import Callable
 from typing import get_args
+from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter, ValidationError
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, QUrl, Slot
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -35,10 +39,25 @@ from breakroom_companion.privacy_preview import PrivacyPreviewDialog
 from breakroom_companion.remote import DEFAULT_DEVICE_NAME, RemoteWorker
 from breakroom_companion.state_store import MAX_STACK_TAGS, normalize_tags
 from breakroom_companion.window import TAG_LABELS
-from breakroom_shared.api import Consent, DeviceName, Me, Nickname
+from breakroom_shared.api import (
+    AuthMethods,
+    Consent,
+    DeviceName,
+    GitHubStartResponse,
+    Me,
+    Nickname,
+)
 from breakroom_shared.presence import StackTag
 
-PAGE_EMAIL, PAGE_CODE, PAGE_NICKNAME, PAGE_PRIVACY, PAGE_DONE = range(5)
+(
+    PAGE_EMAIL,
+    PAGE_CODE,
+    PAGE_NICKNAME,
+    PAGE_PRIVACY,
+    PAGE_DONE,
+    PAGE_METHOD,
+    PAGE_GITHUB,
+) = range(7)
 
 TITLE = "Sign in to Breakroom"
 EMAIL_LABEL = "Email"
@@ -65,6 +84,16 @@ TAGS_INTRO = "Pick up to 5 tags. They stay on this computer until you start a br
 SHOW_SHARED_LABEL = "Show what is shared"
 SHOW_SENT_LABEL = "Show what is sent"
 DONE_TEXT = "You are all set."
+METHOD_INTRO = "How do you want to sign in?"
+GITHUB_BUTTON = "Sign in with GitHub"
+EMAIL_BUTTON = "Email me a code"
+GITHUB_INTRO = (
+    "GitHub will show you a short code to confirm. Breakroom learns only your "
+    "numeric GitHub user id, not your name, email or repositories."
+)
+GITHUB_CODE_INTRO = "Open GitHub and enter this code:"
+GITHUB_OPEN = "Open GitHub"
+GITHUB_WAITING = "Waiting for you to confirm on GitHub..."
 BACK, NEXT, SAVE, CLOSE, CANCEL = "Back", "Next", "Save", "Close", "Cancel"
 
 GENERIC_ERROR = "Something went wrong. Please try again."
@@ -84,11 +113,27 @@ ERROR_TEXT: dict[str, str] = {
     ),
     "invalid_request": "That was not accepted. Check what you typed.",
     "unauthorized": "You have been signed out. Please sign in again.",
+    "not_invited": "This GitHub account has not been invited to the beta yet.",
+    "access_denied": "The sign-in was declined on GitHub.",
+    "github_unavailable": (
+        "GitHub could not be reached, or is not set up for this server. "
+        "Try again later."
+    ),
+    "not_found": "That sign-in method is not available on this server.",
 }
 
 _EMAIL_RE = re.compile(r"[^@\s]{1,64}@[^@\s]+\.[^@\s]+")
 _NICKNAME = TypeAdapter(Nickname)
 _DEVICE_NAME = TypeAdapter(DeviceName)
+
+
+def safe_verification_uri(raw: str) -> bool:
+    """Only an https page (or plain http on this computer, for local testing)
+    may be opened from a server-supplied link."""
+    parts = urlsplit(raw)
+    if parts.scheme == "https":
+        return bool(parts.hostname)
+    return parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost")
 
 
 def valid_email(raw: str) -> bool:
@@ -162,9 +207,13 @@ class OnboardingDialog(QDialog):
         *,
         stack_tags: tuple[StackTag, ...] = (),
         save_tags: Callable[[tuple[StackTag, ...]], None] | None = None,
+        open_url: Callable[[str], bool] | None = None,
     ) -> None:
         super().__init__(parent)
         self.worker = worker
+        self._open_url = open_url or (lambda url: QDesktopServices.openUrl(QUrl(url)))
+        self.methods = AuthMethods(email=True, github=False)  # until the server says
+        self.github_start: GitHubStartResponse | None = None
         self._save_tags = save_tags
         self.setWindowTitle(TITLE)
         self.setWindowModality(Qt.WindowModality.WindowModal)
@@ -189,6 +238,18 @@ class OnboardingDialog(QDialog):
         self.device_name_edit = QLineEdit(DEFAULT_DEVICE_NAME)
         self.device_name_edit.setMaxLength(40)
         self.code_error = _error_label()
+        # page 5: method choice
+        self.github_choice_button = QPushButton(GITHUB_BUTTON)
+        self.email_choice_button = QPushButton(EMAIL_BUTTON)
+        # page 6: GitHub
+        self.github_device_name_edit = QLineEdit(DEFAULT_DEVICE_NAME)
+        self.github_device_name_edit.setMaxLength(40)
+        self.github_show_sent_button = QPushButton(SHOW_SENT_LABEL)
+        self.github_code_intro = _label(GITHUB_CODE_INTRO)
+        self.github_code_label = _label("")
+        self.github_open_button = QPushButton(GITHUB_OPEN)
+        self.github_waiting = _label(GITHUB_WAITING)
+        self.github_error = _error_label()
         # page 2
         self.nickname_edit = QLineEdit()
         self.nickname_edit.setMaxLength(24)
@@ -221,6 +282,7 @@ class OnboardingDialog(QDialog):
             PAGE_CODE: self.code_error,
             PAGE_NICKNAME: self.nickname_error,
             PAGE_PRIVACY: self.privacy_error,
+            PAGE_GITHUB: self.github_error,
         }
         self.stack = QStackedWidget()
         self.stack.addWidget(
@@ -265,6 +327,27 @@ class OnboardingDialog(QDialog):
             )
         )
         self.stack.addWidget(_page(self.done_label))
+        self.stack.addWidget(
+            _page(
+                _label(METHOD_INTRO),
+                self.github_choice_button,
+                self.email_choice_button,
+            )
+        )
+        self.stack.addWidget(
+            _page(
+                _label(GITHUB_INTRO),
+                _label(DEVICE_NAME_LABEL),
+                self.github_device_name_edit,
+                self.github_show_sent_button,
+                self.github_code_intro,
+                self.github_code_label,
+                self.github_open_button,
+                self.github_waiting,
+                self.github_error,
+            )
+        )
+        self._show_github_code(None)
 
         self.back_button = QPushButton(BACK)
         self.next_button = QPushButton(NEXT)
@@ -287,6 +370,12 @@ class OnboardingDialog(QDialog):
         ):
             edit.textChanged.connect(self._refresh)
         self.device_name_edit.textChanged.connect(self._device_name_changed)
+        self.github_device_name_edit.textChanged.connect(self._refresh)
+        self.github_device_name_edit.textChanged.connect(self._device_name_changed)
+        self.github_choice_button.clicked.connect(self._choose_github)
+        self.email_choice_button.clicked.connect(self._choose_email)
+        self.github_open_button.clicked.connect(self.open_verification)
+        self.github_show_sent_button.clicked.connect(self.show_preview)
         self.nickname_edit.textChanged.connect(self._refresh)
         for box in (self.category_box, self.stack_box, self.time_box):
             box.toggled.connect(self._consent_toggled)
@@ -301,9 +390,12 @@ class OnboardingDialog(QDialog):
         worker.state_changed.connect(self._on_state)
         worker.me_changed.connect(self._on_me)
         worker.error.connect(self._on_error)
+        worker.methods_changed.connect(self._on_methods)
+        worker.github_started.connect(self._on_github_started)
 
         if me is None:
             self._go(PAGE_EMAIL)
+            worker.fetch_methods()
         else:
             self._load_consent(me.consent)
             self._go(PAGE_NICKNAME if me.nickname is None else PAGE_PRIVACY)
@@ -390,7 +482,11 @@ class OnboardingDialog(QDialog):
             )
         if page == PAGE_NICKNAME:
             return valid_nickname(self.nickname_edit.text())
-        return True
+        if page == PAGE_GITHUB:
+            return self.github_start is None and valid_device_name(
+                self.github_device_name_edit.text()
+            )
+        return page != PAGE_METHOD  # there the two buttons decide
 
     def _refresh(self) -> None:
         page = self.page
@@ -401,7 +497,11 @@ class OnboardingDialog(QDialog):
         )
         # Back only where it can undo something: the code page returns to the
         # email page. Once the code is verified there is nothing to go back to.
-        self.back_button.setEnabled(page == PAGE_CODE and not self._busy)
+        self.back_button.setEnabled(
+            (page == PAGE_CODE and not self._busy)
+            or (page == PAGE_GITHUB and self.methods.email and not self._verified)
+        )
+        self.next_button.setVisible(page != PAGE_METHOD)
         self.cancel_button.setVisible(page != PAGE_DONE)
 
     # --- user actions ---
@@ -421,6 +521,13 @@ class OnboardingDialog(QDialog):
             self._begin_pending = True
             self.worker.begin_sign_in(self.email_edit.text().strip(), invite or None)
             self._go(PAGE_CODE)
+        elif page == PAGE_GITHUB:
+            self._started = True
+            self._begin_pending = True
+            self._busy = True
+            self.worker.begin_github_sign_in(
+                self.github_device_name_edit.text().strip()
+            )
         elif page == PAGE_CODE:
             self._begin_pending = False
             self._busy = True
@@ -443,11 +550,53 @@ class OnboardingDialog(QDialog):
         if self.page == PAGE_CODE and not self._busy:
             self.code_edit.clear()
             self._go(PAGE_EMAIL)
+        elif self.page == PAGE_GITHUB and self.methods.email and not self._verified:
+            self._abandon_github()
+            self._go(PAGE_METHOD if self.methods.github else PAGE_EMAIL)
+
+    @Slot()
+    def _choose_github(self) -> None:
+        self._go(PAGE_GITHUB)
+
+    @Slot()
+    def _choose_email(self) -> None:
+        self._go(PAGE_EMAIL)
+
+    def _abandon_github(self) -> None:
+        """Drop a GitHub attempt in progress (the worker stops polling)."""
+        if self._started and not self._verified:
+            self.worker.sign_out()
+        self._started = self._begin_pending = self._busy = False
+        self._show_github_code(None)
+
+    def _show_github_code(self, started: GitHubStartResponse | None) -> None:
+        self.github_start = started
+        shown = started is not None
+        self.github_code_intro.setVisible(shown)
+        self.github_code_label.setVisible(shown)
+        self.github_open_button.setVisible(shown)
+        self.github_waiting.setVisible(shown)
+        self.github_code_label.setText(started.user_code if started else "")
+
+    @Slot()
+    def open_verification(self) -> None:
+        """Open GitHub's code page. Only on this click, and only a safe link."""
+        started = self.github_start
+        if started is not None and safe_verification_uri(started.verification_uri):
+            self._open_url(started.verification_uri)
+
+    def _device_name(self) -> str:
+        edit = (
+            self.github_device_name_edit
+            if self.page == PAGE_GITHUB
+            else self.device_name_edit
+        )
+        return edit.text().strip()
 
     @Slot()
     def _device_name_changed(self) -> None:
         if self.preview is not None and not self._verified:
-            self.preview.set_device_name(self.device_name_edit.text().strip())
+            self.preview.set_device_name(self._device_name())
 
     @Slot()
     def _consent_toggled(self) -> None:
@@ -461,14 +610,14 @@ class OnboardingDialog(QDialog):
                 self.consent(),
                 self,
                 self.selected_tags(),
-                self.device_name_edit.text().strip(),
+                self._device_name(),
                 already_sent=self._verified,
             )
             self.preview.setModal(False)
         else:
             self.preview.set_consent(self.consent(), self.selected_tags())
             self.preview.set_device_name(
-                self.device_name_edit.text().strip(), already_sent=self._verified
+                self._device_name(), already_sent=self._verified
             )
         self.preview.show()
         self.preview.raise_()
@@ -488,6 +637,12 @@ class OnboardingDialog(QDialog):
         ):
             with contextlib.suppress(RuntimeError, TypeError):
                 signal.disconnect(slot)
+        for signal2, slot2 in (
+            (self.worker.methods_changed, self._on_methods),
+            (self.worker.github_started, self._on_github_started),
+        ):
+            with contextlib.suppress(RuntimeError, TypeError):
+                signal2.disconnect(slot2)
         if self.preview is not None:
             self.preview.close()
         super().done(result)
@@ -499,11 +654,44 @@ class OnboardingDialog(QDialog):
         self._state = state
 
     @Slot(object)
+    def _on_methods(self, methods: object) -> None:
+        if not isinstance(methods, AuthMethods):
+            return
+        self.methods = methods
+        untouched = (
+            self.page == PAGE_EMAIL
+            and not self._started
+            and not self._verified
+            and not self.email_edit.text()
+            and not self.invite_edit.text()
+        )
+        if untouched and methods.github:
+            self._go(PAGE_METHOD if methods.email else PAGE_GITHUB)
+        else:
+            self._refresh()
+
+    @Slot(object)
+    def _on_github_started(self, started: object) -> None:
+        if not isinstance(started, GitHubStartResponse) or self.page != PAGE_GITHUB:
+            return
+        self._begin_pending = False  # now waiting for the user, not the server
+        self._show_github_code(started)
+        self._refresh()
+
+    @Slot(object)
     def _on_me(self, me: object) -> None:
         if me is None or not isinstance(me, Me):
             return
         page = self.page
-        if page == PAGE_CODE and self._busy:
+        if page == PAGE_GITHUB and self._busy:
+            self._busy = False
+            self._started = False
+            self._verified = True
+            self._begin_pending = False
+            self._show_github_code(None)
+            self._load_consent(me.consent)
+            self._go(PAGE_NICKNAME if me.nickname is None else PAGE_PRIVACY)
+        elif page == PAGE_CODE and self._busy:
             self._busy = False
             self._started = False
             self._verified = True
@@ -528,6 +716,14 @@ class OnboardingDialog(QDialog):
             return
         if not (self._begin_pending or self._busy):
             return  # a background error (e.g. offline); not ours to show
+        if page == PAGE_GITHUB:
+            # The attempt is over (declined, expired, not invited, ...): back to
+            # the start of this page with the reason shown.
+            self._begin_pending = self._busy = self._started = False
+            self._show_github_code(None)
+            self._refresh()
+            self._show_error(page, code)
+            return
         if page == PAGE_CODE and self._state == "signed_out":
             # The sign-in itself failed or the code expired: start over.
             self._begin_pending = self._busy = self._started = False

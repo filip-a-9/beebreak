@@ -185,7 +185,8 @@ def test_list_shows_domain_only_and_states(
     create_invite(clock, capsys, email="used@example.org")
     with session_factory() as s:
         by_local = {
-            i.email_canonical.split("@")[0]: i for i in s.scalars(select(BetaInvite))
+            (i.email_canonical or "").split("@")[0]: i
+            for i in s.scalars(select(BetaInvite))
         }
         gone_id = by_local["gone"].id
         by_local["used"].redeemed_at = START_TIME

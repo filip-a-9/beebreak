@@ -32,22 +32,29 @@ from breakroom_server.auth import (
     check_limit,
     logout_device,
     make_limiters,
+    poll_github,
     refresh_tokens,
     start_challenge,
+    start_github,
     verify_challenge,
 )
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory, make_engine
+from breakroom_server.github import GitHubClient
 from breakroom_server.logging_config import request_id_var
-from breakroom_server.mailer import Mailer, RecordingMailer, SmtpMailer
+from breakroom_server.mailer import Mailer, NullMailer, RecordingMailer, SmtpMailer
 from breakroom_server.matchmaking import Matchmaker
 from breakroom_server.models import email_canonical
 from breakroom_server.profile import build_me
 from breakroom_shared.api import (
+    AuthMethods,
     AuthStartRequest,
     AuthStartResponse,
     AuthVerifyRequest,
     ErrorCode,
+    GitHubPollRequest,
+    GitHubPollResponse,
+    GitHubStartResponse,
     HealthResponse,
     RefreshRequest,
     SessionResponse,
@@ -189,6 +196,8 @@ class AccessLogMiddleware:
 def _default_mailer(config: ServerConfig) -> Mailer:
     if config.mailer == "record":
         return RecordingMailer()
+    if not config.email_enabled:
+        return NullMailer()  # GitHub-only server: no mail provider, no sender thread
     return SmtpMailer(
         config.smtp_host,
         config.smtp_port,
@@ -227,6 +236,7 @@ def create_app(
     session_factory: SessionFactory = sessionmaker(engine, expire_on_commit=False)
     mailer = mailer if mailer is not None else _default_mailer(config)
     limiters: Limiters = make_limiters(config, clock)
+    github = GitHubClient(config)
 
     @asynccontextmanager
     async def lifespan(inner: FastAPI) -> AsyncIterator[None]:
@@ -277,8 +287,14 @@ def create_app(
     def health() -> HealthResponse:
         return HealthResponse(status="ok")
 
+    @app.get("/v1/auth/methods")
+    def auth_methods() -> AuthMethods:
+        return AuthMethods(email=config.email_enabled, github=config.github_enabled)
+
     @app.post("/v1/auth/start", status_code=202)
     def auth_start(request: Request, body: AuthStartRequest) -> AuthStartResponse:
+        if not config.email_enabled:
+            raise ApiError("not_found")
         check_limit(limiters.start_ip, _client_key(request))
         # A malformed address is limited on its raw text so it cannot dodge this.
         check_limit(
@@ -298,6 +314,8 @@ def create_app(
 
     @app.post("/v1/auth/verify")
     def auth_verify(request: Request, body: AuthVerifyRequest) -> SessionResponse:
+        if not config.email_enabled:
+            raise ApiError("not_found")
         check_limit(limiters.verify_ip, _client_key(request))
         with session_factory() as session:
             signed_in = verify_challenge(
@@ -311,6 +329,49 @@ def create_app(
             )
             return SessionResponse(
                 tokens=signed_in.tokens, me=build_me(session, signed_in.user_id)
+            )
+
+    @app.post("/v1/auth/github/start")
+    def auth_github_start(request: Request) -> GitHubStartResponse:
+        if not config.github_enabled:
+            raise ApiError("not_found")
+        check_limit(limiters.start_ip, _client_key(request))
+        with session_factory() as session:
+            started = start_github(session, config, github, clock())
+        return GitHubStartResponse(
+            challenge_id=started.challenge_id,
+            user_code=started.user_code,
+            verification_uri=started.verification_uri,
+            expires_in_s=started.expires_in_s,
+            interval_s=started.interval_s,
+        )
+
+    @app.post("/v1/auth/github/poll")
+    def auth_github_poll(
+        request: Request, body: GitHubPollRequest
+    ) -> GitHubPollResponse:
+        if not config.github_enabled:
+            raise ApiError("not_found")
+        check_limit(limiters.github_poll_ip, _client_key(request))
+        with session_factory() as session:
+            polled = poll_github(
+                session,
+                config,
+                github,
+                clock(),
+                challenge_id=body.challenge_id,
+                device_name=body.device_name,
+            )
+            if polled.signed_in is None:
+                return GitHubPollResponse(
+                    status="pending", interval_s=polled.interval_s
+                )
+            return GitHubPollResponse(
+                status="complete",
+                session=SessionResponse(
+                    tokens=polled.signed_in.tokens,
+                    me=build_me(session, polled.signed_in.user_id),
+                ),
             )
 
     @app.post("/v1/auth/refresh")

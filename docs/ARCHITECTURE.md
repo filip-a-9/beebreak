@@ -300,7 +300,12 @@ M6: the plugin depends on no venv. Hooks and the MCP server run `breakroom-hook`
 
 ### 9.1 HTTP API (proposed)
 
-- `POST /v1/auth/*` — beta invitation / sign-in flow (provider-specific, to be decided)
+- Sign-in (M3; GitHub added later, ADR 0018). An account is either email or GitHub, never both (no linking in the beta). Which methods exist is server configuration (empty SMTP host = no email, empty `BREAKROOM_GITHUB_CLIENT_ID` = no GitHub; at least one, or the server refuses to start). A method that is off answers 404 `not_found`.
+  - `GET /v1/auth/methods` — unauthenticated; `{"email": bool, "github": bool}`. The companion asks before showing its sign-in choice.
+  - `POST /v1/auth/start`, `POST /v1/auth/verify` — email code flow (always 202 with a fresh `challenge_id`; see T15, T16).
+  - `POST /v1/auth/github/start` — no body. The server calls GitHub's device-code endpoint (client id, no scope, no secret) and keeps the `device_code` on an `auth_challenges` row. 200 `{challenge_id, user_code, verification_uri, expires_in_s, interval_s}`; the device code is never sent. 502 `github_unavailable`.
+  - `POST /v1/auth/github/poll` — `{challenge_id, device_name}`. The server asks GitHub at most once per interval (claimed with a conditional `UPDATE`; `slow_down` adds 5 s, or takes GitHub's new interval). 200 `{status: "pending", interval_s}` or `{status: "complete", session}` (the same `SessionResponse` as `/verify`). On approval the server calls `GET /user` once, keeps only the numeric `id`, discards the access token, and issues Breakroom tokens. Errors: 400 `expired`, 400 `access_denied`, 400 `invalid_code` (unknown or used challenge), 403 `not_invited` (no account and no open invite for that GitHub id, or a disabled account), 502 `github_unavailable`.
+  - `POST /v1/auth/refresh`, `POST /v1/auth/logout` — as before, for either kind of account.
 - `GET /v1/me` — private account and nickname/profile
 - `PATCH /v1/me` — bounded nickname and optional interests
 - `POST /v1/queue` — authenticated enqueue; idempotency key (scoped per user) required; body carries the consented `OutboundPresence`. 201, or 200 on replay; 409 `setup_incomplete` / `already_queued` / `already_matched`; per-user rate limit (M4)
@@ -339,7 +344,7 @@ M4 (**CONFIRMED** 2026-10-13): availability does not filter pairs; the remaining
 
 ## 10. Suggested minimal database entities
 
-- `users`: private stable account ID, auth-provider identity, nickname, status, created time.
+- `users`: private stable account ID, auth-provider identity (canonical email, or for GitHub accounts only the numeric `github_id`; at least one is set), nickname, status, created time.
 - `user_preferences`: opted-in sharing categories and invitations; store consent version/time.
 - `user_interests`: controlled optional tags; do not automatically retain per-task categories here.
 - `blocks`: blocker ID, blocked ID, timestamp, unique pair constraint.
@@ -347,7 +352,7 @@ M4 (**CONFIRMED** 2026-10-13): availability does not filter pairs; the remaining
 - `matches` and `match_participants` (M4): two participants per match, `active` flag per participant, end deadline and reason, the shared tags/category shown to both. M5: the match is the chat session (§10's former `chat_sessions` is not a separate table). `matches` adds `extensions_used`, `extension_requested_by` and `last_seq` (the message sequence); `match_participants` adds `offline_since` (set by the sweep) and `messages_sent` (kept after the bodies are purged, for the §13 metric).
 - `messages` (M5): match ID (deleted with the match), per-match sequence number, author ID, client message ID (unique per author), normalized text, server timestamp. Bodies are deleted 24 h after the chat ends (`message_retention_s`).
 - `reports` (M5): reporting user, reported user, match ID without a foreign key (so the match purge leaves it), reason, optional note, status (`open`, `dismissed`, `actioned`), created and resolved times; one per reporter and match. `report_messages`: copies of only the messages the reporter ticked (sequence, `reporter`/`reported`, text, time). Open reports are kept until resolved; resolved reports and their evidence are deleted 90 days after resolution (`report_retention_s`). Moderation is the admin CLI only (`breakroom-admin report list/show/resolve`); appeals go by email (policy in M6).
-- `beta_invites`: invitation token (hashed), invitee/role, expiry, redemption state.
+- `beta_invites`: invitation token (hashed), invitee/role, expiry, redemption state. An invite is for an email (with a code) or for a GitHub numeric id (no code; `invite create --github <username>` resolves the id once through `GET /users/<username>` and stores only the id).
 
 **Retention proposal:** short-lived queue metadata (purged promptly after expiry; M4: presence fields nulled when the entry ends, ended entries and matches deleted after 30 days), chat messages deleted automatically after a proposed 24-hour recovery window, and longer report evidence retained under a separately disclosed moderation policy. M5 (**CONFIRMED** 2026-10-14): message bodies 24 h after the chat ends; report evidence 90 days after the report is resolved, open reports until resolved; the chat window always says "Not end-to-end encrypted. Messages are deleted 24 h after the chat ends." M6 (**CONFIRMED** 2026-10-16): the same purge removes stale sign-in rows (§16 item 7), and account export/deletion is operator-run on request; per-item retention is listed in `docs/DATA_HANDLING.md`. Logs should contain structured IDs, no message bodies or task metadata beyond minimal operational metrics.
 

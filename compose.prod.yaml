@@ -67,12 +67,15 @@ services:
     environment:
       BREAKROOM_DATABASE_URL: postgresql+psycopg://breakroom:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/breakroom
       BREAKROOM_SERVER_SECRET: ${BREAKROOM_SERVER_SECRET:?set BREAKROOM_SERVER_SECRET in .env}
-      BREAKROOM_SMTP_HOST: ${BREAKROOM_SMTP_HOST:?set BREAKROOM_SMTP_HOST in .env}
-      BREAKROOM_SMTP_PORT: ${BREAKROOM_SMTP_PORT:?set BREAKROOM_SMTP_PORT in .env}
-      BREAKROOM_SMTP_USERNAME: ${BREAKROOM_SMTP_USERNAME:?set BREAKROOM_SMTP_USERNAME in .env}
-      BREAKROOM_SMTP_PASSWORD: ${BREAKROOM_SMTP_PASSWORD:?set BREAKROOM_SMTP_PASSWORD in .env}
+      # Email codes are off when BREAKROOM_SMTP_HOST is empty (GitHub-only); the
+      # server then needs BREAKROOM_GITHUB_CLIENT_ID and ignores the SMTP values.
+      BREAKROOM_SMTP_HOST: ${BREAKROOM_SMTP_HOST:-}
+      BREAKROOM_SMTP_PORT: ${BREAKROOM_SMTP_PORT:-587}
+      BREAKROOM_SMTP_USERNAME: ${BREAKROOM_SMTP_USERNAME:-}
+      BREAKROOM_SMTP_PASSWORD: ${BREAKROOM_SMTP_PASSWORD:-}
       BREAKROOM_SMTP_TLS: ${BREAKROOM_SMTP_TLS:-starttls}
-      BREAKROOM_MAIL_FROM: ${BREAKROOM_MAIL_FROM:?set BREAKROOM_MAIL_FROM in .env}
+      BREAKROOM_MAIL_FROM: ${BREAKROOM_MAIL_FROM:-Breakroom <no-reply@breakroom.local>}
+      BREAKROOM_GITHUB_CLIENT_ID: ${BREAKROOM_GITHUB_CLIENT_ID:-}
       # Believe X-Forwarded-For only from Caddy's fixed address (not the whole
       # subnet, which also holds the Docker gateway at .1).
       BREAKROOM_TRUSTED_PROXIES: 172.29.7.10/32

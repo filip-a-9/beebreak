@@ -14,11 +14,11 @@ The controller is `<operator name>`. Contact: `<contact address>`.
 
 | Purpose | Data | Lawful basis (PROPOSED) |
 |---|---|---|
-| Your account and signing in | Email address, nickname, sign-in codes (stored only as an HMAC), access and refresh tokens (stored only as hashes), device name and the times a device was created, last seen and connected, your consent choices | Contract (providing the service you signed up for) |
+| Your account and signing in | Email address (or, if you sign in with GitHub, only your numeric GitHub user id; no email, name or username), nickname, sign-in codes (stored only as an HMAC), access and refresh tokens (stored only as hashes), device name and the times a device was created, last seen and connected, your consent choices | Contract (providing the service you signed up for) |
 | Matching you with one other person | Only what you chose to share with a search: task category, stack tags, remaining-time bucket; queue and match records with times and the tags you share | Contract |
 | Chat | Messages you send (body, time, sequence number), who took part, whether a participant was offline, how many messages each person sent | Contract |
 | Blocking and reporting abuse | Blocks (who blocked whom), reports (reason, optional note up to 500 characters, status), the messages the reporter ticked as evidence | Legitimate interest (keeping the service safe and handling abuse) |
-| Keeping out someone removed for abuse | If your account was disabled for abuse and then deleted: a keyed hash of your email address (not the address itself) and the time, kept for 1 year, so the address cannot be invited again without the operator deciding to | Legitimate interest (abuse prevention), PROPOSED for the lawyer review |
+| Keeping out someone removed for abuse | If your account was disabled for abuse and then deleted: a keyed hash of your email address or GitHub user id (not the address or id itself) and the time, kept for 1 year, so the address cannot be invited again without the operator deciding to | Legitimate interest (abuse prevention), PROPOSED for the lawyer review |
 | Appeals, access and erasure requests | The email you send and our reply | Legitimate interest, and legal obligation where it applies |
 
 Your device name is a generic default (`WSL device`) that you can change
@@ -49,7 +49,11 @@ email of a disabled account that was then deleted is kept for 1 year.
 ## Who receives it
 
 - An email provider (SMTP) that sends your sign-in codes: to be named before
-  the beta.
+  the beta. Not used if the server offers only GitHub sign-in.
+- GitHub, if you choose "Sign in with GitHub": GitHub learns that you signed in
+  to Breakroom, and from which address the code was entered. Breakroom asks for
+  no permissions, receives your numeric user id once, and does not keep GitHub's
+  access token or ask GitHub for anything afterwards.
 - A hosting provider that runs the server and database: to be named before the
   beta.
 

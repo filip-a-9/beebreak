@@ -152,3 +152,17 @@ class RecordingMailer:
 
     def close(self) -> None:
         pass
+
+
+class NullMailer:
+    """Stands in when email sign-in is off (no SMTP host): nothing can be sent
+    and no sender thread exists."""
+
+    def send_code(self, to: str, code: str) -> None:
+        pass
+
+    def send_invite(self, to: str, code: str) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
