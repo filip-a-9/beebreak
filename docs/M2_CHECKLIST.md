@@ -101,7 +101,7 @@ export BREAKROOM_WAITING_MAX_S=90
 ```
 
 Defaults: 60 / 2 / 900 / 60 / 180 / 300. Not changed here (defaults apply):
-`BREAKROOM_OPEN_TOOL_MAX_S` (1800), `BREAKROOM_FORGET_AFTER_S` (7200),
+`BREAKROOM_OPEN_TOOL_MAX_S` (600), `BREAKROOM_FORGET_AFTER_S` (7200),
 `BREAKROOM_TASK_EVIDENCE_WAIT_S` (300). Values
 must be positive integers; anything else makes the companion refuse to start.
 **Restart the companion after changing any of these**: they are read once at
@@ -177,11 +177,11 @@ ZEBRA-7731"`. After about 5 s press **Esc**.
 Then watch the window for 40 s without typing.
 This step is a **measurement**, not a pass/fail on invitations. Docs say a
 cancelled tool fires no completion hook and `Stop` does not run on a user
-interrupt, so Breakroom may still see an open tool. The M2 README accepts an
-invitation here as a documented false positive. Write down:
+interrupt, so Breakroom may still see an open tool (Claude Code 2.1.302 sent
+no event at all after the Esc). Since 2026-10-17 an open tool alone is not
+enough evidence, so no invitation is expected. Write down:
 
-- whether an invitation appeared while nothing was running (expected by the
-  README: possible; expected by the ticket: none; record which happened),
+- whether an invitation appeared while nothing was running (expected: none),
 - whether a `Stop` line (type `turn_stopped`) is in the trace after the Esc.
 
 Record pass: R as `m2-C08`, same scenario. Replay shows the same invitation

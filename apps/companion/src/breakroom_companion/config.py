@@ -78,7 +78,7 @@ class TriggerConfig:
     suggestion_timeout_s: int = 60
     # Activity staleness (M2-02): silence after which a session is unknown.
     stale_after_s: int = 180
-    open_tool_max_s: int = 1800
+    open_tool_max_s: int = 600
     # Shorter than open_tool_max_s: an Esc on a prompt fires no hook (M2 README).
     waiting_max_s: int = 300
     forget_after_s: int = 7200

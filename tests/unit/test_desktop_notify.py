@@ -1,6 +1,7 @@
 """DesktopNotifier (M5-06)."""
 
 import pytest
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QWidget
 from pytestqt.qtbot import QtBot
 
@@ -74,3 +75,28 @@ def test_the_real_tray_check_does_not_raise(qtbot: QtBot) -> None:
     window = QWidget()
     qtbot.addWidget(window)
     DesktopNotifier(window)  # the default availability check is lazy
+
+
+class ClickableTray(QObject):
+    messageClicked = Signal()
+
+    def show(self) -> None:
+        pass
+
+    def showMessage(self, title: str, message: str) -> None:
+        pass
+
+
+def test_clicking_the_tray_message_calls_the_click_handler(
+    qtbot: QtBot, alerts: list[QWidget]
+) -> None:
+    tray = ClickableTray()
+    clicks: list[int] = []
+    notifier = DesktopNotifier(
+        tray_available=lambda: True,
+        tray_factory=lambda: tray,
+        on_click=lambda: clicks.append(1),
+    )
+    notifier.notify("Breakroom", "New message from bob")
+    tray.messageClicked.emit()
+    assert clicks == [1]

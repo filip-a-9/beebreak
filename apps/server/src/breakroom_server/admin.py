@@ -35,6 +35,7 @@ from breakroom_server.mailer import Mailer, RecordingMailer, SmtpMailer
 from breakroom_server.models import (
     BetaInvite,
     Block,
+    DeletedAccountTombstone,
     Device,
     Match,
     MatchParticipant,
@@ -44,7 +45,7 @@ from breakroom_server.models import (
     User,
     email_canonical,
 )
-from breakroom_server.tokens import hmac_code, new_code
+from breakroom_server.tokens import hmac_code, new_code, tombstone_hmac
 
 Clock = Callable[[], datetime]
 
@@ -86,6 +87,11 @@ def _parser() -> argparse.ArgumentParser:
     create.add_argument("email")
     create.add_argument("--days", type=_positive_int, default=None)
     create.add_argument("--send", action="store_true", help="email the code")
+    create.add_argument(
+        "--override-tombstone",
+        action="store_true",
+        help="invite an email whose deleted account was disabled (removes the record)",
+    )
     invite.add_parser("list", help="list invites")
     revoke = invite.add_parser("revoke", help="revoke an invite")
     revoke.add_argument("invite_id")
@@ -185,6 +191,19 @@ def _invite_create(
         if args.days is not None
         else timedelta(seconds=config.invite_ttl_s)
     )
+    tombstone = session.scalar(
+        select(DeletedAccountTombstone).where(
+            DeletedAccountTombstone.email_hmac == tombstone_hmac(config.secret, email)
+        )
+    )
+    if tombstone is not None:
+        if not args.override_tombstone:
+            raise AdminError(
+                "this address belonged to a deleted disabled account; "
+                "pass --override-tombstone to invite it anyway"
+            )
+        # The operator decided: one decision per person.
+        session.delete(tombstone)
     code = new_code()
     session.add(
         BetaInvite(
@@ -467,10 +486,16 @@ def _write_private(path: str, text: str) -> None:
 
 
 def _account_delete(
-    session: Session, email: str, now: datetime, allow_disabled: bool
+    session: Session,
+    config: ServerConfig,
+    email: str,
+    now: datetime,
+    allow_disabled: bool,
 ) -> None:
     try:
-        counts = delete_account(session, email, now, allow_disabled=allow_disabled)
+        counts = delete_account(
+            session, email, now, secret=config.secret, allow_disabled=allow_disabled
+        )
     except AccountNotFound:
         raise AdminError("no such account") from None
     except AccountDisabled:
@@ -530,7 +555,7 @@ def _run(args: argparse.Namespace, clock: Clock, mailer: Mailer | None) -> None:
                 case ("account", "export"):
                     _account_export(session, args.email, args.out)
                 case ("account", "delete"):
-                    _account_delete(session, args.email, now, args.disabled_ok)
+                    _account_delete(session, config, args.email, now, args.disabled_ok)
     finally:
         engine.dispose()
 

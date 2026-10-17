@@ -36,6 +36,7 @@ from breakroom_server.models import (
 )
 from tests.server.conftest import (
     START_TIME,
+    TEST_SECRET,
     FixedClock,
     SeededUser,
     add_ready_user,
@@ -311,7 +312,7 @@ def test_delete_leaves_no_row_referencing_the_user(
         s.commit()
     assert _references(world, world.ada.user_id) > 0
     with world.factory() as s:
-        counts = delete_account(s, ADA_EMAIL, clock())
+        counts = delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     assert _references(world, world.ada.user_id) == 0
     assert counts["users"] == 1
     assert counts["messages"] == 1
@@ -329,7 +330,7 @@ def test_delete_keeps_the_peers_match_and_messages(
     world: World, clock: FixedClock
 ) -> None:
     with world.factory() as s:
-        delete_account(s, ADA_EMAIL, clock())
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     with world.factory() as s:
         assert s.get(Match, world.ada_bob_match) is not None
         bodies = s.scalars(
@@ -350,7 +351,7 @@ def test_delete_removes_reports_filed_and_reports_against_with_evidence(
     world: World, clock: FixedClock
 ) -> None:
     with world.factory() as s:
-        counts = delete_account(s, ADA_EMAIL, clock())
+        counts = delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     with world.factory() as s:
         assert s.scalars(select(Report)).first() is None
         assert s.scalars(select(ReportMessage)).first() is None
@@ -367,10 +368,10 @@ def test_delete_drops_a_match_when_no_participant_remains(
     world: World, clock: FixedClock
 ) -> None:
     with world.factory() as s:
-        delete_account(s, "bob@example.com", clock())
+        delete_account(s, "bob@example.com", clock(), secret=TEST_SECRET)
     with world.factory() as s:
         assert s.get(Match, world.bob_cy_match) is not None  # Cyd remains
-        delete_account(s, "cyd@example.com", clock())
+        delete_account(s, "cyd@example.com", clock(), secret=TEST_SECRET)
     with world.factory() as s:
         assert s.get(Match, world.bob_cy_match) is None
 
@@ -390,7 +391,7 @@ def test_delete_clears_extension_request_on_a_kept_match(
         extension_requested_by=ada,
     )
     with session_factory() as s:
-        delete_account(s, ADA_EMAIL, clock())
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     with session_factory() as s:
         match = s.get(Match, mid)
         assert match is not None
@@ -399,7 +400,7 @@ def test_delete_clears_extension_request_on_a_kept_match(
 
 def test_delete_unknown_account_is_not_found(world: World, clock: FixedClock) -> None:
     with world.factory() as s, pytest.raises(AccountNotFound):
-        delete_account(s, "nobody@example.com", clock())
+        delete_account(s, "nobody@example.com", clock(), secret=TEST_SECRET)
 
 
 def _snapshot(world: World) -> dict[str, int]:
@@ -414,7 +415,7 @@ def test_busy_when_queued(world: World, clock: FixedClock) -> None:
     seed_queued(world.factory, world.ada)
     before = _snapshot(world)
     with world.factory() as s, pytest.raises(AccountBusy):
-        delete_account(s, ADA_EMAIL, clock())
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     assert _snapshot(world) == before
 
 
@@ -425,7 +426,7 @@ def test_busy_in_a_live_match(
     bob = add_ready_user(session_factory, "Bob")
     seed_match(session_factory, ada, bob)
     with session_factory() as s, pytest.raises(AccountBusy):
-        delete_account(s, ADA_EMAIL, clock())
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     with session_factory() as s:
         assert s.get(User, ada.user_id) is not None
         assert s.scalar(select(func.count()).select_from(MatchParticipant)) == 2
@@ -441,7 +442,7 @@ def test_busy_when_the_subject_of_an_open_report(
     )
     seed_report(session_factory, bob, ada, mid, status="open")
     with session_factory() as s, pytest.raises(AccountBusy):
-        delete_account(s, ADA_EMAIL, clock())
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     with session_factory() as s:
         assert s.get(User, ada.user_id) is not None
         assert s.scalar(select(func.count()).select_from(Report)) == 1
@@ -457,7 +458,7 @@ def test_busy_when_the_user_filed_an_open_report(
     )
     seed_report(session_factory, ada, bob, mid, status="open")
     with session_factory() as s, pytest.raises(AccountBusy):
-        delete_account(s, ADA_EMAIL, clock())
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     with session_factory() as s:
         assert s.get(User, ada.user_id) is not None
         assert s.scalar(select(func.count()).select_from(Report)) == 1
@@ -471,7 +472,7 @@ def test_disabled_account_is_refused_without_the_flag(
 ) -> None:
     ada = add_ready_user(session_factory, "Ada", status="disabled")
     with session_factory() as s, pytest.raises(AccountDisabled):
-        delete_account(s, ADA_EMAIL, clock())
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     with session_factory() as s:
         assert s.get(User, ada.user_id) is not None
         device = s.get(Device, ada.device_id)
@@ -483,7 +484,7 @@ def test_disabled_account_is_deleted_with_the_flag(
 ) -> None:
     ada = add_ready_user(session_factory, "Ada", status="disabled")
     with session_factory() as s:
-        delete_account(s, ADA_EMAIL, clock(), allow_disabled=True)
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET, allow_disabled=True)
     with session_factory() as s:
         assert s.get(User, ada.user_id) is None
 
@@ -530,7 +531,7 @@ def test_becoming_busy_between_the_phases_refuses_the_delete(
             status="open",
         )
     with world.factory() as s, pytest.raises(AccountBusy):
-        finish_delete(s, user_id)
+        finish_delete(s, user_id, clock(), TEST_SECRET)
     with world.factory() as s:
         assert s.get(User, user_id) is not None
         assert s.get(MatchParticipant, (world.ada_bob_match, user_id)) is not None
@@ -570,7 +571,7 @@ def test_invite_for_another_address_redeemed_by_the_user_survives_unlinked(
         s.commit()
         other_id = other.id
     with world.factory() as s:
-        delete_account(s, ADA_EMAIL, clock())
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     with world.factory() as s:
         row = s.get(BetaInvite, other_id)
         assert row is not None
@@ -593,7 +594,7 @@ def test_foreign_challenge_referencing_the_users_invite_is_deleted_cleanly(
         s.commit()
         stranger_id = stranger.id
     with world.factory() as s:
-        delete_account(s, ADA_EMAIL, clock())
+        delete_account(s, ADA_EMAIL, clock(), secret=TEST_SECRET)
     with world.factory() as s:
         assert s.get(AuthChallenge, stranger_id) is None
         assert s.scalars(select(BetaInvite)).first() is None

@@ -187,6 +187,7 @@ class ServerConfig:
     challenge_retention_s: int = 86_400
     refresh_token_retention_s: int = 604_800
     invite_retention_s: int = 2_592_000
+    tombstone_retention_s: int = 31_536_000  # deleted disabled accounts, 365 days
     # Sign-in, refresh and queue abuse limits (M6-05).
     rate_verify_email: int = 10  # failed verifies per email per rate_window_s
     refresh_grace_s: int = 30  # a just-rotated refresh token is accepted again
@@ -241,6 +242,7 @@ class ServerConfig:
             "challenge_retention_s",
             "refresh_token_retention_s",
             "invite_retention_s",
+            "tombstone_retention_s",
             "rate_verify_email",
             "refresh_grace_s",
             "rate_queue_action_user",
@@ -325,6 +327,9 @@ class ServerConfig:
                 "BREAKROOM_REFRESH_TOKEN_RETENTION_S", 604_800
             ),
             invite_retention_s=_positive("BREAKROOM_INVITE_RETENTION_S", 2_592_000),
+            tombstone_retention_s=_positive(
+                "BREAKROOM_TOMBSTONE_RETENTION_S", 31_536_000
+            ),
             rate_verify_email=_positive("BREAKROOM_RATE_VERIFY_EMAIL", 10),
             refresh_grace_s=_positive("BREAKROOM_REFRESH_GRACE_S", 30),
             rate_queue_action_user=_positive("BREAKROOM_RATE_QUEUE_ACTION_USER", 60),

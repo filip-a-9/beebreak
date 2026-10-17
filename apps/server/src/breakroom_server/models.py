@@ -132,6 +132,20 @@ class BetaInvite(Base):
     created_at: Mapped[datetime]
 
 
+class DeletedAccountTombstone(Base):
+    """Keyed hash of the email of a disabled account that was then deleted.
+
+    Exists only for disabled accounts, so it carries no flag. No email, no user
+    reference.
+    """
+
+    __tablename__ = "deleted_account_tombstones"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    email_hmac: Mapped[bytes] = mapped_column(LargeBinary(32), unique=True)
+    created_at: Mapped[datetime]
+
+
 class AuthChallenge(Base):
     __tablename__ = "auth_challenges"
     __table_args__ = (

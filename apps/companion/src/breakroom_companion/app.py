@@ -248,7 +248,8 @@ def wire_chat(
 ) -> None:
     """Connect the chat window: state in, intents out, unread count, notices.
 
-    The window opens, without taking focus, once per new match id. A new peer
+    The window never opens by itself: the user opens it with the main window's
+    Open chat button or by clicking the notification. A new peer
     message while the window is not active raises one notification per chat per
     `notify_interval_s()` that names the nickname only (rule 16).
     """
@@ -258,7 +259,7 @@ def wire_chat(
     active = is_active or (
         lambda: chat_window.isVisible() and chat_window.isActiveWindow()
     )
-    seen: dict[str, object] = {"match": None, "opened": None, "notified": None}
+    seen: dict[str, object] = {"match": None, "notified": None}
     # Highest peer seq counted, and highest peer seq the user has had in view.
     known = {"seq": 0, "read": 0}
     peer_seqs: list[int] = []
@@ -273,6 +274,8 @@ def wire_chat(
     def open_chat() -> None:
         chat_window.open_for_user()
         read_all()
+
+    notifier.on_click = open_chat
 
     def notify(nickname: str) -> None:
         last = seen["notified"]
@@ -298,10 +301,8 @@ def wire_chat(
         if state.match_id is None:
             show_unread()
             return
-        if state.match_id != seen["opened"]:
-            seen["opened"] = state.match_id
-            chat_window.show()
-            chat_window.raise_()
+        # A match never opens the window (it takes focus on WSLg, F6): the
+        # notification and the Open chat button are the way in.
         if active():
             known["read"] = known["seq"]
         elif fresh:

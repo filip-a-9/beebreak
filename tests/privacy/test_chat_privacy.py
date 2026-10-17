@@ -198,6 +198,9 @@ def test_a_full_chat_leaks_no_content(
         lambda: wa.chat_state.status is not None and wb.chat_state.status is not None,
         timeout=WAIT_MS,
     )
+    # A match no longer opens the window: each user opens it, as with a click.
+    a.chat.open_for_user()
+    b.chat.open_for_user()
     qtbot.waitUntil(lambda: a.chat.isVisible() and b.chat.isVisible(), timeout=WAIT_MS)
 
     # Chat both ways, through the windows' own input where it is a user action.

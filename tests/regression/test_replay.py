@@ -82,10 +82,11 @@ def test_02_steady_tools_invite_once() -> None:
     assert 60 <= times[0] <= 70
 
 
-def test_03_long_silent_tool_invites_during_silence() -> None:
-    times = invite_times(run(syn.s03_long_silent_tool))
-    assert len(times) == 1
-    assert 59 <= times[0] <= 63
+def test_03_long_silent_tool_does_not_invite() -> None:
+    # Was: one invite at ~60 s. Decision 2026-10-17 dropped the open-tool escape
+    # (an Esc on a running tool sends no event): a lone tool, even one running
+    # over 10 min, no longer earns an invite. Documented cost.
+    assert invite_times(run(syn.s03_long_silent_tool)) == []
 
 
 def test_04_waiting_input_blocks_and_then_goes_unknown() -> None:
@@ -192,10 +193,11 @@ def test_14_first_event_a_tool_behaves_like_s02() -> None:
     assert run(syn.s14_no_turn_submitted) == run(syn.s02_steady_five_minutes)
 
 
-def test_15_cancelled_tool_is_a_documented_false_positive() -> None:
-    times = invite_times(run(syn.s15_escape_cancel))
-    assert len(times) == 1
-    assert 59 <= times[0] <= 63
+def test_15_cancelled_tool_no_longer_invites() -> None:
+    # Was a documented false positive (one invite at ~60 s). Decision
+    # 2026-10-17: a lone open tool is not enough evidence, so the Esc case is
+    # now silent; same documented cost as test 03.
+    assert invite_times(run(syn.s15_escape_cancel)) == []
 
 
 def test_16_stale_waiting_session_stops_blocking() -> None:

@@ -88,8 +88,9 @@ def test_min_events_exact_qualifies() -> None:
     assert decide({"a": sess(events=2)}).result.invite_suitable
 
 
-def test_single_open_tool_with_one_event_qualifies() -> None:
-    assert decide({"a": sess(events=1, open_tools=1)}).result.invite_suitable
+def test_single_open_tool_with_one_event_does_not_qualify() -> None:
+    # Decision 2026-10-17: an open tool alone is not evidence (Esc sends nothing).
+    assert not decide({"a": sess(events=1, open_tools=1)}).result.invite_suitable
 
 
 def test_excluded_run_skipped_next_candidate_chosen() -> None:

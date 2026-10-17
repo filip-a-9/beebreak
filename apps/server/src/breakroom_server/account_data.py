@@ -17,6 +17,7 @@ from breakroom_server.models import (
     AuthChallenge,
     BetaInvite,
     Block,
+    DeletedAccountTombstone,
     Device,
     Match,
     MatchParticipant,
@@ -29,6 +30,7 @@ from breakroom_server.models import (
     UserPreference,
     email_canonical,
 )
+from breakroom_server.tokens import tombstone_hmac
 
 EXPORT_VERSION = 1
 
@@ -281,11 +283,15 @@ def prepare_delete(
     return user.id
 
 
-def finish_delete(session: Session, user_id: uuid.UUID) -> dict[str, int]:
+def finish_delete(
+    session: Session, user_id: uuid.UUID, now: datetime, secret: bytes
+) -> dict[str, int]:
     """Phase two: re-check busy, then delete everything in one transaction.
 
     Raises `AccountBusy` if the user became busy after `prepare_delete`; the
-    devices stay revoked and nothing is deleted. Returns per-table counts.
+    devices stay revoked and nothing is deleted. A disabled user leaves one
+    tombstone (keyed hash of the email), written in the same transaction.
+    Returns per-table counts.
     """
     user = session.get(User, user_id)
     if user is None:
@@ -295,7 +301,7 @@ def finish_delete(session: Session, user_id: uuid.UUID) -> dict[str, int]:
         raise AccountBusy
     counts: dict[str, int] = {}
     try:
-        _delete_rows(session, user, counts)
+        _delete_rows(session, user, counts, now, secret)
         session.commit()
     except BaseException:
         session.rollback()
@@ -304,7 +310,12 @@ def finish_delete(session: Session, user_id: uuid.UUID) -> dict[str, int]:
 
 
 def delete_account(
-    session: Session, email: str, now: datetime, *, allow_disabled: bool = False
+    session: Session,
+    email: str,
+    now: datetime,
+    *,
+    secret: bytes,
+    allow_disabled: bool = False,
 ) -> dict[str, int]:
     """Hard-delete the account and every row that references it.
 
@@ -312,12 +323,17 @@ def delete_account(
     change; see `prepare_delete` and `finish_delete` for the two phases. Busy
     means queued, in a live match, or reporter or subject of an open report.
     """
-    return finish_delete(
-        session, prepare_delete(session, email, now, allow_disabled=allow_disabled)
-    )
+    user_id = prepare_delete(session, email, now, allow_disabled=allow_disabled)
+    return finish_delete(session, user_id, now, secret)
 
 
-def _delete_rows(session: Session, user: User, counts: dict[str, int]) -> None:
+def _delete_rows(
+    session: Session,
+    user: User,
+    counts: dict[str, int],
+    now: datetime,
+    secret: bytes,
+) -> None:
     uid = user.id
     mine = select(MatchParticipant.match_id).where(MatchParticipant.user_id == uid)
     # Matches in which nobody else took part: they go away with the user.
@@ -405,3 +421,15 @@ def _delete_rows(session: Session, user: User, counts: dict[str, int]) -> None:
         delete(BetaInvite).where(BetaInvite.email_canonical == user.email_canonical),
     )
     counts["users"] = _count(session, delete(User).where(User.id == uid))
+    # Only a disabled account leaves one, so a banned person who asks for
+    # deletion cannot come back as a new user unnoticed.
+    counts["tombstones"] = 0
+    if user.status == "disabled":
+        key = tombstone_hmac(secret, user.email_canonical)
+        if not session.scalar(
+            select(DeletedAccountTombstone.id).where(
+                DeletedAccountTombstone.email_hmac == key
+            )
+        ):
+            session.add(DeletedAccountTombstone(email_hmac=key, created_at=now))
+        counts["tombstones"] = 1

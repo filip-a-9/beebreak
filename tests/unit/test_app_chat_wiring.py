@@ -82,24 +82,48 @@ def _peer(seq: int, body: str = "hi"):  # type: ignore[no-untyped-def]
 # --- opening ---
 
 
-def test_a_new_match_opens_the_window_once(rig: Rig) -> None:
-    state = chat_state()
+def test_a_new_match_does_not_open_the_window(rig: Rig) -> None:
+    rig.window.show()
+    rig.window.set_break(BreakState(phase="matched", match=_match()))
+    rig.remote.push_chat(chat_state())
     assert not rig.chat.isVisible()
-    rig.remote.push_chat(state)
+    assert rig.window.open_chat_button.isVisibleTo(rig.window)
+    rig.window.open_chat_button.click()
     assert rig.chat.isVisible()
+
+
+def test_the_window_the_user_opens_is_not_reopened_by_later_updates(
+    rig: Rig,
+) -> None:
+    state = chat_state()
+    rig.remote.push_chat(state)
+    rig.chat.open_for_user()
     rig.chat.hide()
-    rig.remote.push_chat(state)  # same match id, e.g. a new message
     rig.remote.push_chat(chat_state(match_id=state.match_id, messages=(_peer(1),)))
     assert not rig.chat.isVisible()
-    rig.remote.push_chat(chat_state())  # a different match
-    assert rig.chat.isVisible()
 
 
-def test_the_window_that_opens_does_not_take_the_focus(rig: Rig) -> None:
-    from PySide6.QtCore import Qt
+def test_a_match_does_not_raise_or_activate_the_window(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    real_raise, real_activate = rig.chat.raise_, rig.chat.activateWindow
 
+    def spy_raise() -> None:
+        calls.append("raise")
+        real_raise()
+
+    def spy_activate() -> None:
+        calls.append("activate")
+        real_activate()
+
+    monkeypatch.setattr(rig.chat, "raise_", spy_raise)
+    monkeypatch.setattr(rig.chat, "activateWindow", spy_activate)
     rig.remote.push_chat(chat_state())
-    assert rig.chat.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+    assert not rig.chat.isVisible()
+    assert calls == []
+    rig.chat.open_for_user()  # the user's own act still raises and focuses
+    assert calls == ["raise", "activate"]
 
 
 def test_the_chat_window_shows_the_pushed_state(rig: Rig) -> None:
@@ -117,7 +141,7 @@ def test_a_state_already_in_the_worker_is_shown_at_wiring_time(qtbot: QtBot) -> 
     remote._chat = chat_state(peer_nickname="bob_b")
     remote.state = "connected"
     wire_chat(window, chat, remote, DesktopNotifier(chat))
-    assert chat.isVisible()
+    assert not chat.isVisible()
     assert chat.peer_label.text() == "bob_b"
 
 
@@ -133,7 +157,6 @@ def test_without_a_remote_worker_wiring_is_a_no_op(qtbot: QtBot) -> None:
 
 def test_open_chat_button_opens_the_window(rig: Rig) -> None:
     rig.remote.push_chat(chat_state())
-    rig.chat.hide()
     rig.window.show()
     rig.window.set_break(BreakState(phase="matched", match=_match()))
     rig.window.open_chat_button.click()
@@ -210,6 +233,7 @@ def test_typing_and_enter_reaches_send_message(rig: Rig, qtbot: QtBot) -> None:
 
 def test_closing_a_live_window_keeps_the_chat(rig: Rig) -> None:
     rig.remote.push_chat(chat_state())
+    rig.chat.open_for_user()
     rig.chat.close()
     assert not rig.chat.isVisible()
     assert rig.remote.calls.chat_closes == 0
@@ -217,6 +241,7 @@ def test_closing_a_live_window_keeps_the_chat(rig: Rig) -> None:
 
 def test_closing_an_ended_window_forgets_the_chat(rig: Rig) -> None:
     rig.remote.push_chat(chat_state(ended="ended"))
+    rig.chat.open_for_user()
     rig.chat.close()
     assert rig.remote.calls.chat_closes == 1
     rig.remote.push_chat(ChatState())  # the worker's answer
@@ -225,6 +250,7 @@ def test_closing_an_ended_window_forgets_the_chat(rig: Rig) -> None:
 
 def test_the_close_button_of_an_ended_chat_forgets_it(rig: Rig) -> None:
     rig.remote.push_chat(chat_state(ended="expired"))
+    rig.chat.open_for_user()
     rig.chat.close_button.click()
     assert rig.remote.calls.chat_closes == 1
 
@@ -243,6 +269,15 @@ def test_report_dialog_result_reaches_the_worker(rig: Rig) -> None:
 
 
 # --- unread count ---
+
+
+def test_a_never_shown_window_still_counts_unread_and_notifies(rig: Rig) -> None:
+    rig.window.show()
+    rig.remote.push_break(BreakState(phase="matched", match=_match()))
+    rig.remote.push_chat(chat_state(peer_nickname="bob_b", messages=(_peer(1),)))
+    assert not rig.chat.isVisible()
+    assert rig.window.open_chat_button.text() == "Open chat (1)"
+    assert rig.sent() == [("Breakroom", "New message from bob_b")]
 
 
 def test_unread_counts_peer_messages_while_the_window_is_not_active(

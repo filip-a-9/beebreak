@@ -134,9 +134,9 @@ docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT table_nam
 ```
 
 Expect: `postgres`, `mailpit` and `server` running; health prints
-`{"status":"ok"}`; the migration query prints `0003`; the table query prints
-14 names: `alembic_version` plus the 13 tables of DATA_HANDLING (`auth_challenges`,
-`beta_invites`, `blocks`, `devices`, `match_participants`, `matches`,
+`{"status":"ok"}`; the migration query prints `0004`; the table query prints
+15 names: `alembic_version` plus the 14 tables of DATA_HANDLING (`auth_challenges`,
+`beta_invites`, `blocks`, `deleted_account_tombstones`, `devices`, `match_participants`, `matches`,
 `messages`, `queue_entries`, `refresh_tokens`, `report_messages`, `reports`,
 `user_preferences`, `users`). A different version or table list is a `fail`
 against the spec that changed the schema. An `.env` made in M3 lacks the
@@ -738,21 +738,22 @@ account is gone after M6-C12):
    Detailed file names; Claude session identifiers. The notice says the
    device name is `WSL device` by default and is editable before sign-in, and
    the hostname is never sent: matches M6-C11.
-2. **Tables.** The 13 tables of the "On the server" table equal the table
-   query (`TB`, second query in "Postgres queries"; 14 rows with
+2. **Tables.** The 14 tables of the "On the server" table equal the table
+   query (`TB`, second query in "Postgres queries"; 15 rows with
    `alembic_version`).
 3. **Retention values.** DATA_HANDLING gives these defaults; check the code:
 
    ```
-   grep -nE '^    (code_ttl_s|access_ttl_s|refresh_ttl_s|invite_ttl_s|queue_ttl_s|retention_s|message_retention_s|report_retention_s|challenge_retention_s|refresh_token_retention_s|invite_retention_s):' apps/server/src/breakroom_server/config.py
+   grep -nE '^    (code_ttl_s|access_ttl_s|refresh_ttl_s|invite_ttl_s|queue_ttl_s|retention_s|message_retention_s|report_retention_s|challenge_retention_s|refresh_token_retention_s|invite_retention_s|tombstone_retention_s):' apps/server/src/breakroom_server/config.py
    ```
 
    Expect the defaults `86_400` (challenges, messages), `604_800` (refresh
    tokens after expiry, invite validity), `2_592_000` (invites after end,
    queue entries and matches, and `refresh_ttl_s`, the 30-day refresh token),
-   `7_776_000` (resolved reports), `600` (code validity), `900`
+   `7_776_000` (resolved reports), `31_536_000` (tombstones of deleted
+   disabled accounts), `600` (code validity), `900`
    (`access_ttl_s`, the 15 min access token), `90` (search). That is 24 h, 7 d,
-   30 d, 90 d, 10 min, 15 min and 90 s as the documents say.
+   30 d, 90 d, 1 year, 10 min, 15 min and 90 s as the documents say.
 4. **Local files.** With A running as in M6-C11:
 
    ```
