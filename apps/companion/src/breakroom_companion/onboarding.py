@@ -75,6 +75,13 @@ ERROR_TEXT: dict[str, str] = {
     "nickname_reserved": "That nickname is not allowed.",
     "rate_limited": "Too many attempts. Please wait a while and try again.",
     "network": "Could not reach the server. Check your connection and try again.",
+    "credentials_not_saved": (
+        "Signed in, but saving the login on this computer failed. "
+        "Check disk space and permissions, then sign in again."
+    ),
+    "credentials_unreadable": (
+        "The saved login on this computer could not be read. Sign in again."
+    ),
     "invalid_request": "That was not accepted. Check what you typed.",
     "unauthorized": "You have been signed out. Please sign in again.",
 }

@@ -13,7 +13,7 @@ from pytestqt.qtbot import QtBot
 from sqlalchemy import select, update
 
 from breakroom_companion.api_client import ApiClient, ApiError
-from breakroom_companion.credentials import FileCredentialStore
+from breakroom_companion.credentials import FileCredentialStore, StoredCredentials
 from breakroom_companion.remote import RemoteWorker, refresh_delay_s
 from breakroom_companion.remote_config import RemoteConfig
 from breakroom_server.models import Device, User
@@ -490,3 +490,54 @@ def test_a_command_cancelled_before_it_runs_is_closed_not_dropped(
         asyncio.run(scenario())
         gc.collect()
     assert [w for w in caught if issubclass(w.category, RuntimeWarning)] == []
+
+
+# --- credential save failure after the server accepted the sign-in ---
+
+
+class FailingSaveStore(FileCredentialStore):
+    def save(self, creds: StoredCredentials) -> bool:
+        raise OSError("disk full")
+
+
+def test_failed_credential_save_revokes_the_device_and_says_so(
+    qtbot: QtBot,
+    live_server: LiveServer,
+    make_client: Callable[..., Client],
+    tmp_path: Path,
+) -> None:
+    store = FailingSaveStore(tmp_path / "bad.json", live_server.base_url)
+    client = make_client(live_server, store=store)
+    client.worker.start()
+    wait_state(qtbot, client, "signed_out")
+    email = "ada@example.com"
+    client.worker.begin_sign_in(email, live_server.invite(email))
+    wait_for(qtbot, lambda: len(live_server.mailer.sent) > 0)
+    client.worker.verify(live_server.last_code(), "test box")
+
+    wait_for(qtbot, lambda: client.rec.errors != [])
+    assert client.rec.errors == ["credentials_not_saved"]  # not "network"
+    wait_state(qtbot, client, "signed_out")
+    assert not client.rec.has_me()  # the UI was never told it is signed in
+    with live_server.session_factory() as s:
+        devices = s.scalars(select(Device)).all()
+    assert [d.revoked_at is not None for d in devices] == [True]
+
+
+class FailingLoadStore(FileCredentialStore):
+    def load(self) -> StoredCredentials | None:
+        raise TypeError("cannot load")
+
+
+def test_unreadable_credentials_end_signed_out_with_their_own_error(
+    qtbot: QtBot,
+    live_server: LiveServer,
+    make_client: Callable[..., Client],
+    tmp_path: Path,
+) -> None:
+    store = FailingLoadStore(tmp_path / "bad.json", live_server.base_url)
+    client = make_client(live_server, store=store)
+    client.worker.start()
+
+    wait_state(qtbot, client, "signed_out")
+    assert client.rec.errors == ["credentials_unreadable"]  # not "network"

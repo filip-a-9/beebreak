@@ -160,7 +160,7 @@ checks reported` in the first seconds after a push, so each watch below goes
 through a function that waits until jobs are listed. Define it once in T1:
 
 ```
-wait_checks() { until gh pr checks 2>/dev/null | grep -q .; do sleep 5; done; gh pr checks --watch; }
+wait_checks() { until out=$(gh pr checks 2>&1); [ -n "$out" ] && ! grep -qi "no checks reported" <<<"$out"; do sleep 5; done; gh pr checks --watch; }
 ```
 
 **M6-C03 — A failing test turns `checks` red; reverting it turns it green.**
@@ -273,8 +273,9 @@ tar tzf dist/breakroom-release.tar.gz | sort
 Expect: the script prints `built:` and lists `SHA256SUMS`,
 `breakroom-release.tar.gz`, `breakroom_agent_bridge-*.whl`,
 `breakroom_companion-*.whl`, `breakroom_shared-*.whl` and `marketplace`.
-The tarball lists the three wheels, `SHA256SUMS` and `marketplace/` (with
-`.claude-plugin/marketplace.json` and `integrations/claude-code/`). Write the
+The tarball lists the three wheels, `SHA256SUMS`, `./.gitignore` and
+`marketplace/` (with `.claude-plugin/marketplace.json` and
+`integrations/claude-code/`). Write the
 SHA-256 down for M6-C08. `dist/` is git-ignored.
 
 Result (pass / fail / blocked):
@@ -323,21 +324,24 @@ lists them as prerequisites and does not say how). Write down every package
 you had to add (for example `curl`, `ca-certificates`, Qt libraries); each is
 a finding for the README. The companion needs Qt system libraries on a
 fresh distro. Record the finding first (the README names none), then continue
-by installing the set CI uses plus the xcb cursor library: `sudo apt-get
-install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1
-libdbus-1-3 libglib2.0-0t64 libxcb-cursor0`. Check `~/.local/bin` is on `PATH`
+by installing the README's package set: `sudo apt-get install -y
+--no-install-recommends curl ca-certificates libglib2.0-0t64 libegl1 libgl1
+libxkbcommon0 libfontconfig1 libdbus-1-3 libxcb-cursor0 libxkbcommon-x11-0
+libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1`. Check `~/.local/bin` is on `PATH`
 (`uv tool update-shell` adds it, as the README says).
 
 Result (pass / fail / blocked):
 
 **M6-C08 — Install from the wheels (T4).** Exactly the README commands, with
-the explicit wheel paths:
+the explicit wheel paths. The install pins `--python 3.12`: without it, a
+distro that has no `python3` makes uv fetch a newer managed Python, which the
+companion does not support:
 
 ```
 mkdir -p ~/breakroom-release && tar xzf /mnt/c/Temp/breakroom-release.tar.gz -C ~/breakroom-release
 (cd ~/breakroom-release && sha256sum -c SHA256SUMS)
 R=~/breakroom-release
-uv tool install $R/breakroom_companion-*.whl \
+uv tool install --python 3.12 $R/breakroom_companion-*.whl \
   --with $R/breakroom_shared-*.whl \
   --with $R/breakroom_agent_bridge-*.whl \
   --with-executables-from breakroom-agent-bridge
@@ -385,7 +389,7 @@ docker compose exec server breakroom-admin invite create clean@example.com
 In T4 start the companion (`breakroom-companion`). If it does not start with
 an error (an `ImportError` naming `libEGL` or `libGL`, or `Could not load
 the Qt platform plugin "xcb"`), write down the missing system library and
-install it: that is a finding (the README names no system libraries; the list
+install it: that is a finding (the README lists the system packages; the set
 is in M6-C07). Expect the window
 `Not signed in`. Click **Sign in**; enter `clean@example.com` and the invite
 code; take the code from Mailpit (`http://127.0.0.1:8025`); keep the device
@@ -525,8 +529,10 @@ echo "hostname hits in the server log since the start: $(docker compose logs --s
 Expect: `devices`
 shows `FilipM6	FilipM6 test laptop	connected=yes` and `BeaM6	WSL device
 connected=yes`; the query shows the same names with `revoked` `f`; both hostname
-counts print `0` (they cover only rows and log lines created in this run, which
-is why old accounts are not reused). If your hostname is a common word that legitimately occurs
+counts print `0` (the row count covers only rows created in this run, which is
+why old accounts are not reused; the log count covers the whole lifetime of
+the stack, not "since T0", so a hit from an earlier run on the same stack
+counts too). If your hostname is a common word that legitimately occurs
 in the dump, use a longer unique part of it and say so in the note. A count
 above `0` is a `fail` against M6-06 (read the matching line first).
 

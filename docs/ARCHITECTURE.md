@@ -294,7 +294,7 @@ M4: `breakroom_status` gains a fixed `queue` field (`none`/`searching`/`matched`
 
 Agent-facing tools should not be able to silently enroll a user into remote matchmaking: queue entry requires a **direct user acceptance in the companion UI**, independent of what the LLM requests. Tool responses must be bounded and not leak messages or peer profile details into Claude's context. Additional tools require separate acceptance criteria.
 
-M6: the plugin depends on no venv. Hooks and the MCP server run `breakroom-hook` and `breakroom-mcp` from `PATH` (`~/.local/bin` prepended; a repo checkout's `.venv/bin` first), installed with `uv tool install --with-executables-from breakroom-agent-bridge breakroom-companion` from release wheels (`scripts/build_release.sh`). A missing hook binary exits 0 silently, so Claude execution **fails open**; a missing `breakroom-mcp` shows as a failed server in `/mcp`.
+M6: the plugin depends on no venv. Hooks and the MCP server run `breakroom-hook` and `breakroom-mcp` from `PATH` (`~/.local/bin` prepended; a repo checkout's `.venv/bin` first), installed with `uv tool install --python 3.12 --with-executables-from breakroom-agent-bridge breakroom-companion` from release wheels (`scripts/build_release.sh`). A missing hook binary exits 0 silently, so Claude execution **fails open**; a missing `breakroom-mcp` shows as a failed server in `/mcp`.
 
 ## 9. Companion ↔ backend contract
 

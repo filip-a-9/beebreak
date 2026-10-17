@@ -6,7 +6,9 @@ authors = [
     { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }
 ]
 license = "Apache-2.0"
-requires-python = ">=3.12"
+# Upper bound = the Python CI tests (.python-version). Widen it only together
+# with CI.
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "breakroom-shared",
     "mcp==2.3.0",

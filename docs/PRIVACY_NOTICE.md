@@ -73,7 +73,9 @@ Email `<contact address>`. We reply within 14
 days. An access request is answered with a JSON export of your own data; reports
 about you appear only as a date, status and resolution date, without who
 reported you or what they wrote. An erasure request deletes your
-account and everything that refers to it. We cannot do it while you are in the
+account and everything that refers to it, including reports other people
+filed about you and the message copies attached to them, resolved ones too
+(PROPOSED, for the lawyer review). We cannot do it while you are in the
 queue, in a live chat, or on either side of an open report; we will tell you and
 do it once that is resolved. If your account was disabled, the operator reviews
 the request first, because deleting it also removes the record of the ban. Rectification of a nickname or other data goes through

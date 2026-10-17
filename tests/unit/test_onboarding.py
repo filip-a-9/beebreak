@@ -373,6 +373,8 @@ def test_every_mapped_error_text_is_distinct_and_fixed() -> None:
         "nickname_reserved",
         "rate_limited",
         "network",
+        "credentials_not_saved",
+        "credentials_unreadable",
     ):
         assert code in ERROR_TEXT
     assert len(set(ERROR_TEXT.values())) == len(ERROR_TEXT)
@@ -637,3 +639,21 @@ def test_preview_uses_the_picked_tags(qtbot: QtBot) -> None:
         "go",
         "rust",
     ]
+
+
+def test_failed_credential_save_shows_its_own_text(
+    qtbot: QtBot, rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken_save(*_args: object) -> bool:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(rig.store, "save", broken_save)
+    dialog = new_dialog(qtbot, rig)
+    request_code(qtbot, rig, dialog)
+    dialog.code_edit.setText(rig.server.last_code())
+    dialog.next_button.click()
+    qtbot.waitUntil(lambda: error_text(dialog, PAGE_EMAIL) is not None, timeout=WAIT_MS)
+
+    assert error_text(dialog, PAGE_EMAIL) == ERROR_TEXT["credentials_not_saved"]
+    assert ERROR_TEXT["credentials_not_saved"] != ERROR_TEXT["network"]
+    assert dialog.page == PAGE_EMAIL
