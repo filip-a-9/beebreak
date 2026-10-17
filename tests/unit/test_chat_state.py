@@ -20,6 +20,7 @@ from breakroom_companion.chat_state import (
     SendFailed,
     Sending,
     ServerTime,
+    Settled,
     SignedOut,
     StatusEvent,
     reduce,
@@ -78,6 +79,7 @@ M2 = message_view(2, mine=True, client_message_id=CID)
 M3 = message_view(3)
 SENDING = PendingMessage(CID, "hi", "sending")
 FAILED = PendingMessage(OTHER_CID, "yo", "failed")
+FAILED_SENDING = PendingMessage(CID, "hi", "failed")
 NEW_STATUS = chat_status(
     MATCH_ID, ENDS + timedelta(minutes=10), extension="requested_by_peer"
 )
@@ -296,6 +298,24 @@ TABLE: list[tuple[str, ChatState, ChatEvent, ChatState]] = [
         live(ended="ended"),
     ),
     (
+        "ended_by_sync_shows_every_pending_as_sending_until_settled",
+        live(pending=(FAILED,)),
+        Ended(None, None, hold_pending=True),
+        live(pending=(PendingMessage(OTHER_CID, "yo", "sending"),), ended="ended"),
+    ),
+    (
+        "settled_fails_what_is_still_pending",
+        ended(pending=(SENDING,)),
+        Settled(MATCH_ID),
+        ended(pending=(FAILED_SENDING,)),
+    ),
+    (
+        "settled_for_another_match_or_a_live_chat_changes_nothing",
+        live(pending=(SENDING,)),
+        Settled(MATCH_ID),
+        live(pending=(SENDING,)),
+    ),
+    (
         "ended_fails_every_pending_message",
         live(pending=(SENDING, FAILED)),
         Ended(MATCH_ID, "disconnected"),
@@ -389,6 +409,7 @@ def test_the_table_covers_every_event_type_in_live_and_ended_states() -> None:
         ServerTime,
         Closed,
         SignedOut,
+        Settled,
     }
     assert {s.ended is None for _, s, _, _ in TABLE if s.match_id} == {True, False}
 

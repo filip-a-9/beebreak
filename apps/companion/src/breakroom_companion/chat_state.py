@@ -92,6 +92,18 @@ class Ended:
 
     match_id: UUID | None
     reason: MatchEndReason | None
+    # A `sync` learns of the end after an offline spell: a pending message may
+    # already be stored (its reply lost with the connection, even if it was
+    # shown as failed), so every pending one shows `sending` until `Settled`
+    # (after the gap fill has had the chance to echo it).
+    hold_pending: bool = False
+
+
+@dataclass(frozen=True)
+class Settled:
+    """The ended chat's gap fill is over: what is still pending was not stored."""
+
+    match_id: UUID
 
 
 @dataclass(frozen=True)
@@ -123,6 +135,7 @@ ChatEvent = (
     | Sending
     | SendFailed
     | Ended
+    | Settled
     | Reported
     | ServerTime
     | Closed
@@ -167,18 +180,32 @@ def reduce(state: ChatState, event: ChatEvent, now: datetime) -> ChatState:
             return _sending(state, cid, body)
         case SendFailed(client_message_id=cid):
             return _send_failed(state, cid)
-        case Ended(match_id=match_id, reason=reason):
+        case Settled(match_id=match_id):
+            if match_id != state.match_id or state.ended is None:
+                return state
+            return _fail_all(state)
+        case Ended(match_id=match_id, reason=reason, hold_pending=hold):
             if state.match_id is None or state.ended is not None:
                 return state
             if match_id is not None and match_id != state.match_id:
                 return state
-            failed = tuple(replace(p, status="failed") for p in state.pending)
-            return replace(state, ended=reason or "ended", pending=failed)
+            ended = replace(state, ended=reason or "ended")
+            return _recheck_all(ended) if hold else _fail_all(ended)
         case Reported(match_id=match_id):
             if match_id != state.match_id or state.reported:
                 return state
             return replace(state, reported=True)
     return state  # pragma: no cover
+
+
+def _fail_all(state: ChatState) -> ChatState:
+    failed = tuple(replace(p, status="failed") for p in state.pending)
+    return state if failed == state.pending else replace(state, pending=failed)
+
+
+def _recheck_all(state: ChatState) -> ChatState:
+    pending = tuple(replace(p, status="sending") for p in state.pending)
+    return state if pending == state.pending else replace(state, pending=pending)
 
 
 def _matched(state: ChatState, match: MatchView) -> ChatState:

@@ -47,6 +47,7 @@ from breakroom_companion.chat_state import (
     SendFailed,
     Sending,
     ServerTime,
+    Settled,
     StatusEvent,
 )
 from breakroom_companion.chat_state import SignedOut as ChatSignedOut
@@ -375,7 +376,9 @@ class RemoteWorker(QObject):
             # The reason is that of the chat we never held a match for only if
             # the server names our chat; otherwise it is the generic end.
             known = ended_match_id == self._chat.match_id
-            self._apply_chat(Ended(None, ended_reason if known else None))
+            self._apply_chat(
+                Ended(None, ended_reason if known else None, hold_pending=was_live)
+            )
             if was_live:
                 self._check_gap(max(self._contiguous() + 1, self._last_seq_seen))
 
@@ -474,6 +477,7 @@ class RemoteWorker(QObject):
         finally:
             self._gap_tasks.pop(match_id, None)
             self._gap_target.pop(match_id, None)
+            self._apply_chat(Settled(match_id))
 
     async def _fetch_page(
         self, api: ApiClient, match_id: UUID, after_seq: int
