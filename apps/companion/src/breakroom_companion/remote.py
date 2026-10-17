@@ -726,7 +726,13 @@ class RemoteWorker(QObject):
     async def _start(self) -> None:
         if self._signed_in or self.state == "signing_in":
             return
-        creds = await asyncio.to_thread(self.store.load)
+        try:
+            creds = await asyncio.to_thread(self.store.load)
+        except Exception:
+            _log.warning("reading the saved login failed")
+            self._set_state("signed_out", force=True)
+            self._emit_error("credentials_unreadable")
+            return
         if creds is None:
             self._set_state("signed_out", force=True)  # tell the UI where we are
             return
@@ -760,10 +766,27 @@ class RemoteWorker(QObject):
             raise
         self._challenge_id = None
         self._adopt(session.tokens)
-        await self._persist(session.tokens)  # persist first, then tell the UI
+        try:
+            await self._persist(session.tokens)  # persist first, then tell the UI
+        except Exception:
+            # The server accepted this device but the login cannot be kept, so
+            # it could never be used. Revoke it, then report a distinct error.
+            _log.warning("saving the login failed after sign-in")
+            await self._revoke_unsaved(session.tokens)
+            self._set_state("signed_out")
+            self._emit_error("credentials_not_saved")
+            return
         self._signed_in = True
         self._emit_me(session.me)
         self._begin_connection(fetch_me=False)
+
+    async def _revoke_unsaved(self, tokens: TokenPair) -> None:
+        """Best effort: log out the device whose tokens could not be stored."""
+        api = self._api
+        self._access = self._refresh_token = None
+        if api is not None:
+            with contextlib.suppress(Exception):  # bounded by the http timeout
+                await api.logout(tokens.access_token)
 
     # --- tokens ---
 

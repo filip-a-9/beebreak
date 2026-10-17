@@ -95,7 +95,10 @@ admin CLI and answers within 14 days.
   refused while you are queued, in a live chat, or on either side of an open
   report. A disabled account is deleted only after the operator reviews it;
   deleting it leaves a keyed hash of its email for a year (see the
-  tombstone row in the table above). Your devices are
+  tombstone row in the table above). Deleting an account also deletes the
+  reports filed against it and their evidence, resolved ones included, so the
+  record of a resolved report about you goes with you (PROPOSED, for the
+  lawyer review). Your devices are
   signed out first. If the other person in a chat remains, their side of the chat is
   kept.
 

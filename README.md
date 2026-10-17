@@ -30,8 +30,23 @@ draft [privacy notice](docs/PRIVACY_NOTICE.md).
 
 ## Install
 
-WSL2 only. Needs [uv](https://docs.astral.sh/uv/) and Claude Code in the same
-WSL distro, and `~/.local/bin` on your `PATH` (`uv tool update-shell` adds it).
+WSL2 only. On a fresh Ubuntu distro, set up these first, in the same distro:
+
+1. System packages, as one line (a WSL Ubuntu image already has some of them;
+   `apt` skips what is installed):
+
+   ```bash
+   sudo apt-get update && sudo apt-get install -y --no-install-recommends curl ca-certificates libglib2.0-0t64 libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1
+   ```
+
+2. [uv](https://docs.astral.sh/uv/getting-started/installation/) and
+   [Claude Code](https://docs.claude.com/en/docs/claude-code/setup): follow
+   each official install page.
+3. `~/.local/bin` on your `PATH` (`uv tool update-shell` adds it).
+
+The companion supports Python 3.12 only, so the install below passes
+`--python 3.12`. uv uses a `python3` 3.12 if the distro has one and downloads
+one otherwise; without the flag it could pick a newer Python that does not work.
 
 The repository is private, so testers install from a release bundle
 (`breakroom-release.tar.gz`, built by `scripts/build_release.sh`). Compare the
@@ -47,7 +62,7 @@ mkdir -p ~/breakroom-release && tar xzf breakroom-release.tar.gz -C ~/breakroom-
 # the same name from PyPI. This also installs the breakroom-hook and
 # breakroom-mcp commands the plugin calls.
 R=~/breakroom-release
-uv tool install $R/breakroom_companion-*.whl \
+uv tool install --python 3.12 $R/breakroom_companion-*.whl \
   --with $R/breakroom_shared-*.whl \
   --with $R/breakroom_agent_bridge-*.whl \
   --with-executables-from breakroom-agent-bridge
@@ -74,7 +89,7 @@ Without the `breakroom-hook` command on `PATH` the hooks do nothing and stay
 silent (the `breakroom` MCP server shows as failed in `/mcp`).
 
 Once the repository is public, the wheels step becomes
-`uv tool install --with-executables-from breakroom-agent-bridge "git+https://github.com/<owner>/<repo>#subdirectory=apps/companion"`
+`uv tool install --python 3.12 --with-executables-from breakroom-agent-bridge "git+https://github.com/<owner>/<repo>#subdirectory=apps/companion"`
 (untested until then) and the marketplace is `claude plugin marketplace add <owner>/<repo>`.
 
 ## Uninstall

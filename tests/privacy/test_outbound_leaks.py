@@ -840,6 +840,9 @@ class Scenario:
     local_state: Path | None = None
     proxy_port: int = 0
     uninstall_files: dict[str, list[bytes]] = field(default_factory=dict)
+    # tmp_path files as they were just before uninstall: the real uninstall
+    # revokes worker A, which then clears its own creds file, racing the scan.
+    pre_uninstall_files: dict[str, list[bytes]] = field(default_factory=dict)
 
 
 def step_sign_in(s: Scenario) -> None:
@@ -1037,6 +1040,7 @@ def step_uninstall(s: Scenario) -> None:
     root = Path(tempfile.mkdtemp(dir="/tmp"))  # short: a socket path lives here
     mp = pytest.MonkeyPatch()
     try:
+        s.pre_uninstall_files = companion_file_blobs(s.tmp_path)
         isolate_home(root, mp)
         url = f"http://127.0.0.1:{s.proxy_port}"
         assert cli.main(["install", "--server-url", url, "--autostart"]) == 0
@@ -1119,12 +1123,15 @@ def all_channels(
     caplog: pytest.LogCaptureFixture,
     capfd: pytest.CaptureFixture[str],
 ) -> dict[str, list[bytes]]:
+    files = {k: list(v) for k, v in s.pre_uninstall_files.items()}
+    for key, blobs in companion_file_blobs(s.tmp_path).items():
+        files.setdefault(key, []).extend(blobs)
     return (
         capture.channels()
         | log_blobs(caplog, capfd)
         | dump_database(s.server)
         | {"export": s.exports}
-        | companion_file_blobs(s.tmp_path)
+        | files
         | s.uninstall_files
     )
 
