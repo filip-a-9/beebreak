@@ -251,7 +251,13 @@ def test_no_ready_frame_in_time_is_an_error() -> None:
     run(with_fake_server(handler, scenario))
 
 
-@pytest.mark.parametrize("first_reply", ["not json", pong_frame()])
+@pytest.mark.parametrize(
+    "first_reply",
+    [
+        pytest.param("not json", id="not-json"),
+        pytest.param(pong_frame(), id="pong-instead-of-ready"),
+    ],
+)
 def test_bad_first_reply_is_an_error(first_reply: str) -> None:
     async def handler(ws: ServerConnection) -> None:
         await ws.recv()

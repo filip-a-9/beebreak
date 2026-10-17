@@ -16,6 +16,19 @@ def _isolate_breakroom_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _freeze_imported_objects() -> Iterator[None]:
+    """Move everything alive at session start (imports of Qt, SQLAlchemy,
+    FastAPI, ...) out of the collector's sight. The per-test full collect then
+    walks only what the tests created, so its cost no longer grows with the
+    size of the imported libraries. Frozen objects are never freed, which is
+    fine for modules that live for the whole run."""
+    gc.collect()
+    gc.freeze()
+    yield
+    gc.unfreeze()
+
+
 @pytest.fixture(autouse=True)
 def _collect_cycles_on_main_thread() -> Iterator[None]:
     """The companion's GC policy for the suite (see gc_policy): no automatic
