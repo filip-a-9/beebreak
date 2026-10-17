@@ -13,9 +13,103 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
+  # The single definition of the test groups. Every path under tests/ must be in
+  # exactly one group; the `collection` job fails the run otherwise.
+  groups:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      matrix: ${{ steps.define.outputs.matrix }}
+    steps:
+      - id: define
+        # Whole directories, from the 2026-10-17 timings (fresh process each):
+        # server 366 s, unit 289 s, the rest about 82 s together.
+        run: |
+          cat <<'EOF' | jq -c . | sed 's/^/matrix=/' >> "$GITHUB_OUTPUT"
+          [
+            {"name": "server", "paths": "tests/server"},
+            {"name": "unit", "paths": "tests/unit"},
+            {"name": "rest", "paths": "tests/contract tests/privacy tests/regression tests/e2e tests/integration"}
+          ]
+          EOF
+
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false # no later step needs the token
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32" # keep in step with the uv version the Dockerfile pins
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run mypy packages apps tests tools
+
+  collection:
+    needs: groups
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false # no later step needs the token
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32" # keep in step with the uv version the Dockerfile pins
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Collection imports the test modules, and several import PySide6 at the
+      # top, so this job needs the same Qt libraries as the test jobs.
+      - name: Install Qt system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0t64
+
+      - run: uv sync --frozen
+
+      - name: Every test is in exactly one group
+        env:
+          QT_QPA_PLATFORM: offscreen
+          MATRIX: ${{ needs.groups.outputs.matrix }}
+        run: |
+          # Parameter ids are cut off because some are not stable between
+          # collections; the sorted list keeps repeats, so a test missing from
+          # every group shows as `<` and one in two groups as `>`.
+          collect() {
+            uv run pytest --collect-only -q "$@" | grep '::' | sed 's/\[.*$//'
+          }
+          collect | sort > all.txt
+          : > grouped.txt
+          for paths in $(jq -r '.[].paths | @base64' <<<"$MATRIX"); do
+            # shellcheck disable=SC2046 # word splitting of the path list is intended
+            collect $(base64 -d <<<"$paths") >> grouped.txt
+          done
+          sort grouped.txt > grouped_sorted.txt
+          if ! diff all.txt grouped_sorted.txt; then
+            echo "::error::Test groups do not cover every test exactly once (< missing, > repeated)"
+            exit 1
+          fi
+          echo "$(wc -l < all.txt) tests, each in exactly one group"
+
+  tests:
+    needs: groups
+    name: tests (${{ matrix.group.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false # report every failing group, not just the first
+      matrix:
+        group: ${{ fromJSON(needs.groups.outputs.matrix) }}
 
     services:
       postgres:
@@ -57,14 +151,31 @@ jobs:
             libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0t64
 
       - run: uv sync --frozen
-      - run: uv run ruff format --check .
-      - run: uv run ruff check .
-      - run: uv run mypy packages apps tests tools
 
       - name: Tests
         env:
           QT_QPA_PLATFORM: offscreen
           BREAKROOM_TEST_DATABASE_URL: postgresql+psycopg://breakroom:breakroom-ci-throwaway@localhost:5432/breakroom_test
+          PATHS: ${{ matrix.group.paths }}
         # No DISPLAY and no Secret Service on the runner: credentials take the
         # 0600 file fallback.
-        run: uv run pytest
+        run: |
+          # shellcheck disable=SC2086 # word splitting of the path list is intended
+          uv run pytest $PATHS
+
+  # The one check name to watch (and to mark required once the plan allows it).
+  # `always()` makes it fail, not skip, when a job it needs fails.
+  checks:
+    needs: [groups, lint, collection, tests]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: All jobs succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for r in $RESULTS; do
+            [ "$r" = success ] || { echo "::error::a required job did not succeed"; exit 1; }
+          done
