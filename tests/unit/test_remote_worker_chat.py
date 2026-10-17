@@ -513,6 +513,40 @@ def test_a_resent_message_does_not_overtake_a_later_send(
     assert [m["body"] for m in server.messages] == ["old", "new"]
 
 
+def test_a_sync_without_a_match_shows_the_reason_the_chat_ended(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
+) -> None:
+    rig = make_rig()
+    open_chat(qtbot, rig)
+    server.sync = {
+        "queue": None,
+        "match": None,
+        "ended_reason": "disconnected",
+        "ended_match_id": str(MATCH_ID),
+    }
+
+    server.drop_sockets()
+
+    wait(qtbot, lambda: rig.rec.last.ended == "disconnected")
+
+
+def test_a_reason_for_another_chat_is_not_applied(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
+) -> None:
+    rig = make_rig()
+    open_chat(qtbot, rig)
+    server.sync = {
+        "queue": None,
+        "match": None,
+        "ended_reason": "disconnected",
+        "ended_match_id": str(OTHER),
+    }
+
+    server.drop_sockets()
+
+    wait(qtbot, lambda: rig.rec.last.ended == "ended")
+
+
 def test_a_chat_that_ended_while_offline_still_fetches_what_it_missed(
     qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
 ) -> None:
@@ -525,6 +559,32 @@ def test_a_chat_that_ended_while_offline_still_fetches_what_it_missed(
 
     wait(qtbot, lambda: rig.rec.last.ended == "ended")
     wait(qtbot, lambda: seqs(rig.rec.last) == [1, 2])
+
+
+def test_a_pending_message_the_server_stored_shows_once_after_the_chat_ended(
+    qtbot: QtBot, make_rig: Callable[..., Rig], server: ChatServer
+) -> None:
+    rig = make_rig()
+    open_chat(qtbot, rig)
+    server.drop_sockets()
+    wait(qtbot, lambda: "offline" in rig.rec.connection)
+    rig.worker.send_message("old")
+    wait(qtbot, lambda: [p.status for p in rig.rec.last.pending] == ["sending"])
+    cid = str(rig.rec.last.pending[0].client_message_id)
+    # The server stored it before the chat ended; the reply never arrived.
+    stored = message_json(1, mine=True, body="old", client_message_id=cid)
+    server.messages = [stored]
+    server.sent[cid] = stored
+    server.sync = {"queue": None, "match": None}
+
+    connected = rig.rec.connection.count("connected")
+    wait(qtbot, lambda: rig.rec.connection.count("connected") > connected)
+
+    wait(qtbot, lambda: rig.rec.last.ended == "ended")
+    wait(qtbot, lambda: seqs(rig.rec.last) == [1])
+    qtbot.wait(200)
+    assert seqs(rig.rec.last) == [1]
+    assert rig.rec.last.pending == ()
 
 
 def _ended_then_other_device_matches(qtbot: QtBot, rig: Rig) -> None:

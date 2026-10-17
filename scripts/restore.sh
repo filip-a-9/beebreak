@@ -18,8 +18,9 @@
 # asked for deletion in the meantime still needs `breakroom-admin account
 # delete` again if their account came back (see docs/RUNBOOK.md).
 #
-# Environment (all optional): BREAKROOM_COMPOSE_FILE, BREAKROOM_DB_USER,
-# BREAKROOM_DB_NAME, COMPOSE_PROJECT_NAME, as for backup.sh.
+# Environment: COMPOSE_PROJECT_NAME is REQUIRED (non-empty; the script refuses to
+# run without it, so --force cannot reach the dev stack's database). Optional:
+# BREAKROOM_COMPOSE_FILE, BREAKROOM_DB_USER, BREAKROOM_DB_NAME, as for backup.sh.
 
 set -Eeuo pipefail
 umask 077
@@ -51,6 +52,13 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# The dev stack shares the directory-derived project name; naming the project
+# on purpose keeps a backup or --force restore away from the wrong database.
+if [[ -z "${COMPOSE_PROJECT_NAME:-}" ]]; then
+    echo "COMPOSE_PROJECT_NAME is not set; name the compose project first." >&2
+    exit 2
+fi
 
 if [[ -z "$backup" ]]; then
     usage

@@ -428,3 +428,13 @@ def test_a_full_scenario_gap_fill_after_frames() -> None:
     )
 
     assert [m.seq for m in state.messages] == [1, 2, 3, 4, 5]
+
+
+def test_a_pending_message_the_server_stored_shows_once_after_the_end() -> None:
+    state = reduced(live(), Sending(CID, "hi"))
+    state = reduced(state, Ended(None, None))
+    assert [p.status for p in state.pending] == ["failed"]  # until the gap fill
+    stored = message_view(1, mine=True, body="hi", client_message_id=CID)
+    state = reduced(state, Messages(MATCH_ID, page(stored)))
+    assert [m.seq for m in state.messages] == [1]
+    assert state.pending == ()

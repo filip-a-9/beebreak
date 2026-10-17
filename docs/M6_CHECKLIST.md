@@ -594,11 +594,10 @@ exercise Caddy's real certificate or a real mail provider (those move to the
 rehearsal deploy). This needs **its own Compose project name**: the
 production file and the development file share the directory name, so
 without `COMPOSE_PROJECT_NAME` the drill would share (and `down -v` would
-destroy) the development database volume. `backup.sh` and `restore.sh` fall
-back to `compose.prod.yaml` and to the directory's project name when
-`BREAKROOM_COMPOSE_FILE` or `COMPOSE_PROJECT_NAME` is missing, and `restore.sh
---force` runs `drop schema public cascade`: in a fresh shell that would hit the
-development database. So nothing here relies on exported variables. Two shell
+destroy) the development database volume. `backup.sh` and `restore.sh` exit 2
+without `COMPOSE_PROJECT_NAME`, but still fall back to `compose.prod.yaml`
+when `BREAKROOM_COMPOSE_FILE` is missing, and `restore.sh --force` runs `drop
+schema public cascade`. So nothing here relies on exported variables. Two shell
 functions pass both values on every call, and `drill` refuses to run unless the
 merged file's project name is `breakroom-m6drill` (a python one-liner reads it,
 because `jq` is not installed on this machine). Define them in the shell you

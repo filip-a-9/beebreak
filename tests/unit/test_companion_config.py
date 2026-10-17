@@ -9,6 +9,7 @@ CASES: list[tuple[Callable[[], float], str, float]] = [
     (config.worker_start_timeout_s, "BREAKROOM_WORKER_START_TIMEOUT_S", 5.0),
     (config.worker_stop_timeout_s, "BREAKROOM_WORKER_STOP_TIMEOUT_S", 5.0),
     (config.probe_timeout_s, "BREAKROOM_PROBE_TIMEOUT_S", 1.0),
+    (config.notify_interval_s, "BREAKROOM_NOTIFY_INTERVAL_S", 10.0),
 ]
 
 

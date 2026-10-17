@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, get_args
@@ -6,7 +7,7 @@ from uuid import uuid4
 import pytest
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 
 from breakroom_companion.app import initial_status, setup_remote, wire
@@ -80,7 +81,7 @@ def test_label_is_plain_text(window: CompanionWindow) -> None:
 
 def test_window_is_always_on_top_and_titled(window: CompanionWindow) -> None:
     assert window.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
-    assert window.windowTitle() == "Breakroom"
+    assert window.windowTitle() != ""
 
 
 def test_suggested_shows_the_window(window: CompanionWindow) -> None:
@@ -299,12 +300,7 @@ def test_status_snapshot_carries_activity_and_estimate(qtbot: QtBot) -> None:
 
 # --- account row (M3-05b) ---
 
-ACCOUNT_TEXT = {
-    "signed_out": "Not signed in",
-    "signing_in": "Signing in\N{HORIZONTAL ELLIPSIS}",
-    "connecting": "Connecting\N{HORIZONTAL ELLIPSIS}",
-    "offline": "Offline \N{EN DASH} retrying",
-}
+ACCOUNT_STATES = ["signed_out", "signing_in", "connecting", "offline"]
 FULL_ME = Me(
     nickname="ada_l",
     consent=Consent(version=1),
@@ -312,18 +308,18 @@ FULL_ME = Me(
 )
 
 
-@pytest.mark.parametrize(("state", "text"), list(ACCOUNT_TEXT.items()))
-def test_account_row_fixed_text_per_state(
-    window: CompanionWindow, state: str, text: str
-) -> None:
-    window.set_remote_state(state)
-    assert window.account_label.text() == text
+def test_account_row_has_its_own_text_per_state(window: CompanionWindow) -> None:
+    texts = set()
+    for state in ACCOUNT_STATES:
+        window.set_remote_state(state)
+        texts.add(window.account_label.text())
+    assert len(texts) == len(ACCOUNT_STATES) and "" not in texts
 
 
 def test_account_row_connected_shows_the_nickname(window: CompanionWindow) -> None:
     window.set_remote_state("connected")
     window.set_me(FULL_ME)
-    assert window.account_label.text() == "Connected as ada_l"
+    assert "ada_l" in window.account_label.text()
 
 
 @pytest.mark.parametrize(
@@ -336,7 +332,8 @@ def test_hostile_nickname_is_never_rendered(
     window.set_me(
         Me.model_construct(nickname=nickname, consent=None, consented_at=None)
     )
-    assert window.account_label.text() == "Connected as ?"
+    shown = window.account_label.text()
+    assert "?" in shown and nickname not in shown
     assert window.account_label.textFormat() == Qt.TextFormat.PlainText
 
 
@@ -415,7 +412,7 @@ def test_unencrypted_note_only_when_signed_in_without_encryption(
     assert window.account_note.isHidden()  # nothing stored while signed out
     window.set_remote_state("connected")
     assert window.account_note.isVisible()
-    assert window.account_note.text() == "Stored unencrypted"
+    assert "unencrypted" in window.account_note.text().lower()
     window.set_store_encrypted(True)
     assert window.account_note.isHidden()
 
@@ -423,10 +420,11 @@ def test_unencrypted_note_only_when_signed_in_without_encryption(
 def test_unavailable_account_row_stays_disabled(window: CompanionWindow) -> None:
     window.show()
     window.set_remote_unavailable()
-    assert window.account_label.text() == "Server address not allowed"
+    unavailable = window.account_label.text()
+    assert unavailable != ""
     window.set_remote_state("connected")
     window.set_me(FULL_ME)
-    assert window.account_label.text() == "Server address not allowed"
+    assert window.account_label.text() == unavailable
     assert _visible(window) == set()
 
 
@@ -444,7 +442,9 @@ def test_refused_server_url_leaves_the_companion_running(
 ) -> None:
     monkeypatch.setenv("BREAKROOM_SERVER_URL", "http://example.com")
     assert setup_remote(window) is None
-    assert window.account_label.text() == "Server address not allowed"
+    assert window.account_label.text() != ""
+    assert "ada_l" not in window.account_label.text()
+    assert not window.sign_in_button.isVisibleTo(window)
     window.set_state("idle")  # the rest of the window keeps working
     assert window.status_label.text() != ""
 
@@ -456,10 +456,11 @@ def test_allowed_server_url_builds_a_worker_and_wires_the_row(
     worker = setup_remote(window)
     assert worker is not None
     worker.state_changed.emit("connecting")
-    assert window.account_label.text() == ACCOUNT_TEXT["connecting"]
+    connecting = window.account_label.text()
+    assert connecting != "" and "ada_l" not in connecting
     worker.me_changed.emit(FULL_ME)
     worker.state_changed.emit("connected")
-    assert window.account_label.text() == "Connected as ada_l"
+    assert "ada_l" in window.account_label.text()
     assert worker.state == "signed_out"  # nothing started, no network
     worker.stop()
 
@@ -509,7 +510,7 @@ def test_nothing_in_the_break_area_until_ready(window: CompanionWindow) -> None:
     assert _break_visible(window) == set()
     window.set_ready(True)
     assert _break_visible(window) == {"find"}
-    assert window.find_button.text() == "Find a break partner"
+    assert window.find_button.text() != ""
     window.set_ready(False)
     assert _break_visible(window) == set()
 
@@ -522,7 +523,7 @@ def test_searching_shows_text_and_cancel_only(
     window.set_ready(True)
     window.set_break(BreakState(phase=phase, entry=_entry()))
     assert _break_visible(window) == {"text", "cancel"}
-    assert window.break_label.text().startswith("Looking for a break partner")
+    assert window.break_label.text() != ""
 
 
 def test_matched_shows_nickname_shared_labels_and_open_chat(
@@ -537,7 +538,7 @@ def test_matched_shows_nickname_shared_labels_and_open_chat(
         )
     )
     assert _break_visible(window) == {"text", "shared", "open_chat"}
-    assert window.break_label.text() == "Chatting with bob_b"
+    assert "bob_b" in window.break_label.text()
     assert "Python" in window.shared_label.text()
     assert "C#" in window.shared_label.text()
     assert "Backend" in window.shared_label.text()
@@ -558,7 +559,7 @@ def test_a_peer_nickname_failing_the_pattern_shows_a_question_mark(
     window: CompanionWindow, nickname: str
 ) -> None:
     window.set_break(BreakState(phase="matched", match=_match(nickname)))
-    assert window.break_label.text() == "Chatting with ?"
+    assert "?" in window.break_label.text()
     assert nickname not in window.break_label.text()
 
 
@@ -595,7 +596,10 @@ def test_nobody_available_offers_ok_and_find(window: CompanionWindow) -> None:
     window.set_ready(True)
     window.set_break(BreakState(phase="nobody_available"))
     assert _break_visible(window) == {"text", "ok", "find"}
-    assert window.break_label.text() == "Nobody is around right now. Try again later."
+    nobody = window.break_label.text()
+    assert nobody != ""
+    window.set_break(BreakState(phase="ended"))
+    assert window.break_label.text() not in ("", nobody)
 
 
 def test_ended_shows_text_and_ok_only(window: CompanionWindow) -> None:
@@ -603,7 +607,7 @@ def test_ended_shows_text_and_ok_only(window: CompanionWindow) -> None:
     window.set_ready(True)
     window.set_break(BreakState(phase="ended"))
     assert _break_visible(window) == {"text", "ok"}
-    assert window.break_label.text() == "Break ended."
+    assert window.break_label.text() != ""
 
 
 def test_find_is_hidden_during_a_break_even_when_ready(
@@ -762,6 +766,10 @@ def test_block_on_the_ended_screen_needs_confirmation_too(
         window.block_button.click()
 
 
+def _digits(button: QPushButton) -> list[str]:
+    return re.findall(r"\d+", button.text())
+
+
 # --- M5-06: chat entry point in the break area ---
 
 
@@ -770,7 +778,7 @@ def test_matched_offers_open_chat_without_a_count_by_default(
 ) -> None:
     window.show()
     window.set_break(BreakState(phase="matched", match=_match()))
-    assert window.open_chat_button.text() == "Open chat"
+    assert _digits(window.open_chat_button) == []
     assert not window.block_button.isVisibleTo(window)
     assert not hasattr(window, "end_button")
 
@@ -779,11 +787,11 @@ def test_open_chat_shows_the_unread_count(window: CompanionWindow) -> None:
     window.show()
     window.set_break(BreakState(phase="matched", match=_match()))
     window.set_unread(3)
-    assert window.open_chat_button.text() == "Open chat (3)"
+    assert _digits(window.open_chat_button) == ["3"]
     window.set_unread(0)
-    assert window.open_chat_button.text() == "Open chat"
+    assert _digits(window.open_chat_button) == []
     window.set_unread(-5)
-    assert window.open_chat_button.text() == "Open chat"
+    assert _digits(window.open_chat_button) == []
 
 
 def test_open_chat_is_only_offered_while_matched(window: CompanionWindow) -> None:

@@ -66,6 +66,7 @@ from breakroom_shared.api import (
     WS_CLOSE,
     Consent,
     ExtensionAction,
+    MatchEndReason,
     MatchView,
     Me,
     MessagePage,
@@ -275,7 +276,7 @@ class RemoteWorker(QObject):
             coro.close()
             return
         try:
-            asyncio.run_coroutine_threadsafe(self._guard(coro), loop)
+            loop.call_soon_threadsafe(self._spawn, coro)
         except RuntimeError:  # loop already closed
             coro.close()
 
@@ -295,6 +296,17 @@ class RemoteWorker(QObject):
         )
         self._ready.set()
         await self._stop_event.wait()
+
+    def _spawn(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        """Run `coro` guarded, as a task on the worker loop.
+
+        A task cancelled before its first step never runs `_guard`'s body, so
+        the inner coroutine would be dropped unawaited (a RuntimeWarning at
+        shutdown). Closing it when the task ends is a no-op if it ran.
+        """
+        task = asyncio.create_task(self._guard(coro))
+        task.add_done_callback(lambda _task: coro.close())
+        return task
 
     async def _guard(self, coro: Coroutine[Any, Any, None]) -> None:
         assert self._command_lock is not None
@@ -343,7 +355,14 @@ class RemoteWorker(QObject):
                 self.break_changed.emit(new)
 
     def _apply_sync(
-        self, queue: Any, match: Any, in_flight: bool, *, from_frame: bool
+        self,
+        queue: Any,
+        match: Any,
+        in_flight: bool,
+        *,
+        from_frame: bool,
+        ended_reason: MatchEndReason | None = None,
+        ended_match_id: UUID | None = None,
     ) -> None:
         self._apply(Sync(queue, match, in_flight))
         if match is not None:
@@ -353,7 +372,10 @@ class RemoteWorker(QObject):
             # Fetch what was missed meanwhile (a late report needs it): at least
             # one probe past what we hold, then on to the server's `last_seq`.
             was_live = self._chat.ended is None
-            self._apply_chat(Ended(None, None))
+            # The reason is that of the chat we never held a match for only if
+            # the server names our chat; otherwise it is the generic end.
+            known = ended_match_id == self._chat.match_id
+            self._apply_chat(Ended(None, ended_reason if known else None))
             if was_live:
                 self._check_gap(max(self._contiguous() + 1, self._last_seq_seen))
 
@@ -365,7 +387,12 @@ class RemoteWorker(QObject):
             self._frames_seen += 1
         if isinstance(frame, WsSync):
             self._apply_sync(
-                frame.queue, frame.match, self._join_in_flight, from_frame=True
+                frame.queue,
+                frame.match,
+                self._join_in_flight,
+                from_frame=True,
+                ended_reason=frame.ended_reason,
+                ended_match_id=frame.ended_match_id,
             )
         elif isinstance(frame, WsMatchCreated):
             self._apply(Frame(frame))
@@ -519,7 +546,7 @@ class RemoteWorker(QObject):
         if self._resend_task is None or self._resend_task.done():
             # Through the command lock, so a resent old message cannot overtake
             # a send the user made after the reconnect.
-            self._resend_task = asyncio.create_task(self._guard(self._resend_pending()))
+            self._resend_task = self._spawn(self._resend_pending())
 
     async def _resend_pending(self) -> None:
         for pending in self._chat.pending:

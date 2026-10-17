@@ -13,11 +13,12 @@
 # (emails, nicknames, messages not yet purged): keep it encrypted and off the
 # server it protects.
 #
-# Environment (all optional):
+# Environment (COMPOSE_PROJECT_NAME is required, the rest optional):
 #   BREAKROOM_COMPOSE_FILE  compose file (default: compose.prod.yaml)
 #   BREAKROOM_DB_USER       database user (default: breakroom)
 #   BREAKROOM_DB_NAME       database name (default: breakroom)
-#   COMPOSE_PROJECT_NAME    compose project, as docker compose reads it
+#   COMPOSE_PROJECT_NAME    REQUIRED: the compose project (non-empty), as docker
+#                           compose reads it; the script refuses to run without
 
 set -euo pipefail
 umask 077
@@ -42,6 +43,13 @@ while [[ $# -gt 0 ]]; do
         *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
     esac
 done
+
+# The dev stack shares the directory-derived project name; naming the project
+# on purpose keeps a backup or --force restore away from the wrong database.
+if [[ -z "${COMPOSE_PROJECT_NAME:-}" ]]; then
+    echo "COMPOSE_PROJECT_NAME is not set; name the compose project first." >&2
+    exit 2
+fi
 
 if [[ -n "$age_recipient" && -n "$gpg_recipient" ]]; then
     echo "choose one of --age-recipient and --gpg-recipient" >&2

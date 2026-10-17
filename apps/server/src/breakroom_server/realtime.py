@@ -19,13 +19,14 @@ from uuid import UUID
 from fastapi import APIRouter, FastAPI, WebSocket
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select, update
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 from breakroom_server.auth import Principal, authenticate_access
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
-from breakroom_server.models import Device, User
+from breakroom_server.models import Device, Match, MatchParticipant, User
 from breakroom_server.notify import make_frame as make_frame
 from breakroom_server.queue import current_state
 from breakroom_server.ratelimit import RateLimiter
@@ -33,6 +34,7 @@ from breakroom_shared.api import (
     MAX_WS_FRAME_BYTES,
     WS_CLOSE,
     ClientWsFrame,
+    MatchEndReason,
     MatchView,
     QueueEntryView,
     WsAuth,
@@ -252,11 +254,39 @@ async def _flush(ws: WebSocket, conn: Connection) -> None:
         await ws.send_text(conn.outbound.popleft())
 
 
+EndedChat = tuple[UUID, MatchEndReason]
+
+
 def _read_state(
     factory: SessionFactory, config: ServerConfig, now: datetime, user_id: UUID
-) -> tuple[QueueEntryView | None, MatchView | None]:
+) -> tuple[QueueEntryView | None, MatchView | None, EndedChat | None]:
     with factory() as session:
-        return current_state(session, config, now, user_id)
+        entry, match = current_state(session, config, now, user_id)
+        ended = last_ended_chat(session, user_id) if match is None else None
+        return entry, match, ended
+
+
+def last_ended_chat(session: Session, user_id: UUID) -> EndedChat | None:
+    """The user's most recently ended chat and how it ended, peer-safe.
+
+    Only `expired` and `disconnected` are told apart; a block, a report or a
+    disabled peer all read as `ended`, as in the `match.ended` frame.
+    """
+    stored = session.execute(
+        select(Match.id, Match.end_reason)
+        .join(MatchParticipant, MatchParticipant.match_id == Match.id)
+        .where(MatchParticipant.user_id == user_id, Match.status == "ended")
+        .order_by(Match.ended_at.desc())
+        .limit(1)
+    ).first()
+    if stored is None:
+        return None
+    match_id, end_reason = stored
+    if end_reason == "expired":
+        return match_id, "expired"
+    if end_reason == "disconnected":
+        return match_id, "disconnected"
+    return match_id, "ended"
 
 
 def _parse(message: MutableMapping[str, Any]) -> Any:
@@ -356,12 +386,19 @@ async def realtime(websocket: WebSocket) -> None:
                     principal = new_principal
                 await _send(websocket, make_frame(WsReady, now, nickname=nickname))
                 if first:
-                    queue_view, match_view = await run_in_threadpool(
+                    queue_view, match_view, ended = await run_in_threadpool(
                         _read_state, factory, config, now, principal.user_id
                     )
                     await _send(
                         websocket,
-                        make_frame(WsSync, now, queue=queue_view, match=match_view),
+                        make_frame(
+                            WsSync,
+                            now,
+                            queue=queue_view,
+                            match=match_view,
+                            ended_match_id=ended[0] if ended else None,
+                            ended_reason=ended[1] if ended else None,
+                        ),
                     )
             else:
                 if principal is None:

@@ -37,9 +37,6 @@ from breakroom_shared.chat import normalize_text
 
 router = APIRouter()
 
-MAX_PAGE = 100
-_EXTENSION_ATTEMPTS = 4
-
 
 # --- operations (M5-02) ------------------------------------------------------
 
@@ -183,7 +180,7 @@ def list_messages(
         select(Message)
         .where(Message.match_id == match_id, Message.seq > after_seq)
         .order_by(Message.seq)
-        .limit(MAX_PAGE)
+        .limit(config.max_page)
     )
     return MessagePage(
         messages=tuple(_view(row, user_id) for row in rows), last_seq=match.last_seq
@@ -233,7 +230,7 @@ def extension(
     no-op, the peer's user id)."""
     peer_id = _peer_of(session, match_id, user_id)
     change: ChatChange | None = None
-    for _ in range(_EXTENSION_ATTEMPTS):
+    for _ in range(config.extension_attempts):
         match = _load_match(session, match_id)
         if not _is_live(match, now):
             session.rollback()

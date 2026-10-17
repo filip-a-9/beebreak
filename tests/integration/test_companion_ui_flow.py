@@ -62,9 +62,23 @@ class App:
         # A closed dialog lingers until the event loop deletes it.
         return [d for d in self.window.findChildren(OnboardingDialog) if d.isVisible()]
 
-    def wait_label(self, text: str) -> None:
+    def wait_signed_out(self) -> None:
+        """Signed out: the row offers Sign in (state, not wording)."""
         self.qtbot.waitUntil(
-            lambda: self.window.account_label.text() == text, timeout=WAIT_MS
+            lambda: self.window.sign_in_button.isVisibleTo(self.window),
+            timeout=WAIT_MS,
+        )
+
+    def wait_connected_as(self, nickname: str) -> None:
+        self.qtbot.waitUntil(
+            lambda: nickname in self.window.account_label.text(), timeout=WAIT_MS
+        )
+
+    def wait_setup_unfinished(self) -> None:
+        """Connected without a nickname or consent: Finish setup is offered."""
+        self.qtbot.waitUntil(
+            lambda: self.window.finish_setup_button.isVisibleTo(self.window),
+            timeout=WAIT_MS,
         )
 
     def wait_page(self, page: int) -> None:
@@ -80,7 +94,7 @@ def app(qtbot: QtBot, env: LiveServer) -> Iterator[App]:
 
 def start_and_wait_signed_out(app: App) -> None:
     app.worker.start()
-    app.wait_label("Not signed in")
+    app.wait_signed_out()
 
 
 def type_through_sign_in(app: App, server: LiveServer) -> None:
@@ -126,7 +140,7 @@ def test_full_flow_from_the_window(app: App, env: LiveServer) -> None:
     app.wait_page(PAGE_DONE)
     dialog.next_button.click()
 
-    app.wait_label("Connected as ada_l")
+    app.wait_connected_as("ada_l")
     assert stored_consent(env) == (False, True, False)
     assert app.window.settings_button.isVisibleTo(app.window)
     assert not app.window.finish_setup_button.isVisibleTo(app.window)
@@ -145,7 +159,7 @@ def test_settings_round_trip_changes_consent_on_the_server(
     dialog.next_button.click()  # all off
     app.wait_page(PAGE_DONE)
     dialog.next_button.click()
-    app.wait_label("Connected as ada_l")
+    app.wait_connected_as("ada_l")
     assert stored_consent(env) == (False, False, False)
 
     app.window.settings_button.click()
@@ -164,7 +178,7 @@ def test_cancel_after_verify_offers_finish_setup(app: App, env: LiveServer) -> N
     type_through_sign_in(app, env)
     app.dialog().cancel_button.click()
 
-    app.wait_label("Connected")
+    app.wait_setup_unfinished()
     assert app.window.finish_setup_button.isVisibleTo(app.window)
     assert not app.window.settings_button.isVisibleTo(app.window)
     app.window.finish_setup_button.click()
@@ -181,19 +195,19 @@ def test_sign_out_and_resume(app: App, env: LiveServer, qtbot: QtBot) -> None:
     dialog.next_button.click()
     app.wait_page(PAGE_DONE)
     dialog.next_button.click()
-    app.wait_label("Connected as ada_l")
+    app.wait_connected_as("ada_l")
 
     # A second companion process with the same state dir resumes silently.
     second = App(qtbot)
     try:
         second.worker.start()
-        second.wait_label("Connected as ada_l")
+        second.wait_connected_as("ada_l")
         assert not second.window.sign_in_button.isVisibleTo(second.window)
     finally:
         second.worker.stop()
 
     app.window.sign_out_button.click()
-    app.wait_label("Not signed in")
+    app.wait_signed_out()
     assert app.window.sign_in_button.isVisibleTo(app.window)
     with env.session_factory() as session:
         assert session.scalars(select(User)).first() is not None  # account stays
@@ -210,7 +224,7 @@ def test_cancel_before_verify_leaves_the_row_signed_out(
     dialog.next_button.click()
     dialog.cancel_button.click()
 
-    app.wait_label("Not signed in")
+    app.wait_signed_out()
     assert app.window.sign_in_button.isVisibleTo(app.window)
 
 

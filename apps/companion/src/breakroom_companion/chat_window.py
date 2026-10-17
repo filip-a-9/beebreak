@@ -7,17 +7,26 @@ with `Qt.TextFormat.PlainText`, never linkified. The window only renders the
 """
 
 import math
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QHideEvent, QKeyEvent, QShowEvent
+from PySide6.QtGui import (
+    QCloseEvent,
+    QContextMenuEvent,
+    QHideEvent,
+    QKeyEvent,
+    QKeySequence,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -101,6 +110,57 @@ class _InputEdit(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
+_WORD_BREAK_EVERY = 20
+_ZERO_WIDTH_SPACE = "\u200b"
+
+
+def _breakable(text: str) -> str:
+    """Display copy of `text` with break points inside very long words.
+
+    A QLabel only wraps at spaces, so one unbroken word would widen the
+    transcript and scroll it sideways. The stored body is not changed.
+    """
+    return re.sub(
+        rf"\S{{{_WORD_BREAK_EVERY}}}(?=\S)",
+        lambda m: m.group(0) + _ZERO_WIDTH_SPACE,
+        text,
+    )
+
+
+class _BodyLabel(QLabel):
+    """A message body whose every copy path yields the text without the
+    break points `_breakable` added (a pasted URL must be intact)."""
+
+    def copy_selection(self) -> None:
+        text = self.selectedText().replace(_ZERO_WIDTH_SPACE, "")
+        if text:
+            QApplication.clipboard().setText(text)
+
+    def select_all(self) -> None:
+        self.setSelection(0, len(self.text()))
+
+    def keyPressEvent(self, ev: QKeyEvent) -> None:
+        if ev.matches(QKeySequence.StandardKey.Copy):
+            self.copy_selection()
+            ev.accept()
+            return
+        super().keyPressEvent(ev)
+
+    def build_context_menu(self) -> QMenu:
+        menu = QMenu(self)
+        copy = menu.addAction("Copy")
+        copy.setObjectName("copy")
+        copy.setEnabled(self.hasSelectedText())
+        copy.triggered.connect(self.copy_selection)
+        select_all = menu.addAction("Select All")
+        select_all.setObjectName("select_all")
+        select_all.triggered.connect(self.select_all)
+        return menu
+
+    def contextMenuEvent(self, ev: QContextMenuEvent) -> None:
+        self.build_context_menu().exec(ev.globalPos())
+
+
 class ChatWindow(QWidget):
     send_requested = Signal(str)  # raw text; the worker normalizes
     retry_requested = Signal(object)  # UUID of a failed pending message
@@ -133,7 +193,7 @@ class ChatWindow(QWidget):
         self._stick = True
         self._report_dialog: ReportDialog | None = None
         self._retry_buttons: list[QPushButton] = []
-        self._body_labels: list[QLabel] = []
+        self._body_labels: list[_BodyLabel] = []
 
         self.setWindowTitle("Breakroom chat")
         self.resize(360, 480)
@@ -473,8 +533,8 @@ class ChatWindow(QWidget):
             bar = self.scroll_area.verticalScrollBar()
             bar.setValue(bar.maximum())
 
-    def _body_label(self, text: str) -> QLabel:
-        label = QLabel(text)
+    def _body_label(self, text: str) -> _BodyLabel:
+        label = _BodyLabel(_breakable(text))
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setWordWrap(True)
         label.setOpenExternalLinks(False)

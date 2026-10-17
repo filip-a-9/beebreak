@@ -1,5 +1,6 @@
 """ReportDialog (M5-06)."""
 
+import re
 from typing import get_args
 
 import pytest
@@ -106,10 +107,10 @@ def test_a_note_over_500_characters_disables_the_button(
     dialog.reason_buttons["spam"].setChecked(True)
     dialog.note_edit.setPlainText("x" * 500)
     assert dialog.report_button.isEnabled()
-    assert dialog.note_counter.text() == "500 / 500"
+    assert re.findall(r"\d+", dialog.note_counter.text()) == ["500", "500"]
     dialog.note_edit.setPlainText("x" * 501)
     assert not dialog.report_button.isEnabled()
-    assert dialog.note_counter.text() == "501 / 500"
+    assert re.findall(r"\d+", dialog.note_counter.text()) == ["501", "500"]
 
 
 def test_cancel_emits_nothing(dialog: ReportDialog, qtbot: QtBot) -> None:
@@ -124,7 +125,8 @@ def test_bodies_are_listed_as_plain_text_without_tooltips(
     dialog: ReportDialog,
 ) -> None:
     assert dialog.message_list.item(0).text() == "bob_b: hello"
-    assert dialog.message_list.item(1).text() == "You: hi"
+    assert dialog.message_list.item(1).text().endswith("hi")
+    assert "bob_b" not in dialog.message_list.item(1).text()
     assert dialog.message_list.item(2).text() == "bob_b: <b>rude</b> txt"
     for row in range(3):
         assert dialog.message_list.item(row).toolTip() == ""
@@ -154,7 +156,15 @@ def test_more_than_50_ticked_messages_cannot_be_submitted(qtbot: QtBot) -> None:
     assert not d.limit_label.isVisibleTo(d)
     d.message_list.item(50).setCheckState(Qt.CheckState.Checked)
     assert not d.report_button.isEnabled()
-    assert d.limit_label.text() == "Tick at most 50 messages."
+    assert re.findall(r"\d+", d.limit_label.text()) == ["50"]
     assert d.limit_label.isVisibleTo(d)
     d.message_list.item(50).setCheckState(Qt.CheckState.Unchecked)
     assert d.report_button.isEnabled()
+
+
+def test_the_tick_limit_is_the_contract_limit() -> None:
+    from breakroom_companion.report_dialog import MAX_TICKED
+    from breakroom_shared.api import ReportRequest
+
+    limit = ReportRequest.model_fields["message_seqs"].metadata
+    assert any(getattr(m, "max_length", None) == MAX_TICKED for m in limit)

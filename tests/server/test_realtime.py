@@ -2,7 +2,7 @@ import dataclasses
 import time
 import uuid
 from collections.abc import Iterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -526,3 +526,89 @@ def test_reauth_sends_ready_only(
         assert read(ws).type == "session.ready"
         ws.send_json(PING)
         assert read(ws).type == "pong"  # no sync in between
+
+
+@pytest.mark.parametrize(
+    ("stored", "sent"),
+    [
+        ("disconnected", "disconnected"),
+        ("expired", "expired"),
+        ("ended", "ended"),
+        ("blocked", "ended"),  # a block, a report or a disabled peer look plain
+        ("reported", "ended"),
+        ("disabled", "ended"),
+    ],
+)
+def test_sync_without_a_match_carries_the_reason_the_last_chat_ended(
+    client: TestClient,
+    session_factory: SessionFactory,
+    clock: FixedClock,
+    stored: str,
+    sent: str,
+) -> None:
+    alice = add_ready_user(session_factory, "Alice")
+    bobby = add_ready_user(session_factory, "Bobby")
+    match_id = seed_match(
+        session_factory,
+        alice,
+        bobby,
+        now=clock(),
+        status="ended",
+        ended_at=clock(),
+        end_reason=stored,
+    )
+    token = give_token(session_factory, clock, alice.device_id)
+    with client.websocket_connect("/v1/realtime") as ws:
+        ws.send_json(auth_frame(token))
+        assert read(ws).type == "session.ready"
+        sync = read(ws)
+        assert sync.match is None
+        assert sync.ended_reason == sent
+        assert sync.ended_match_id == match_id
+
+
+def test_sync_has_no_ended_reason_without_an_ended_chat_or_with_a_live_one(
+    client: TestClient, session_factory: SessionFactory, clock: FixedClock
+) -> None:
+    alice = add_ready_user(session_factory, "Alice")
+    bobby = add_ready_user(session_factory, "Bobby")
+    carol = add_ready_user(session_factory, "Carol")
+    seed_match(
+        session_factory,
+        alice,
+        carol,
+        now=clock(),
+        status="ended",
+        ended_at=clock(),
+        end_reason="expired",
+    )
+    seed_match(session_factory, alice, bobby, now=clock())  # live now
+    alice_token = give_token(session_factory, clock, alice.device_id)
+    with client.websocket_connect("/v1/realtime") as ws:
+        ws.send_json(auth_frame(alice_token))
+        assert read(ws).type == "session.ready"
+        sync = read(ws)
+        assert sync.match is not None and sync.ended_reason is None
+        assert sync.ended_match_id is None
+    dave = add_ready_user(session_factory, "Dave")
+    dave_token = give_token(session_factory, clock, dave.device_id)
+    with client.websocket_connect("/v1/realtime") as ws:
+        ws.send_json(auth_frame(dave_token))
+        assert read(ws).type == "session.ready"
+        sync = read(ws)
+        assert sync.ended_reason is None and sync.ended_match_id is None
+
+
+def test_the_wire_form_of_a_sync_without_a_reason_is_unchanged() -> None:
+    from breakroom_shared.api import WsSync
+
+    frame = WsSync(
+        type="sync",
+        version=1,
+        event_id=uuid.uuid4(),
+        server_time=datetime(2026, 10, 14, tzinfo=UTC),
+        queue=None,
+        match=None,
+    )
+    assert "ended_reason" not in frame.model_dump_json()
+    assert "ended_match_id" not in frame.model_dump_json()

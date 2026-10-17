@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from breakroom_companion.window import safe_nickname
-from breakroom_shared.api import MessageView, ReportReason
+from breakroom_shared.api import MAX_REPORT_SEQS, MessageView, ReportReason
 from breakroom_shared.chat import MAX_NOTE_CHARS, normalize_text
 
 REASON_LABELS: dict[ReportReason, str] = {
@@ -34,8 +34,8 @@ CANCEL = "Cancel"
 NOTE_PLACEHOLDER = "Optional note"
 MESSAGES_HEADING = "Messages to include (none are included unless you tick them):"
 YOU = "You"
-MAX_TICKED = 50  # ReportRequest.message_seqs
-TOO_MANY = "Tick at most 50 messages."
+MAX_TICKED = MAX_REPORT_SEQS  # derived: cannot drift from the contract
+TOO_MANY = f"Tick at most {MAX_TICKED} messages."
 
 
 def display_text(body: str) -> str:

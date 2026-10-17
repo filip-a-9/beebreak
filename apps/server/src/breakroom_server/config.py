@@ -195,6 +195,15 @@ class ServerConfig:
     matches_per_window_user: int = 10  # matches a user may join per rate_window_s
     # Logging (M6-08): text | json.
     log_format: str = "text"
+    # Server limits that were literals (backlog fixes).
+    max_page: int = 100  # messages per page
+    extension_attempts: int = 4  # retries of an extension action under contention
+    # Request body cap: a chat message is at most 1000 characters after
+    # normalization, but a client that JSON-escapes non-ASCII (ensure_ascii)
+    # sends up to 12 bytes per character.
+    max_body_bytes: int = 16 * 1024
+    # The matchmaker purge runs at most this often (injected-clock seconds).
+    purge_interval_s: int = 60
 
     def __post_init__(self) -> None:
         if len(self.secret) < MIN_SECRET_BYTES:
@@ -237,6 +246,10 @@ class ServerConfig:
             "rate_queue_action_user",
             "rate_queue_read_user",
             "matches_per_window_user",
+            "max_page",
+            "extension_attempts",
+            "max_body_bytes",
+            "purge_interval_s",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -318,4 +331,8 @@ class ServerConfig:
             rate_queue_read_user=_positive("BREAKROOM_RATE_QUEUE_READ_USER", 300),
             matches_per_window_user=_positive("BREAKROOM_MATCHES_PER_WINDOW_USER", 10),
             log_format=_log_format(),
+            max_page=_positive("BREAKROOM_MAX_PAGE", 100),
+            extension_attempts=_positive("BREAKROOM_EXTENSION_ATTEMPTS", 4),
+            max_body_bytes=_positive("BREAKROOM_MAX_BODY_BYTES", 16 * 1024),
+            purge_interval_s=_positive("BREAKROOM_PURGE_INTERVAL_S", 60),
         )
