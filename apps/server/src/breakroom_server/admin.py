@@ -31,6 +31,7 @@ from breakroom_server.account_data import (
 )
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import make_engine
+from breakroom_server.github import USERNAME_RE, GitHubClient, GitHubUnavailable
 from breakroom_server.mailer import Mailer, RecordingMailer, SmtpMailer
 from breakroom_server.models import (
     BetaInvite,
@@ -45,7 +46,12 @@ from breakroom_server.models import (
     User,
     email_canonical,
 )
-from breakroom_server.tokens import hmac_code, new_code, tombstone_hmac
+from breakroom_server.tokens import (
+    github_tombstone_hmac,
+    hmac_code,
+    new_code,
+    tombstone_hmac,
+)
 
 Clock = Callable[[], datetime]
 
@@ -83,14 +89,24 @@ def _parser() -> argparse.ArgumentParser:
     invite = sub.add_parser("invite", help="beta invites").add_subparsers(
         dest="action", required=True
     )
-    create = invite.add_parser("create", help="create an invite for an email")
-    create.add_argument("email")
+    create = invite.add_parser(
+        "create", help="create an invite for an email or a GitHub username"
+    )
+    create.add_argument("email", nargs="?", default=None)
+    create.add_argument(
+        "--github",
+        metavar="USERNAME",
+        default=None,
+        help="invite a GitHub user instead (the numeric id is looked up once "
+        "and is all that is stored)",
+    )
     create.add_argument("--days", type=_positive_int, default=None)
     create.add_argument("--send", action="store_true", help="email the code")
     create.add_argument(
         "--override-tombstone",
         action="store_true",
-        help="invite an email whose deleted account was disabled (removes the record)",
+        help="invite an identity whose deleted account was disabled "
+        "(removes the record)",
     )
     invite.add_parser("list", help="list invites")
     revoke = invite.add_parser("revoke", help="revoke an invite")
@@ -136,10 +152,10 @@ def _parser() -> argparse.ArgumentParser:
     export = account.add_parser(
         "export", help="the account's data as JSON (contains user content)"
     )
-    export.add_argument("email")
+    _add_identity(export)
     export.add_argument("--out", default=None, help="write to PATH with mode 0600")
     delete_ = account.add_parser("delete", help="hard-delete an account")
-    delete_.add_argument("email")
+    _add_identity(delete_)
     delete_.add_argument("--yes", action="store_true", help="confirm the deletion")
     delete_.add_argument(
         "--disabled-ok",
@@ -147,6 +163,20 @@ def _parser() -> argparse.ArgumentParser:
         help="allow deleting a disabled account (frees its email and nickname)",
     )
     return parser
+
+
+def _add_identity(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("email", nargs="?", default=None)
+    parser.add_argument(
+        "--github-id", type=int, default=None, help="a GitHub account's numeric id"
+    )
+
+
+def _identity(args: argparse.Namespace) -> tuple[str | None, int | None]:
+    """The (email, github id) the command line named: exactly one."""
+    if (args.email is None) == (args.github_id is None):
+        raise AdminError("give either an email or --github-id", EXIT_BAD_INPUT)
+    return args.email, args.github_id
 
 
 def _invite_state(invite: BetaInvite, now: datetime) -> str:
@@ -183,27 +213,49 @@ def _invite_create(
     now: datetime,
     mailer: Mailer | None,
 ) -> None:
-    email = email_canonical(args.email)
-    if email is None:
-        raise AdminError("invalid email address", EXIT_BAD_INPUT)
+    if (args.email is None) == (args.github is None):
+        raise AdminError("give either an email or --github", EXIT_BAD_INPUT)
+    if args.github is not None and args.send:
+        raise AdminError("a GitHub invite has no code to send", EXIT_BAD_INPUT)
+    email: str | None = None
+    github_id: int | None = None
+    if args.github is not None:
+        if USERNAME_RE.fullmatch(args.github) is None:
+            raise AdminError("invalid GitHub username", EXIT_BAD_INPUT)
+        if not config.github_enabled:
+            raise AdminError("GitHub sign-in is off on this server")
+        github_id = _resolve_github(config, args.github)
+        key = github_tombstone_hmac(config.secret, github_id)
+    else:
+        email = email_canonical(args.email)
+        if email is None:
+            raise AdminError("invalid email address", EXIT_BAD_INPUT)
+        if not config.email_enabled:
+            raise AdminError("email sign-in is off on this server")
+        key = tombstone_hmac(config.secret, email)
     ttl = (
         timedelta(days=args.days)
         if args.days is not None
         else timedelta(seconds=config.invite_ttl_s)
     )
     tombstone = session.scalar(
-        select(DeletedAccountTombstone).where(
-            DeletedAccountTombstone.email_hmac == tombstone_hmac(config.secret, email)
-        )
+        select(DeletedAccountTombstone).where(DeletedAccountTombstone.email_hmac == key)
     )
     if tombstone is not None:
         if not args.override_tombstone:
             raise AdminError(
-                "this address belonged to a deleted disabled account; "
+                "this identity belonged to a deleted disabled account; "
                 "pass --override-tombstone to invite it anyway"
             )
         # The operator decided: one decision per person.
         session.delete(tombstone)
+    if github_id is not None:
+        invite = BetaInvite(github_id=github_id, expires_at=now + ttl, created_at=now)
+        session.add(invite)
+        session.commit()
+        print(invite.id)  # there is no code: the person just signs in with GitHub
+        return
+    assert email is not None
     code = new_code()
     session.add(
         BetaInvite(
@@ -224,12 +276,27 @@ def _invite_create(
         mailer.close()
 
 
+def _resolve_github(config: ServerConfig, username: str) -> int:
+    """The numeric id behind a username: one unauthenticated call, then forgotten."""
+    try:
+        github_id = GitHubClient(config).lookup_user_id(username)
+    except GitHubUnavailable:
+        raise AdminError("could not reach GitHub") from None
+    if github_id is None:
+        raise AdminError("no such GitHub user")
+    return github_id
+
+
 def _invite_list(session: Session, now: datetime) -> None:
     invites = session.scalars(select(BetaInvite).order_by(BetaInvite.created_at))
     for invite in invites:
-        domain = invite.email_canonical.rpartition("@")[2]
+        who = (
+            f"*@{invite.email_canonical.rpartition('@')[2]}"
+            if invite.email_canonical is not None
+            else "github"  # never the id or the username
+        )
         print(
-            f"{invite.id}\t*@{domain}\t{_invite_state(invite, now)}\t"
+            f"{invite.id}\t{who}\t{_invite_state(invite, now)}\t"
             f"{invite.expires_at.isoformat()}"
         )
 
@@ -448,9 +515,11 @@ def _block_remove(session: Session, blocker: str, blocked: str) -> None:
     session.commit()
 
 
-def _account_export(session: Session, email: str, out: str | None) -> None:
+def _account_export(
+    session: Session, email: str | None, github_id: int | None, out: str | None
+) -> None:
     try:
-        data = export_account(session, email)
+        data = export_account(session, email, github_id=github_id)
     except AccountNotFound:
         raise AdminError("no such account") from None
     text = json.dumps(data, indent=2, sort_keys=True)
@@ -488,13 +557,19 @@ def _write_private(path: str, text: str) -> None:
 def _account_delete(
     session: Session,
     config: ServerConfig,
-    email: str,
+    email: str | None,
+    github_id: int | None,
     now: datetime,
     allow_disabled: bool,
 ) -> None:
     try:
         counts = delete_account(
-            session, email, now, secret=config.secret, allow_disabled=allow_disabled
+            session,
+            email,
+            now,
+            secret=config.secret,
+            github_id=github_id,
+            allow_disabled=allow_disabled,
         )
     except AccountNotFound:
         raise AdminError("no such account") from None
@@ -553,9 +628,13 @@ def _run(args: argparse.Namespace, clock: Clock, mailer: Mailer | None) -> None:
                 case ("block", "remove"):
                     _block_remove(session, args.blocker, args.blocked)
                 case ("account", "export"):
-                    _account_export(session, args.email, args.out)
+                    email, github_id = _identity(args)
+                    _account_export(session, email, github_id, args.out)
                 case ("account", "delete"):
-                    _account_delete(session, config, args.email, now, args.disabled_ok)
+                    email, github_id = _identity(args)
+                    _account_delete(
+                        session, config, email, github_id, now, args.disabled_ok
+                    )
     finally:
         engine.dispose()
 

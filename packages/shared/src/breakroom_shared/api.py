@@ -16,6 +16,7 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     StringConstraints,
     model_serializer,
+    model_validator,
 )
 
 # Re-exported: Consent moved to its own module to avoid an import cycle.
@@ -54,6 +55,10 @@ ErrorCode = Literal[
     "no_extension_request",
     "already_reported",
     "report_window_closed",
+    # GitHub sign-in.
+    "not_invited",  # 403: no account and no open invite for this GitHub id
+    "access_denied",  # 400: the user refused the code on GitHub
+    "github_unavailable",  # 502: GitHub gave no usable answer
 ]
 
 
@@ -73,6 +78,31 @@ class AuthStartResponse(_Model):
 class AuthVerifyRequest(_Model):
     challenge_id: UUID
     code: OneTimeCode
+    device_name: DeviceName
+
+
+class AuthMethods(_Model):
+    """Which sign-in methods this server offers (`GET /v1/auth/methods`)."""
+
+    email: bool
+    github: bool
+
+
+class GitHubStartResponse(_Model):
+    """`POST /v1/auth/github/start`. Never the device code: that stays on the
+    server."""
+
+    challenge_id: UUID
+    user_code: Annotated[str, StringConstraints(min_length=1, max_length=64)]
+    verification_uri: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+    expires_in_s: int = Field(gt=0)
+    interval_s: int = Field(gt=0)
+
+
+class GitHubPollRequest(_Model):
+    """`POST /v1/auth/github/poll`."""
+
+    challenge_id: UUID
     device_name: DeviceName
 
 
@@ -96,6 +126,24 @@ class Me(_Model):
 class SessionResponse(_Model):
     tokens: TokenPair
     me: Me
+
+
+class GitHubPollResponse(_Model):
+    """pending: ask again after `interval_s`. complete: signed in."""
+
+    status: Literal["pending", "complete"]
+    interval_s: int | None = Field(default=None, gt=0)
+    session: SessionResponse | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "GitHubPollResponse":
+        if self.status == "pending":
+            ok = self.interval_s is not None and self.session is None
+        else:
+            ok = self.session is not None and self.interval_s is None
+        if not ok:
+            raise ValueError("status does not match the fields present")
+        return self
 
 
 class NicknameUpdate(_Model):

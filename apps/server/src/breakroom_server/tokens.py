@@ -48,6 +48,14 @@ def tombstone_hmac(secret: bytes, email_canonical: str) -> bytes:
     return hmac.new(key, email_canonical.encode(), hashlib.sha256).digest()
 
 
+def github_tombstone_hmac(secret: bytes, github_id: int) -> bytes:
+    """Tombstone key of a GitHub account: `HMAC(subkey, "github:" + id)`.
+
+    An email always contains "@", so the two kinds of key cannot collide.
+    """
+    return tombstone_hmac(secret, f"github:{github_id}")
+
+
 def hash_token(token: str) -> bytes:
     # surrogatepass: a lone surrogate in client input hashes to a miss, not a 500.
     return hashlib.sha256(token.encode("utf-8", "surrogatepass")).digest()

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, get_args
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -105,10 +106,18 @@ class User(Base):
     __tablename__ = "users"
     __table_args__ = (
         CheckConstraint("status IN ('active', 'disabled')", name="status"),
+        CheckConstraint(
+            "email_canonical IS NOT NULL OR github_id IS NOT NULL", name="identity"
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    email_canonical: Mapped[str] = mapped_column(String(MAX_EMAIL_LENGTH), unique=True)
+    # An account is either email or GitHub (no linking in the beta).
+    email_canonical: Mapped[str | None] = mapped_column(
+        String(MAX_EMAIL_LENGTH), unique=True, default=None
+    )
+    # GitHub's numeric user id: the only thing kept about a GitHub identity.
+    github_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, default=None)
     nickname: Mapped[str | None] = mapped_column(String(24), default=None)
     nickname_skeleton: Mapped[str | None] = mapped_column(
         String(24), unique=True, default=None
@@ -119,10 +128,21 @@ class User(Base):
 
 class BetaInvite(Base):
     __tablename__ = "beta_invites"
+    __table_args__ = (
+        # Exactly one identity: an email (with a code) or a GitHub id (no code).
+        CheckConstraint(
+            "(email_canonical IS NULL) <> (github_id IS NULL)", name="identity"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    email_canonical: Mapped[str] = mapped_column(String(MAX_EMAIL_LENGTH))
-    code_hmac: Mapped[bytes] = mapped_column(LargeBinary(32), unique=True)
+    email_canonical: Mapped[str | None] = mapped_column(
+        String(MAX_EMAIL_LENGTH), default=None
+    )
+    github_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    code_hmac: Mapped[bytes | None] = mapped_column(
+        LargeBinary(32), unique=True, default=None
+    )
     expires_at: Mapped[datetime]
     redeemed_at: Mapped[datetime | None] = mapped_column(default=None)
     redeemed_by: Mapped[uuid.UUID | None] = mapped_column(
@@ -133,10 +153,11 @@ class BetaInvite(Base):
 
 
 class DeletedAccountTombstone(Base):
-    """Keyed hash of the email of a disabled account that was then deleted.
+    """Keyed hash of the identity of a disabled account that was then deleted.
 
-    Exists only for disabled accounts, so it carries no flag. No email, no user
-    reference.
+    The identity is the canonical email, or "github:<id>" for a GitHub account;
+    the column keeps its old name. Exists only for disabled accounts, so it
+    carries no flag. No email, no GitHub id, no user reference.
     """
 
     __tablename__ = "deleted_account_tombstones"
@@ -150,12 +171,25 @@ class AuthChallenge(Base):
     __tablename__ = "auth_challenges"
     __table_args__ = (
         CheckConstraint("attempts >= 0", name="attempts_nonneg"),
+        # An email challenge (address and code hash) or a GitHub one (interval).
+        CheckConstraint(
+            "(email_canonical IS NOT NULL AND code_hmac IS NOT NULL) "
+            "OR github_interval_s IS NOT NULL",
+            name="method",
+        ),
         Index("ix_auth_challenges_email_consumed", "email_canonical", "consumed_at"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    email_canonical: Mapped[str] = mapped_column(String(MAX_EMAIL_LENGTH))
-    code_hmac: Mapped[bytes] = mapped_column(LargeBinary(32))
+    email_canonical: Mapped[str | None] = mapped_column(
+        String(MAX_EMAIL_LENGTH), default=None
+    )
+    code_hmac: Mapped[bytes | None] = mapped_column(LargeBinary(32), default=None)
+    # GitHub device flow (migration 0005). The device code is a short-lived
+    # secret: set on start, cleared when the challenge is consumed or purged.
+    github_device_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    github_interval_s: Mapped[int | None] = mapped_column(default=None)
+    github_next_poll_at: Mapped[datetime | None] = mapped_column(default=None)
     invite_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("beta_invites.id"), default=None
     )

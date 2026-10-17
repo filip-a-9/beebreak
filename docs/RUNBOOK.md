@@ -45,6 +45,43 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
   sign-in codes. `BREAKROOM_SMTP_USERNAME` and `BREAKROOM_SMTP_PASSWORD` must
   not stay at their `change-me-*` examples.
 - `BREAKROOM_PUBLIC_HOST`: the DNS name Caddy gets its certificate for.
+- Sign-in methods: at least one of email codes (`BREAKROOM_SMTP_HOST` and the
+  other SMTP values) and GitHub (`BREAKROOM_GITHUB_CLIENT_ID`, next section).
+  An empty `BREAKROOM_SMTP_HOST` turns email codes off; an empty client id turns
+  GitHub off; with neither the server refuses to start.
+
+## GitHub sign-in (optional)
+
+Needs no email provider and no client secret.
+
+1. On GitHub: Settings, Developer settings, OAuth Apps, New OAuth App. Name it,
+   set the homepage to the project page, and set the authorization callback URL
+   to the same page (the field is required; the device flow never uses it).
+2. On the new app's page, tick **Enable Device Flow** and save. Without it,
+   sign-in fails with `github_unavailable` (GitHub answers `device_flow_disabled`;
+   GitHub's "Authorizing OAuth apps" page says the flow must be enabled in the
+   app's settings; the exact label is not verified here, check the page).
+3. Copy the **Client ID** (not a secret) into `.env` as
+   `BREAKROOM_GITHUB_CLIENT_ID`. Do not generate or store a client secret.
+4. `dc up -d`. `GET /v1/auth/methods` now reports `"github": true`.
+
+Optional: `BREAKROOM_GITHUB_TIMEOUT_S` (default 10), `BREAKROOM_RATE_GITHUB_POLL_IP`
+(default 1200 polls per address per rate window), `BREAKROOM_GITHUB_OAUTH_URL` and
+`BREAKROOM_GITHUB_API_URL` (only for tests; defaults are GitHub's).
+
+Invite a person by GitHub username (the numeric id is looked up once and is all
+that is stored; there is no code to pass on, they just sign in with GitHub):
+
+```sh
+dc exec server breakroom-admin invite create --github octocat
+```
+
+Export or delete a GitHub account with `account export --github-id <id>` and
+`account delete --github-id <id> --yes` (the id is in the export of an
+account, or look it up with the same `GET /users/<name>`). An account is either
+email or GitHub; to switch someone, delete and re-invite. After enabling GitHub
+for the first time, confirm once on a rehearsal deploy that a sign-in with no
+scope can call `GET /user` (GitHub's docs do not say it outright).
 
 Changing `.env` takes effect with `dc up -d` (it recreates what changed).
 Changing `POSTGRES_PASSWORD` later does **not** change the password inside an
@@ -58,6 +95,8 @@ container; there is no web UI.
 ```sh
 dc exec server breakroom-admin invite create you@example.com --send
 ```
+
+(Needs email sign-in on; on a GitHub-only server use `--github` below.)
 
 `--send` emails the code; without it the code is printed once on stdout (it is
 never stored in clear). The invitee enters the email and the code in the

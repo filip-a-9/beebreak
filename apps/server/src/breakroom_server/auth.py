@@ -19,6 +19,15 @@ from sqlalchemy.orm import Session
 
 from breakroom_server.config import ServerConfig
 from breakroom_server.db import SessionFactory
+from breakroom_server.github import (
+    Authorized,
+    Denied,
+    Expired,
+    GitHubClient,
+    GitHubUnavailable,
+    Pending,
+    SlowDown,
+)
 from breakroom_server.mailer import Mailer
 from breakroom_server.models import (
     AuthChallenge,
@@ -60,6 +69,9 @@ _STATUS: dict[ErrorCode, int] = {
     "no_extension_request": 409,
     "already_reported": 409,
     "report_window_closed": 409,
+    "not_invited": 403,
+    "access_denied": 400,
+    "github_unavailable": 502,
 }
 
 
@@ -90,6 +102,7 @@ class Limiters:
     start_ip: RateLimiter
     verify_ip: RateLimiter
     verify_email: RateLimiter  # counts failed verifies only
+    github_poll_ip: RateLimiter
     refresh_device: RateLimiter
     queue_user: RateLimiter
     queue_action_user: RateLimiter
@@ -106,6 +119,7 @@ def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
         start_ip=RateLimiter(config.rate_start_ip, window, clock),
         verify_ip=RateLimiter(config.rate_verify_ip, window, clock),
         verify_email=RateLimiter(config.rate_verify_email, window, clock),
+        github_poll_ip=RateLimiter(config.rate_github_poll_ip, window, clock),
         refresh_device=RateLimiter(config.rate_refresh_device, window, clock),
         queue_user=RateLimiter(config.rate_queue_user, window, clock),
         queue_action_user=RateLimiter(config.rate_queue_action_user, window, clock),
@@ -259,6 +273,8 @@ def verify_challenge(
     challenge = session.get(AuthChallenge, challenge_id)
     if challenge is None or challenge.consumed_at is not None:
         raise ApiError("invalid_code")
+    if challenge.email_canonical is None or challenge.code_hmac is None:
+        raise ApiError("invalid_code")  # a GitHub challenge has no code to guess
     if challenge.expires_at <= now:
         raise ApiError("expired")
     if challenge.attempts >= config.code_max_attempts:
@@ -314,22 +330,29 @@ def verify_challenge(
     return SignedIn(user.id, tokens)
 
 
+def _redeem_invite(session: Session, invite_id: uuid.UUID, now: datetime) -> bool:
+    """Mark the invite redeemed if it is still open; False when someone beat us."""
+    redeemed = session.execute(
+        update(BetaInvite)
+        .where(
+            BetaInvite.id == invite_id,
+            BetaInvite.redeemed_at.is_(None),
+            BetaInvite.revoked_at.is_(None),
+            BetaInvite.expires_at > now,
+        )
+        .values(redeemed_at=now)
+    )
+    return redeemed.rowcount == 1  # type: ignore[attr-defined, no-any-return]
+
+
 def _account_for(session: Session, challenge: AuthChallenge, now: datetime) -> User:
     """The signing-in user; creates the account when the challenge has an invite."""
+    email = challenge.email_canonical
+    assert email is not None
     if challenge.invite_id is not None:
-        redeemed = session.execute(
-            update(BetaInvite)
-            .where(
-                BetaInvite.id == challenge.invite_id,
-                BetaInvite.redeemed_at.is_(None),
-                BetaInvite.revoked_at.is_(None),
-                BetaInvite.expires_at > now,
-            )
-            .values(redeemed_at=now)
-        )
-        if redeemed.rowcount != 1:  # type: ignore[attr-defined]
+        if not _redeem_invite(session, challenge.invite_id, now):
             raise ApiError("invalid_code")
-        user = User(email_canonical=challenge.email_canonical, created_at=now)
+        user = User(email_canonical=email, created_at=now)
         session.add(user)
         session.flush()
         session.execute(
@@ -339,11 +362,197 @@ def _account_for(session: Session, challenge: AuthChallenge, now: datetime) -> U
         )
         return user
     existing = session.scalars(
-        select(User).where(User.email_canonical == challenge.email_canonical)
+        select(User).where(User.email_canonical == email)
     ).first()
     if existing is None or existing.status != "active":
         raise ApiError("invalid_code")
     return existing
+
+
+# --- GitHub sign-in (OAuth device flow, driven by the server) -------------------
+
+SLOW_DOWN_STEP_S = 5  # GitHub: "add 5 seconds to the minimum polling interval"
+
+
+@dataclass(frozen=True)
+class GitHubStarted:
+    challenge_id: uuid.UUID
+    user_code: str
+    verification_uri: str
+    expires_in_s: int
+    interval_s: int
+
+
+@dataclass(frozen=True)
+class GitHubPolled:
+    """Either still waiting (`interval_s`) or signed in (`signed_in`)."""
+
+    interval_s: int | None = None
+    signed_in: SignedIn | None = None
+
+
+def start_github(
+    session: Session, config: ServerConfig, github: GitHubClient, now: datetime
+) -> GitHubStarted:
+    """Ask GitHub for a device code and keep it on a challenge row.
+
+    The device code never leaves the server: the caller gets only the user code
+    to type on GitHub and the page to type it on.
+    """
+    try:
+        code = github.start_device_flow()
+    except GitHubUnavailable:
+        raise ApiError("github_unavailable") from None
+    challenge = AuthChallenge(
+        github_device_code=code.device_code,
+        github_interval_s=code.interval,
+        github_next_poll_at=now + timedelta(seconds=code.interval),
+        expires_at=now + timedelta(seconds=code.expires_in),
+        created_at=now,
+    )
+    session.add(challenge)
+    session.commit()
+    return GitHubStarted(
+        challenge_id=challenge.id,
+        user_code=code.user_code,
+        verification_uri=code.verification_uri,
+        expires_in_s=code.expires_in,
+        interval_s=code.interval,
+    )
+
+
+def _finish_github_challenge(
+    session: Session, challenge_id: uuid.UUID, now: datetime
+) -> bool:
+    """Single use: consume the challenge and drop the device code. False when
+    another request consumed it first."""
+    done = session.execute(
+        update(AuthChallenge)
+        .where(AuthChallenge.id == challenge_id, AuthChallenge.consumed_at.is_(None))
+        .values(consumed_at=now, github_device_code=None)
+    )
+    session.commit()
+    return done.rowcount == 1  # type: ignore[attr-defined, no-any-return]
+
+
+def poll_github(
+    session: Session,
+    config: ServerConfig,
+    github: GitHubClient,
+    now: datetime,
+    *,
+    challenge_id: uuid.UUID,
+    device_name: str,
+) -> GitHubPolled:
+    """One poll from the companion. GitHub itself is asked at most once per
+    interval (the slot is claimed with a conditional UPDATE, so parallel polls
+    cannot ask twice)."""
+    challenge = session.get(AuthChallenge, challenge_id)
+    if (
+        challenge is None
+        or challenge.consumed_at is not None
+        or challenge.github_interval_s is None
+        or challenge.github_device_code is None
+        or challenge.github_next_poll_at is None
+    ):
+        raise ApiError("invalid_code")
+    if challenge.expires_at <= now:
+        raise ApiError("expired")
+    interval = challenge.github_interval_s
+    if challenge.github_next_poll_at > now:
+        return GitHubPolled(interval_s=interval)
+    claimed = session.execute(
+        update(AuthChallenge)
+        .where(
+            AuthChallenge.id == challenge.id,
+            AuthChallenge.consumed_at.is_(None),
+            AuthChallenge.github_next_poll_at <= now,
+        )
+        .values(github_next_poll_at=now + timedelta(seconds=interval))
+    )
+    session.commit()  # no transaction is held open across the network call
+    if claimed.rowcount != 1:  # type: ignore[attr-defined]
+        return GitHubPolled(interval_s=interval)
+
+    try:
+        answer = github.poll(challenge.github_device_code)
+    except GitHubUnavailable:
+        raise ApiError("github_unavailable") from None
+    match answer:
+        case Pending():
+            return GitHubPolled(interval_s=interval)
+        case SlowDown():
+            interval = answer.interval or interval + SLOW_DOWN_STEP_S
+            session.execute(
+                update(AuthChallenge)
+                .where(
+                    AuthChallenge.id == challenge.id,
+                    AuthChallenge.consumed_at.is_(None),
+                )
+                .values(
+                    github_interval_s=interval,
+                    github_next_poll_at=now + timedelta(seconds=interval),
+                )
+            )
+            session.commit()
+            return GitHubPolled(interval_s=interval)
+        case Expired():
+            _finish_github_challenge(session, challenge.id, now)
+            raise ApiError("expired")
+        case Denied():
+            _finish_github_challenge(session, challenge.id, now)
+            raise ApiError("access_denied")
+        case Authorized():
+            pass
+    token = answer.access_token
+    if not _finish_github_challenge(session, challenge.id, now):
+        raise ApiError("invalid_code")
+    try:
+        # The one use of the token: it yields the numeric id and is dropped.
+        github_id = github.user_id(token)
+    except GitHubUnavailable:
+        raise ApiError("github_unavailable") from None
+
+    try:
+        user = _github_account_for(session, github_id, now)
+        device = Device(user_id=user.id, name=device_name, created_at=now)
+        session.add(device)
+        session.flush()
+        tokens = issue_tokens(session, config, device, now)
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise ApiError("not_invited") from None
+    except ApiError:
+        session.rollback()
+        raise
+    return GitHubPolled(signed_in=SignedIn(user.id, tokens))
+
+
+def _github_account_for(session: Session, github_id: int, now: datetime) -> User:
+    """The GitHub user's account; a first sign-in needs an open invite for the id."""
+    existing = session.scalars(select(User).where(User.github_id == github_id)).first()
+    if existing is not None:
+        if existing.status != "active":
+            raise ApiError("not_invited")
+        return existing
+    invite = session.scalars(
+        select(BetaInvite).where(
+            BetaInvite.github_id == github_id,
+            BetaInvite.redeemed_at.is_(None),
+            BetaInvite.revoked_at.is_(None),
+            BetaInvite.expires_at > now,
+        )
+    ).first()
+    if invite is None or not _redeem_invite(session, invite.id, now):
+        raise ApiError("not_invited")
+    user = User(github_id=github_id, created_at=now)
+    session.add(user)
+    session.flush()
+    session.execute(
+        update(BetaInvite).where(BetaInvite.id == invite.id).values(redeemed_by=user.id)
+    )
+    return user
 
 
 def issue_tokens(

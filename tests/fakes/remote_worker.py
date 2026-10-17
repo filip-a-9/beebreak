@@ -13,7 +13,13 @@ from breakroom_companion.chat_state import ChatState
 from breakroom_companion.credentials import StoredCredentials
 from breakroom_companion.remote import ConnectionState, RemoteWorker
 from breakroom_companion.remote_config import RemoteConfig
-from breakroom_shared.api import Consent, Me, ReportReason
+from breakroom_shared.api import (
+    AuthMethods,
+    Consent,
+    GitHubStartResponse,
+    Me,
+    ReportReason,
+)
 from breakroom_shared.presence import OutboundPresence
 
 
@@ -45,6 +51,8 @@ class Calls:
     codes: list[str] = field(default_factory=list)
     device_names: list[str] = field(default_factory=list)
     starts: int = 0
+    method_fetches: int = 0
+    github_sign_ins: list[str] = field(default_factory=list)
     sign_outs: int = 0
     stops: int = 0
     # M5 chat
@@ -76,6 +84,12 @@ class FakeRemoteWorker(RemoteWorker):
     def verify(self, code: str, device_name: str) -> None:
         self.calls.codes.append(code)
         self.calls.device_names.append(device_name)
+
+    def fetch_methods(self) -> None:
+        self.calls.method_fetches += 1
+
+    def begin_github_sign_in(self, device_name: str) -> None:
+        self.calls.github_sign_ins.append(device_name)
 
     def set_nickname(self, nickname: str) -> None:
         self.calls.nicknames.append(nickname)
@@ -129,6 +143,12 @@ class FakeRemoteWorker(RemoteWorker):
     def push_state(self, state: ConnectionState) -> None:
         self.state = state
         self.state_changed.emit(state)
+
+    def push_methods(self, methods: AuthMethods) -> None:
+        self.methods_changed.emit(methods)
+
+    def push_github_started(self, started: GitHubStartResponse) -> None:
+        self.github_started.emit(started)
 
     def push_me(self, me: Me | None) -> None:
         self.me_changed.emit(me)

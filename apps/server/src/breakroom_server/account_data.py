@@ -30,7 +30,7 @@ from breakroom_server.models import (
     UserPreference,
     email_canonical,
 )
-from breakroom_server.tokens import tombstone_hmac
+from breakroom_server.tokens import github_tombstone_hmac, tombstone_hmac
 
 EXPORT_VERSION = 1
 
@@ -55,25 +55,41 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _find(session: Session, email: str) -> User:
-    canonical = email_canonical(email)
-    if canonical is None:
+def _find(session: Session, email: str | None, github_id: int | None) -> User:
+    """The account with this email, or with this GitHub id: exactly one given."""
+    if (email is None) == (github_id is None):
         raise AccountNotFound
-    user = session.scalars(
-        select(User).where(User.email_canonical == canonical)
-    ).first()
+    if github_id is not None:
+        user = session.scalars(select(User).where(User.github_id == github_id)).first()
+    else:
+        assert email is not None
+        canonical = email_canonical(email)
+        if canonical is None:
+            raise AccountNotFound
+        user = session.scalars(
+            select(User).where(User.email_canonical == canonical)
+        ).first()
     if user is None:
         raise AccountNotFound
     return user
 
 
-def export_account(session: Session, email: str) -> dict[str, Any]:
+def _invite_clause(user: User) -> Any:
+    """Invites for this account's identity (never `col IS NULL` by accident)."""
+    if user.github_id is not None:
+        return BetaInvite.github_id == user.github_id
+    return BetaInvite.email_canonical == user.email_canonical
+
+
+def export_account(
+    session: Session, email: str | None, *, github_id: int | None = None
+) -> dict[str, Any]:
     """Everything stored about the account, as JSON-serialisable data.
 
     Never includes a hash or HMAC column, a peer's message body, or the
     identity or note of anyone who reported this user.
     """
-    user = _find(session, email)
+    user = _find(session, email, github_id)
     uid = user.id
 
     prefs = session.get(UserPreference, uid)
@@ -109,20 +125,24 @@ def export_account(session: Session, email: str) -> dict[str, Any]:
         .order_by(Block.created_at)
     )
     invites = session.scalars(
-        select(BetaInvite)
-        .where(BetaInvite.email_canonical == user.email_canonical)
-        .order_by(BetaInvite.created_at)
+        select(BetaInvite).where(_invite_clause(user)).order_by(BetaInvite.created_at)
     )
-    challenges = session.scalars(
-        select(AuthChallenge)
-        .where(AuthChallenge.email_canonical == user.email_canonical)
-        .order_by(AuthChallenge.created_at)
+    # GitHub challenges hold no identity (only a device code), so none is theirs.
+    challenges = (
+        session.scalars(
+            select(AuthChallenge)
+            .where(AuthChallenge.email_canonical == user.email_canonical)
+            .order_by(AuthChallenge.created_at)
+        )
+        if user.email_canonical is not None
+        else ()
     )
 
     return {
         "export_version": EXPORT_VERSION,
         "user": {
             "email": user.email_canonical,
+            "github_id": user.github_id,
             "nickname": user.nickname,
             "status": user.status,
             "created_at": _iso(user.created_at),
@@ -260,7 +280,12 @@ def _is_busy(session: Session, uid: uuid.UUID) -> bool:
 
 
 def prepare_delete(
-    session: Session, email: str, now: datetime, *, allow_disabled: bool = False
+    session: Session,
+    email: str | None,
+    now: datetime,
+    *,
+    github_id: int | None = None,
+    allow_disabled: bool = False,
 ) -> uuid.UUID:
     """Phase one of a delete; returns the user id for `finish_delete`.
 
@@ -269,7 +294,7 @@ def prepare_delete(
     and deletes their refresh tokens, so the user can no longer act between
     the busy check and the deletes (READ COMMITTED, no lock).
     """
-    user = _find(session, email)
+    user = _find(session, email, github_id)
     if user.status == "disabled" and not allow_disabled:
         raise AccountDisabled
     if _is_busy(session, user.id):
@@ -290,7 +315,7 @@ def finish_delete(
 
     Raises `AccountBusy` if the user became busy after `prepare_delete`; the
     devices stay revoked and nothing is deleted. A disabled user leaves one
-    tombstone (keyed hash of the email), written in the same transaction.
+    tombstone (keyed hash of the email or GitHub id), written in the same transaction.
     Returns per-table counts.
     """
     user = session.get(User, user_id)
@@ -311,10 +336,11 @@ def finish_delete(
 
 def delete_account(
     session: Session,
-    email: str,
+    email: str | None,
     now: datetime,
     *,
     secret: bytes,
+    github_id: int | None = None,
     allow_disabled: bool = False,
 ) -> dict[str, int]:
     """Hard-delete the account and every row that references it.
@@ -323,7 +349,9 @@ def delete_account(
     change; see `prepare_delete` and `finish_delete` for the two phases. Busy
     means queued, in a live match, or reporter or subject of an open report.
     """
-    user_id = prepare_delete(session, email, now, allow_disabled=allow_disabled)
+    user_id = prepare_delete(
+        session, email, now, github_id=github_id, allow_disabled=allow_disabled
+    )
     return finish_delete(session, user_id, now, secret)
 
 
@@ -394,38 +422,41 @@ def _delete_rows(
         session, delete(UserPreference).where(UserPreference.user_id == uid)
     )
 
-    invites = select(BetaInvite.id).where(
-        BetaInvite.email_canonical == user.email_canonical
-    )
-    counts["auth_challenges"] = _count(
-        session,
-        delete(AuthChallenge).where(
-            or_(
-                AuthChallenge.email_canonical == user.email_canonical,
-                AuthChallenge.invite_id.in_(invites),
-            )
-        ),
-    )
-    # An invite for another address that this user redeemed is not theirs to
+    invites = select(BetaInvite.id).where(_invite_clause(user))
+    if user.email_canonical is not None:
+        counts["auth_challenges"] = _count(
+            session,
+            delete(AuthChallenge).where(
+                or_(
+                    AuthChallenge.email_canonical == user.email_canonical,
+                    AuthChallenge.invite_id.in_(invites),
+                )
+            ),
+        )
+    else:
+        counts["auth_challenges"] = _count(
+            session, delete(AuthChallenge).where(AuthChallenge.invite_id.in_(invites))
+        )
+    # An invite for another identity that this user redeemed is not theirs to
     # delete; it only loses the pointer.
     session.execute(
         update(BetaInvite)
-        .where(
-            BetaInvite.redeemed_by == uid,
-            BetaInvite.email_canonical != user.email_canonical,
-        )
+        .where(BetaInvite.redeemed_by == uid, ~_invite_clause(user))
         .values(redeemed_by=None)
     )
     counts["beta_invites"] = _count(
-        session,
-        delete(BetaInvite).where(BetaInvite.email_canonical == user.email_canonical),
+        session, delete(BetaInvite).where(_invite_clause(user))
     )
     counts["users"] = _count(session, delete(User).where(User.id == uid))
     # Only a disabled account leaves one, so a banned person who asks for
     # deletion cannot come back as a new user unnoticed.
     counts["tombstones"] = 0
     if user.status == "disabled":
-        key = tombstone_hmac(secret, user.email_canonical)
+        key = (
+            github_tombstone_hmac(secret, user.github_id)
+            if user.github_id is not None
+            else tombstone_hmac(secret, user.email_canonical or "")
+        )
         if not session.scalar(
             select(DeletedAccountTombstone.id).where(
                 DeletedAccountTombstone.email_hmac == key

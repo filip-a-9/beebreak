@@ -14,6 +14,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from breakroom_shared.api import (
+    AuthMethods,
     AuthStartRequest,
     AuthStartResponse,
     AuthVerifyRequest,
@@ -22,6 +23,9 @@ from breakroom_shared.api import (
     ErrorResponse,
     ExtensionAction,
     ExtensionRequest,
+    GitHubPollRequest,
+    GitHubPollResponse,
+    GitHubStartResponse,
     Me,
     MessagePage,
     MessageView,
@@ -113,6 +117,37 @@ class ApiClient:
             raise ApiError(ErrorResponse.model_validate_json(content).error)
         except ValidationError:
             raise ApiError("network") from None
+
+    async def auth_methods(self) -> AuthMethods:
+        reply = await self._call("GET", "/v1/auth/methods", model=AuthMethods)
+        assert reply is not None
+        return reply
+
+    async def github_start(self) -> GitHubStartResponse:
+        reply = await self._call(
+            "POST", "/v1/auth/github/start", model=GitHubStartResponse
+        )
+        assert reply is not None
+        return reply
+
+    async def github_poll(
+        self, challenge_id: UUID, device_name: str
+    ) -> GitHubPollResponse:
+        try:
+            request = GitHubPollRequest(
+                challenge_id=challenge_id, device_name=device_name
+            )
+        except ValidationError:
+            raise ApiError("invalid_request") from None
+        reply = await self._call(
+            "POST",
+            "/v1/auth/github/poll",
+            model=GitHubPollResponse,
+            body=request,
+            max_bytes=MAX_RESPONSE_BYTES,
+        )
+        assert reply is not None
+        return reply
 
     async def start_auth(
         self, email: str, invite_code: str | None
