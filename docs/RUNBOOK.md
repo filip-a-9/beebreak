@@ -196,6 +196,9 @@ Changing it therefore:
 - makes a refresh retry that straddles the restart, inside the grace window,
   fail the grace check. That revokes the device, and that user signs in again.
   Rare, and limited to refreshes in flight at the moment of the restart.
+- makes every **account tombstone** unmatchable (its key is derived from the
+  secret), so a banned person whose account was deleted can be invited again
+  without the override. The old rows still purge on schedule.
 
 It does **not** sign anyone out: existing access and refresh tokens are checked
 by their stored hashes, so signed-in users stay signed in.
@@ -269,7 +272,11 @@ CLI.
   `dc exec server breakroom-admin account delete user@example.com --yes`
   prints table names and row counts. It is refused while the user is queued, in
   a live match or on either side of an open report (resolve first). A disabled
-  account needs `--disabled-ok`. Backups taken earlier still contain the
+  account needs `--disabled-ok`, and its deletion leaves one tombstone (a keyed
+  hash of the email, kept 1 year, `BREAKROOM_TOMBSTONE_RETENTION_S`; the output
+  shows `tombstones=1`). `invite create` for that address is then refused with
+  exit 1 unless the operator passes `--override-tombstone`, which creates the
+  invite and deletes the tombstone. Backups taken earlier still contain the
   account; see the retention reminder under Backup schedule.
 
 ## Abuse reports

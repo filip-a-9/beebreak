@@ -265,9 +265,19 @@ def test_cooldown_applies_after_timeout_and_is_persisted() -> None:
 # --- silent long tools and waiting -------------------------------------------
 
 
+def test_lone_silent_tool_does_not_invite() -> None:
+    # Decision 2026-10-17: an open tool alone is not evidence (Esc sends nothing).
+    c = new()
+    c.on_event(ev(0, "turn_submitted"))
+    c.on_event(ev(6, "tool_started"))
+    assert [c.tick(at(t)) for t in (60, 120, 300)] == [None] * 3
+
+
 def test_silent_long_tool_invites_on_tick_not_on_completion() -> None:
+    # Was one tool_started; since 2026-10-17 the run needs min_tool_events (2).
     c = new()
     assert c.on_event(ev(0, "turn_submitted")) is None
+    assert c.on_event(ev(5, "tool_started")) is None
     assert c.on_event(ev(6, "tool_started")) is None
     assert c.tick(at(30)) is None
     assert c.tick(at(59)) is None
@@ -298,6 +308,8 @@ def test_suggestion_from_a_tick_is_withdrawn_by_a_waiting_event() -> None:
     c = new()
     c.on_event(ev(0, "turn_submitted", "a"))
     c.on_event(ev(5, "tool_started", "a"))
+    # Second tool event: since 2026-10-17 a lone open tool is not enough.
+    c.on_event(ev(6, "tool_started", "a"))
     assert c.tick(at(60)) == "suggested"
     assert c.on_event(ev(61, "waiting_input", "a")) == "idle"
 

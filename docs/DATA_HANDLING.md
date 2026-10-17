@@ -61,6 +61,7 @@ user.
 | Refresh tokens: SHA-256 hash, device, expiry, used time | `refresh_tokens` | Operator | Deleted 7 days after the token expires, used or not (`BREAKROOM_REFRESH_TOKEN_RETENTION_S`); an unexpired token is kept | Automatic purge |
 | Sign-in challenges: email, HMAC of the emailed code, attempts, expiry, consumed time | `auth_challenges` | Operator | Deleted 24 h after use or expiry (`BREAKROOM_CHALLENGE_RETENTION_S`). A code is valid for 10 minutes (`BREAKROOM_CODE_TTL_S`) | Automatic purge |
 | Beta invites: email, HMAC of the invite code, expiry, redeemed and revoked times, who redeemed | `beta_invites` | Operator | An invite is valid for 7 days (`BREAKROOM_INVITE_TTL_S`); expired, redeemed or revoked rows are deleted after 30 days (`BREAKROOM_INVITE_RETENTION_S`) | Automatic purge; `invite revoke` ends validity |
+| Account tombstone: keyed hash (HMAC under a subkey of the server secret) of the email of an account that was disabled for abuse and then deleted, created time. No email, no user id | `deleted_account_tombstones` | Operator (the hash cannot be reversed to an email without the secret and a guess) | 1 year (`BREAKROOM_TOMBSTONE_RETENTION_S`). Purpose: abuse prevention, so a banned person cannot return as a new user unnoticed. Lawful basis: legitimate interest, PROPOSED for the lawyer review | Automatic purge; `invite create --override-tombstone` removes it when the operator decides to invite that address |
 | Queue entries: presence id, task category, stack tags, time bucket (only while queued), status, times, device, match | `queue_entries` | Operator | The four presence columns are cleared the moment the entry ends. The row is deleted 30 days after it ends (`BREAKROOM_RETENTION_S`). A search lasts 90 s (`BREAKROOM_QUEUE_TTL_S`) | Automatic purge; `account delete` |
 | Matches (also the chat): times, end reason, shared tags and category, extension count and requester, last message number | `matches` | Operator. Both participants see the shared tags and category | Deleted 30 days after the chat ends (`BREAKROOM_RETENTION_S`) | Automatic purge |
 | Match participants: who took part, active flag, offline-since time, count of messages sent | `match_participants` | Operator | Deleted with the match, 30 days after it ends | Automatic purge; `account delete` |
@@ -92,8 +93,9 @@ admin CLI and answers within 14 days.
 - Delete (`breakroom-admin account delete`): a hard delete of every row that
   refers to you, and of the invites and challenges for your email. It is
   refused while you are queued, in a live chat, or on either side of an open
-  report. A disabled account is deleted only after the operator reviews it,
-  because deletion would also erase the record of the ban. Your devices are
+  report. A disabled account is deleted only after the operator reviews it;
+  deleting it leaves a keyed hash of its email for a year (see the
+  tombstone row in the table above). Your devices are
   signed out first. If the other person in a chat remains, their side of the chat is
   kept.
 

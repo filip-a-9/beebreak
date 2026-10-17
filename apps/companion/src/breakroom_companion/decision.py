@@ -69,7 +69,7 @@ class HeuristicEngine:
                 continue
             if (now - s.run_started_at).total_seconds() < cfg.activity_threshold_s:
                 continue
-            if s.run_tool_events < cfg.min_tool_events and s.open_tools <= 0:
+            if s.run_tool_events < cfg.min_tool_events:
                 continue
             candidates.append((s.run_started_at, key, s))
         if not candidates:

@@ -39,3 +39,14 @@ times relative to the first event, then one JSON summary line: `invitations`,
 (`tests/regression/test_replay.py`) with explicit timestamps. Real recordings
 go in `tests/fixtures/traces/recorded/` only after you have read them (see
 above); the regression set does not depend on them.
+
+## Recorded traces
+
+- `esc-cancel.jsonl`: the M2 recording of Esc on a tool (M2-C08).
+- `esc-cancel-running-tool.jsonl`: recorded 2026-10-17 with Claude Code
+  2.1.302 on Haiku. A foreground Bash `ping`, Esc pressed 5 s into it. Claude
+  Code showed "Interrupted" but sent no event after the Esc (no tool
+  completion, no `turn_stopped`, no idle event) until the session closed about
+  95 s later. Replayed in
+  `tests/regression/test_recorded_esc_cancel_running_tool.py`: a lone running
+  tool never invites, and the session is unknown by 600 s.

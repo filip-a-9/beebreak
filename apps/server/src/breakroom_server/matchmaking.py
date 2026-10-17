@@ -40,6 +40,7 @@ from breakroom_server.models import (
     AuthChallenge,
     BetaInvite,
     Block,
+    DeletedAccountTombstone,
     Match,
     MatchParticipant,
     Message,
@@ -744,12 +745,21 @@ class Matchmaker:
                 "CursorResult[Any]",
                 session.execute(delete(Match).where(Match.id.in_(old))),
             ).rowcount
-            challenges, tokens, invites = self._purge_auth(session, now)
+            challenges, tokens, invites, tombstones = self._purge_auth(session, now)
             session.commit()
-        if entries or matches or msgs or reports or challenges or tokens or invites:
+        if (
+            entries
+            or matches
+            or msgs
+            or reports
+            or challenges
+            or tokens
+            or invites
+            or tombstones
+        ):
             _log.info(
                 "purged entries=%d matches=%d messages=%d reports=%d "
-                "challenges=%d tokens=%d invites=%d",
+                "challenges=%d tokens=%d invites=%d tombstones=%d",
                 entries,
                 matches,
                 msgs,
@@ -757,10 +767,14 @@ class Matchmaker:
                 challenges,
                 tokens,
                 invites,
+                tombstones,
             )
 
-    def _purge_auth(self, session: Session, now: datetime) -> tuple[int, int, int]:
-        """Delete stale sign-in rows; returns (challenges, tokens, invites)."""
+    def _purge_auth(self, session: Session, now: datetime) -> tuple[int, int, int, int]:
+        """Delete stale sign-in rows and tombstones.
+
+        Returns (challenges, tokens, invites, tombstones).
+        """
         config = self._config
         challenge_cutoff = now - timedelta(seconds=config.challenge_retention_s)
         token_cutoff = now - timedelta(seconds=config.refresh_token_retention_s)
@@ -803,4 +817,13 @@ class Matchmaker:
                 )
             ),
         ).rowcount
-        return challenges, tokens, invites
+        tombstone_cutoff = now - timedelta(seconds=config.tombstone_retention_s)
+        tombstones = cast(
+            "CursorResult[Any]",
+            session.execute(
+                delete(DeletedAccountTombstone).where(
+                    DeletedAccountTombstone.created_at < tombstone_cutoff
+                )
+            ),
+        ).rowcount
+        return challenges, tokens, invites, tombstones

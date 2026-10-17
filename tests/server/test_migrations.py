@@ -342,3 +342,66 @@ def test_postgres_upgrades_from_0002_keeps_active_match_and_round_trips() -> Non
         with engine.begin() as conn:
             conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
         engine.dispose()
+
+
+def _check_0003_to_0004_round_trip(url: str) -> None:
+    """The tombstone table appears at 0004, takes rows, and leaves at downgrade."""
+    from alembic import command
+
+    config = alembic_config(url)
+    command.upgrade(config, "0003")
+    engine = make_engine(url)
+    try:
+        assert "deleted_account_tombstones" not in inspect(engine).get_table_names()
+        sessions = sessionmaker(engine, expire_on_commit=False)
+        add_ready_user(sessions, "Ada")
+
+        command.upgrade(config, "head")
+        assert _diff(url) == []
+        assert _columns(engine, "deleted_account_tombstones") == {
+            "id",
+            "email_hmac",
+            "created_at",
+        }
+        tomb = sa.table(
+            "deleted_account_tombstones",
+            sa.column("id", sa.Uuid()),
+            sa.column("email_hmac", sa.LargeBinary()),
+            sa.column("created_at", sa.DateTime(timezone=True)),
+        )
+        row = {"id": uuid.uuid4(), "email_hmac": b"k" * 32, "created_at": START_TIME}
+        with engine.begin() as conn:
+            conn.execute(sa.insert(tomb).values(**row))
+        with pytest.raises(sa.exc.IntegrityError), engine.begin() as conn:
+            conn.execute(sa.insert(tomb).values(**{**row, "id": uuid.uuid4()}))
+
+        command.downgrade(config, "0003")
+        tables = set(inspect(engine).get_table_names())
+        assert "deleted_account_tombstones" not in tables and "users" in tables
+        with engine.connect() as conn:
+            assert conn.execute(sa.text("SELECT count(*) FROM users")).scalar_one() == 1
+
+        command.upgrade(config, "head")
+        assert _diff(url) == []
+    finally:
+        engine.dispose()
+
+
+def test_sqlite_0003_to_0004_round_trips(tmp_path: Path) -> None:
+    _check_0003_to_0004_round_trip(f"sqlite:///{tmp_path / 'm6t.db'}")
+
+
+@requires_postgres
+def test_postgres_0003_to_0004_round_trips() -> None:
+    assert TEST_DATABASE_URL is not None
+    engine = make_engine(TEST_DATABASE_URL)
+    Base.metadata.drop_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+    try:
+        _check_0003_to_0004_round_trip(TEST_DATABASE_URL)
+    finally:
+        Base.metadata.drop_all(engine)
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+        engine.dispose()
