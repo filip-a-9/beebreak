@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication
 
+from beebreak_companion import theme
 from beebreak_companion.break_state import BreakPhase, BreakState
 from beebreak_companion.chat_state import ChatState
 from beebreak_companion.chat_window import ChatWindow
@@ -428,6 +429,7 @@ def main() -> int:
         print("beebreak-companion: invalid configuration", file=sys.stderr)
         return EXIT_START_FAILED
     app = QApplication(sys.argv)
+    theme.apply_theme(app)  # before any widget exists
     collect_on_gui_thread(app)  # before any worker thread exists
     window = CompanionWindow()
     window.set_state(controller.state, controller.estimate)

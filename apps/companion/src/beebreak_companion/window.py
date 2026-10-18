@@ -11,6 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -19,7 +20,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from beebreak_companion.break_state import BreakState
+from beebreak_companion import theme
+from beebreak_companion.break_state import BreakPhase, BreakState
 from beebreak_shared.api import Me, Nickname
 from beebreak_shared.ipc import InvitationState
 from beebreak_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
@@ -99,6 +101,30 @@ CATEGORY_LABELS: dict[TaskCategory, str] = {
 }
 _ACTIVE_PHASES = ("joining", "searching", "matched")
 
+# Which theme state (pill look) each state shows; colours live in theme.py.
+_INVITATION_PILL: dict[InvitationState, str] = {
+    "disabled": "off",
+    "idle": "connected",
+    "suggested": "searching",
+}
+_BREAK_PILL: dict[BreakPhase, str] = {
+    "none": "off",
+    "joining": "searching",
+    "searching": "searching",
+    "matched": "connected",
+    "nobody_available": "off",
+    "ended": "off",
+}
+_ACCOUNT_PILL: dict[str, str] = {
+    "signed_out": "off",
+    "signing_in": "searching",
+    "connecting": "searching",
+    "connected": "connected",
+    "offline": "offline",
+}
+MARK_SIZE = 22
+WORDMARK = "beebreak"
+
 
 def shared_labels(tags: Iterable[object], category: object) -> list[str]:
     """Display strings for what both people shared; unknown values are dropped."""
@@ -142,10 +168,16 @@ class CompanionWindow(QWidget):
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.resize(320, 220)
 
+        self.mark_label = QLabel()
+        self.mark_label.setPixmap(theme.mark_pixmap(theme.active_scheme(), MARK_SIZE))
+        self.wordmark_label = QLabel(WORDMARK)
+        self.wordmark_label.setObjectName("wordmark")
+        self.wordmark_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label = QLabel()
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
         self.estimate_label = QLabel()
+        self.estimate_label.setObjectName("muted")
         self.estimate_label.setTextFormat(Qt.TextFormat.PlainText)
         self.accept_button = QPushButton("Accept")
         self.decline_button = QPushButton("Decline")
@@ -160,6 +192,7 @@ class CompanionWindow(QWidget):
         self.account_label.setTextFormat(Qt.TextFormat.PlainText)
         self.account_label.setWordWrap(True)
         self.account_note = QLabel(UNENCRYPTED_NOTE)
+        self.account_note.setObjectName("muted")
         self.account_note.setTextFormat(Qt.TextFormat.PlainText)
         self.sign_in_button = QPushButton("Sign in")
         self.finish_setup_button = QPushButton("Finish setup")
@@ -183,6 +216,7 @@ class CompanionWindow(QWidget):
         self.break_error_label.setTextFormat(Qt.TextFormat.PlainText)
         self.break_error_label.setWordWrap(True)
         self.break_error_label.setVisible(False)
+        theme.set_state(self.break_error_label, "offline")
         self._break_error_timer = QTimer(self)
         self._break_error_timer.setSingleShot(True)
         self._break_error_timer.setInterval(ERROR_SECONDS * 1000)
@@ -192,6 +226,8 @@ class CompanionWindow(QWidget):
         self.block_button = QPushButton(BLOCK)
         self.ok_button = QPushButton(OK)
         self.open_chat_button = QPushButton(OPEN_CHAT)
+        for primary in (self.find_button, self.accept_button, self.open_chat_button):
+            primary.setObjectName("primary")
         self._break_buttons = (
             self.find_button,
             self.cancel_button,
@@ -215,16 +251,25 @@ class CompanionWindow(QWidget):
         buttons.addWidget(self.accept_button)
         buttons.addWidget(self.decline_button)
         layout = QVBoxLayout(self)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.estimate_label)
-        layout.addLayout(buttons)
-        layout.addWidget(self.break_label)
-        layout.addWidget(self.shared_label)
-        layout.addWidget(self.break_error_label)
+        header = QHBoxLayout()
+        header.addWidget(self.mark_label)
+        header.addWidget(self.wordmark_label)
+        header.addStretch()
+        layout.addLayout(header)
+        card = QFrame()
+        card.setObjectName("card")
+        card_layout = QVBoxLayout(card)
+        card_layout.addWidget(self.status_label)
+        card_layout.addWidget(self.estimate_label)
+        card_layout.addLayout(buttons)
+        card_layout.addWidget(self.break_label)
+        card_layout.addWidget(self.shared_label)
+        card_layout.addWidget(self.break_error_label)
         break_buttons = QHBoxLayout()
         for button in self._break_buttons:
             break_buttons.addWidget(button)
-        layout.addLayout(break_buttons)
+        card_layout.addLayout(break_buttons)
+        layout.addWidget(card)
         layout.addStretch()
         layout.addWidget(self.enabled_checkbox)
         layout.addWidget(self.account_label)
@@ -258,6 +303,7 @@ class CompanionWindow(QWidget):
         self, state: InvitationState, estimate: RemainingTimeBucket | None = None
     ) -> None:
         self.status_label.setText(_LABELS[state])
+        theme.set_state(self.status_label, _INVITATION_PILL[state])
         text = (
             _ESTIMATE_LABELS.get(estimate)
             if estimate and state == "suggested"
@@ -342,6 +388,7 @@ class CompanionWindow(QWidget):
         elif phase == "ended":
             text = BREAK_ENDED
         self.break_label.setText(text)
+        theme.set_state(self.break_label, _BREAK_PILL[phase])
         self.break_label.setVisible(bool(text))
         self.shared_label.setText(shared)
         self.shared_label.setVisible(bool(shared))
@@ -397,6 +444,7 @@ class CompanionWindow(QWidget):
     def _render_account(self) -> None:
         if self._remote_unavailable:
             self.account_label.setText(SERVER_REFUSED)
+            theme.set_state(self.account_label, "offline")
             self.account_note.setVisible(False)
             for button in self._account_buttons:
                 button.setVisible(False)
@@ -407,6 +455,7 @@ class CompanionWindow(QWidget):
         if state == "connected" and me is not None and me.nickname is not None:
             text = f"{CONNECTED_AS} {safe_nickname(me.nickname)}"
         self.account_label.setText(text)
+        theme.set_state(self.account_label, _ACCOUNT_PILL[state])
         signed_in = state in ("connecting", "connected", "offline")
         incomplete = (
             signed_in and me is not None and (me.nickname is None or me.consent is None)

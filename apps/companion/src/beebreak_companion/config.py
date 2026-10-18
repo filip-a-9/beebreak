@@ -14,6 +14,9 @@ WORKER_STOP_TIMEOUT_ENV = "BEEBREAK_WORKER_STOP_TIMEOUT_S"
 PROBE_TIMEOUT_ENV = "BEEBREAK_PROBE_TIMEOUT_S"
 GC_INTERVAL_ENV = "BEEBREAK_GC_INTERVAL_S"
 NOTIFY_INTERVAL_ENV = "BEEBREAK_NOTIFY_INTERVAL_S"
+THEME_ENV = "BEEBREAK_THEME"
+THEME_PROBE_TIMEOUT_ENV = "BEEBREAK_THEME_PROBE_TIMEOUT_S"
+THEME_SETTINGS = ("auto", "light", "dark")
 
 
 def _positive_seconds(name: str, default: float) -> float:
@@ -55,6 +58,17 @@ def gc_interval_s() -> float:
 def notify_interval_s() -> float:
     """Minimum seconds between desktop notifications for one chat."""
     return _positive_seconds(NOTIFY_INTERVAL_ENV, 10.0)
+
+
+def theme_setting() -> str:
+    """`auto`, `light` or `dark`; anything else means `auto`."""
+    value = os.environ.get(THEME_ENV, "auto").strip().lower()
+    return value if value in THEME_SETTINGS else "auto"
+
+
+def theme_probe_timeout_s() -> float:
+    """Seconds to wait for reg.exe when reading Windows' light/dark setting."""
+    return _positive_seconds(THEME_PROBE_TIMEOUT_ENV, 2.0)
 
 
 def _positive(name: str, default: int) -> int:

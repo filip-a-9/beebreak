@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from beebreak_companion import theme
 from beebreak_companion.chat_state import ChatEnd, ChatState, PendingMessage
 from beebreak_companion.report_dialog import ReportDialog, display_text
 from beebreak_companion.window import (
@@ -199,15 +200,27 @@ class ChatWindow(QWidget):
         self.resize(360, 480)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
 
+        self.avatar_label = QLabel()
+        self.avatar_label.setObjectName("avatar")
+        self.avatar_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.avatar_label.setFixedSize(36, 36)
+        self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.peer_label = QLabel()
+        self.peer_label.setObjectName("peerName")
         self.shared_label = QLabel()
+        self.shared_label.setObjectName("muted")
         self.time_label = QLabel()
+        self.time_label.setObjectName("timePill")
         self.status_label = QLabel()
         self.banner_label = QLabel()
         self.ended_label = QLabel()
         self.error_label = QLabel()
         self.counter_label = QLabel()
         self.footer_label = QLabel(FOOTER)
+        self.footer_label.setObjectName("footer")
+        theme.set_state(self.status_label, "offline")
+        theme.set_state(self.ended_label, "off")
+        theme.set_state(self.error_label, "offline")
         for label in (
             self.peer_label,
             self.shared_label,
@@ -228,6 +241,7 @@ class ChatWindow(QWidget):
         )
 
         self.transcript = QWidget()
+        self.transcript.setObjectName("transcript")
         # Rows on top via a stretch, not an alignment flag: an aligned layout
         # is laid out at its sizeHint height, which ignores height-for-width
         # and squeezes wrapped rows (X3).
@@ -250,9 +264,12 @@ class ChatWindow(QWidget):
             self.yes_button,
             self.no_button,
         )
+        for primary in (self.yes_button,):
+            primary.setObjectName("primary")
         self.banner = QFrame()
+        self.banner.setObjectName("banner")
         banner_layout = QHBoxLayout(self.banner)
-        banner_layout.setContentsMargins(0, 0, 0, 0)
+        banner_layout.setContentsMargins(12, 6, 12, 6)
         banner_layout.addWidget(self.banner_label, 1)
         for button in self._banner_buttons:
             banner_layout.addWidget(button)
@@ -265,6 +282,8 @@ class ChatWindow(QWidget):
         self.block_button = QPushButton(BLOCK)
         self.report_button = QPushButton(REPORT)
         self.close_button = QPushButton(CLOSE)
+        self.send_button.setObjectName("primary")
+        self.report_button.setObjectName("danger")
         self._buttons = (
             self.send_button,
             self.end_button,
@@ -287,9 +306,15 @@ class ChatWindow(QWidget):
         actions.addStretch()
         actions.addWidget(self.close_button)
         layout = QVBoxLayout(self)
-        layout.addWidget(self.peer_label)
-        layout.addWidget(self.shared_label)
-        layout.addWidget(self.time_label)
+        names = QVBoxLayout()
+        names.setSpacing(0)
+        names.addWidget(self.peer_label)
+        names.addWidget(self.shared_label)
+        header = QHBoxLayout()
+        header.addWidget(self.avatar_label)
+        header.addLayout(names, 1)
+        header.addWidget(self.time_label, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(header)
         layout.addWidget(self.status_label)
         layout.addWidget(self.scroll_area, 1)
         layout.addWidget(self.banner)
@@ -419,6 +444,8 @@ class ChatWindow(QWidget):
         has_chat = state.match_id is not None
         live = self._live
         self.peer_label.setText(self._nick if has_chat else "")
+        self.avatar_label.setText(self._nick[:1].upper() if has_chat else "")
+        self.avatar_label.setVisible(has_chat)
         self.shared_label.setText(self._shared)
         self.shared_label.setVisible(bool(self._shared) and has_chat)
         self._render_time()
@@ -545,9 +572,13 @@ class ChatWindow(QWidget):
     def _add_row(self, mine: bool, body: str, pending: PendingMessage | None) -> None:
         row = QWidget()
         column = QVBoxLayout(row)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(0)
+        column.setSpacing(2)
         label = self._body_label(body)
+        theme.set_role(
+            label, "pending" if pending is not None else "mine" if mine else "peer"
+        )
+        # The bubble leaves room on the side it does not belong to.
+        column.setContentsMargins(*((40, 0, 0, 0) if mine else (0, 0, 40, 0)))
         align = Qt.AlignmentFlag.AlignRight if mine else Qt.AlignmentFlag.AlignLeft
         label.setAlignment(align)
         # No alignment flag here: with one, the layout sizes the label at its
@@ -557,11 +588,13 @@ class ChatWindow(QWidget):
         if pending is not None:
             if pending.status == "failed" and self._state.ended is not None:
                 mark = QLabel(NOT_SENT_ENDED)  # nothing can be retried any more
+                mark.setObjectName("captionFailed")
                 mark.setTextFormat(Qt.TextFormat.PlainText)
                 column.addWidget(mark, 0, align)
             elif pending.status == "failed":
                 retry = QPushButton(NOT_SENT)
                 retry.setFlat(True)
+                retry.setObjectName("retry")
                 retry.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                 retry.clicked.connect(
                     lambda _checked=False, cid=pending.client_message_id: (
@@ -572,6 +605,7 @@ class ChatWindow(QWidget):
                 column.addWidget(retry, 0, align)
             else:
                 mark = QLabel(SENDING)
+                mark.setObjectName("caption")
                 mark.setTextFormat(Qt.TextFormat.PlainText)
                 column.addWidget(mark, 0, align)
         self._rows.addWidget(row)

@@ -20,7 +20,11 @@ def _default_tray() -> TrayLike:
     app = QApplication.instance()
     icon = QIcon()
     if isinstance(app, QApplication):
-        icon = app.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation)
+        icon = app.windowIcon()  # the Beebreak mark once the theme is applied
+        if icon.isNull():
+            icon = app.style().standardIcon(
+                QStyle.StandardPixmap.SP_MessageBoxInformation
+            )
     return QSystemTrayIcon(icon)
 
 
