@@ -56,7 +56,6 @@ from breakroom_companion.credentials import (
     StoredCredentials,
     default_credential_store,
 )
-from breakroom_companion.install import _desktop_exec_arg
 from breakroom_companion.privacy_preview import DEFAULT_DEVICE_NAME
 from breakroom_companion.realtime_client import RealtimeClient, RealtimeError
 from breakroom_companion.remote import RemoteWorker
@@ -1010,25 +1009,9 @@ def drive_uninstall(root: Path) -> list[Path]:
     gone = [
         root / "state" / "breakroom",
         root / "run" / "breakroom",
-        root / "config" / "autostart" / "breakroom.desktop",
     ]
     assert cli.main(["uninstall"]) == 0
     return gone
-
-
-def mask_own_install_path(
-    blobs: dict[str, list[bytes]],
-) -> dict[str, list[bytes]]:
-    """Blank the Exec value of the autostart entry, and nothing else in it.
-
-    It is the companion's own install location (which may sit under the real
-    home, as on CI), written by `install` itself, not agent input."""
-    exec_line = f"Exec={_desktop_exec_arg(cli._exec_path())}".encode()
-    key = "file.config/autostart/breakroom.desktop"
-    out = dict(blobs)
-    if key in out:
-        out[key] = [b.replace(exec_line, b"Exec=<companion path>") for b in out[key]]
-    return out
 
 
 def step_uninstall(s: Scenario) -> None:
@@ -1043,11 +1026,11 @@ def step_uninstall(s: Scenario) -> None:
         s.pre_uninstall_files = companion_file_blobs(s.tmp_path)
         isolate_home(root, mp)
         url = f"http://127.0.0.1:{s.proxy_port}"
-        assert cli.main(["install", "--server-url", url, "--autostart"]) == 0
+        assert cli.main(["install", "--server-url", url]) == 0
         shutil.copy(s.tmp_path / "creds0.json", credentials_path())
         if s.local_state is not None:
             shutil.copy(s.local_state, state_path())
-        before = mask_own_install_path(companion_file_blobs(root))
+        before = companion_file_blobs(root)
         assert any(b"brr_" in b for k, v in before.items() for b in v)
         gone = drive_uninstall(root)
         left = companion_file_blobs(root)

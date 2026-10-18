@@ -1,7 +1,8 @@
 """Install and uninstall of the companion's per-user files. Owned by M6-02.
 
-Install writes a small record (server URL, optional CA file) and, on request, an
-XDG autostart entry. Uninstall removes every per-user file Breakroom created and
+Install writes a small record (server URL, optional CA file). Uninstall removes
+every per-user file Breakroom created, including an autostart entry from an
+older release, and
 revokes the device on the server. Every step tolerates files that are already
 gone, so a partial install uninstalls cleanly. Output lines are fixed strings.
 """
@@ -101,35 +102,12 @@ def read_saved_ca_file() -> str | None:
         return None
 
 
-def _desktop_exec_arg(arg: str) -> str:
-    """One quoted Exec argument per the desktop-entry spec."""
-    for char in '\\"`$':
-        arg = arg.replace(char, "\\" + char)
-    arg = arg.replace("%", "%%")
-    # The string-value rule applies on top: a backslash is written doubled.
-    return '"' + arg.replace("\\", "\\\\") + '"'
-
-
-def _desktop_entry(exec_path: str) -> str:
-    return (
-        "[Desktop Entry]\n"
-        "Type=Application\n"
-        "Name=Breakroom\n"
-        "Comment=Opt-in chat break while coding agents run\n"
-        f"Exec={_desktop_exec_arg(exec_path)}\n"
-        "Terminal=false\n"
-        "X-GNOME-Autostart-enabled=true\n"
-    )
-
-
 def install(
     server_url: str,
     *,
-    autostart: bool,
-    exec_path: str,
     ca_file: str | None = None,
 ) -> list[str]:
-    """Record the validated server URL (and CA file); optionally add autostart.
+    """Record the validated server URL (and CA file).
 
     Raises EndpointRefused or CaFileRefused (nothing is written)."""
     url = validate_server_url(server_url)
@@ -141,11 +119,6 @@ def install(
     path = state_dir() / INSTALL_RECORD
     path.write_text(json.dumps(record), "utf-8")
     path.chmod(0o600)
-    if autostart:
-        entry = autostart_path()
-        entry.parent.mkdir(parents=True, exist_ok=True)
-        entry.write_text(_desktop_entry(exec_path), "utf-8")
-        done.append("added autostart entry")
     return done
 
 

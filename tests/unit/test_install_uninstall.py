@@ -67,12 +67,19 @@ def mentions_breakroom(root: Path) -> list[Path]:
     return found
 
 
+def plant_old_autostart_entry() -> None:
+    """An entry written by a release that still had `install --autostart`."""
+    install.autostart_path().parent.mkdir(parents=True, exist_ok=True)
+    install.autostart_path().write_text("[Desktop Entry]\nName=Breakroom\n")
+
+
 def save_login(origin: str, token: str, expires_in: timedelta) -> None:
     file_store(origin).save(StoredCredentials(token, datetime.now(UTC) + expires_in))
 
 
 def test_install_then_uninstall_leaves_nothing(home: Path) -> None:
-    install.install(ORIGIN, autostart=True, exec_path="/bin/true")
+    install.install(ORIGIN)
+    plant_old_autostart_entry()
     save_login(ORIGIN, "t", timedelta(days=1))
     (runtime_dir() / "salt").write_bytes(b"x")
     assert mentions_breakroom(home)  # install really wrote something
@@ -82,27 +89,15 @@ def test_install_then_uninstall_leaves_nothing(home: Path) -> None:
     assert mentions_breakroom(home) == []
 
 
-def test_install_writes_a_valid_autostart_entry(home: Path) -> None:
-    install.install(ORIGIN, autostart=True, exec_path="/opt/a b/companion")
-    text = install.autostart_path().read_text()
-    assert text.startswith("[Desktop Entry]")
-    assert 'Exec="/opt/a b/companion"' in text
-
-
-def test_install_without_flag_adds_no_autostart(home: Path) -> None:
-    install.install(ORIGIN, autostart=False, exec_path="/bin/true")
-    assert not install.autostart_path().exists()
-
-
 def test_install_rejects_a_disallowed_url_and_writes_nothing(home: Path) -> None:
     with pytest.raises(EndpointRefused):
-        install.install("http://example.com", autostart=True, exec_path="/bin/true")
+        install.install("http://example.com")
     assert mentions_breakroom(home) == []
 
 
 def test_saved_url_round_trips(home: Path) -> None:
     assert install.read_saved_server_url() is None
-    install.install(ORIGIN, autostart=False, exec_path="/bin/true")
+    install.install(ORIGIN)
     assert install.read_saved_server_url() == ORIGIN
 
 
@@ -115,10 +110,9 @@ def test_uninstall_on_a_machine_that_never_installed(home: Path) -> None:
 @pytest.mark.parametrize("stage", ["record", "autostart", "login", "socket_dir"])
 def test_partial_install_uninstalls_cleanly(home: Path, stage: str) -> None:
     if stage == "record":
-        install.install(ORIGIN, autostart=False, exec_path="/bin/true")
+        install.install(ORIGIN)
     elif stage == "autostart":
-        install.autostart_path().parent.mkdir(parents=True)
-        install.autostart_path().write_text("[Desktop Entry]\nName=Breakroom\n")
+        plant_old_autostart_entry()
     elif stage == "login":
         save_login(ORIGIN, "t", timedelta(days=1))
     else:
@@ -179,7 +173,7 @@ def test_uninstall_revokes_the_device_on_a_real_server(
     home: Path, live_server: LiveServer
 ) -> None:
     creds = sign_in(live_server, "ada@example.com")
-    install.install(live_server.base_url, autostart=False, exec_path="/bin/true")
+    install.install(live_server.base_url)
     file_store(live_server.base_url).save(creds)
 
     install.uninstall(keep_account=False, make_store=file_store)
@@ -195,7 +189,7 @@ def test_keep_account_leaves_the_device_valid(
     home: Path, live_server: LiveServer
 ) -> None:
     creds = sign_in(live_server, "bob@example.com")
-    install.install(live_server.base_url, autostart=False, exec_path="/bin/true")
+    install.install(live_server.base_url)
     file_store(live_server.base_url).save(creds)
 
     install.uninstall(keep_account=True, make_store=file_store)
@@ -205,7 +199,8 @@ def test_keep_account_leaves_the_device_valid(
 
 
 def test_offline_server_still_removes_everything(home: Path) -> None:
-    install.install(ORIGIN, autostart=True, exec_path="/bin/true")
+    install.install(ORIGIN)
+    plant_old_autostart_entry()
     save_login(ORIGIN, "t", timedelta(days=1))
     report = install.uninstall(keep_account=False, make_store=file_store)
     assert report.lines
@@ -255,9 +250,9 @@ def test_uninstall_stops_a_running_companion(home: Path) -> None:
 def test_cli_install_and_uninstall(
     home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code = cli.main(["install", "--server-url", ORIGIN, "--autostart"])
+    code = cli.main(["install", "--server-url", ORIGIN])
     assert code == 0
-    assert install.autostart_path().is_file()
+    plant_old_autostart_entry()
     assert "claude plugin" in capsys.readouterr().out  # the next command
     assert cli.main(["uninstall", "--keep-account"]) == 0
     assert mentions_breakroom(home) == []
@@ -270,7 +265,14 @@ def test_cli_install_prompts_and_reasks_on_a_bad_url(
     monkeypatch.setattr("builtins.input", lambda _prompt: next(answers))
     assert cli.main(["install"]) == 0
     assert install.read_saved_server_url() == ORIGIN
-    assert not install.autostart_path().exists()
+
+
+def test_cli_install_no_longer_offers_autostart(home: Path) -> None:
+    # WSLg has no desktop session, so nothing would ever run the entry.
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["install", "--server-url", ORIGIN, "--autostart"])
+    assert exit_info.value.code == cli.EXIT_USAGE
+    assert mentions_breakroom(home) == []
 
 
 def test_cli_install_refuses_a_bad_flag_url(home: Path) -> None:
@@ -328,9 +330,7 @@ def test_ca_file_owned_by_another_user_is_refused_at_install(
 
 def test_install_with_a_bad_ca_file_writes_nothing(home: Path) -> None:
     with pytest.raises(install.CaFileRefused):
-        install.install(
-            ORIGIN, autostart=True, exec_path="/bin/true", ca_file=str(home / "no")
-        )
+        install.install(ORIGIN, ca_file=str(home / "no"))
     assert mentions_breakroom(home) == []
 
 
@@ -368,7 +368,7 @@ def test_run_applies_the_recorded_url_and_ca_when_env_is_unset(
     home: Path, run_recorder: Recorder
 ) -> None:
     ca = write_ca(home)
-    install.install(ORIGIN, autostart=False, exec_path="/bin/true", ca_file=str(ca))
+    install.install(ORIGIN, ca_file=str(ca))
     assert cli.main([]) == 0
     assert run_recorder.env == {SERVER_URL_ENV: ORIGIN, CA_FILE_ENV: str(ca)}
 
@@ -377,7 +377,7 @@ def test_run_lets_the_environment_override_the_recorded_settings(
     home: Path, run_recorder: Recorder, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ca = write_ca(home)
-    install.install(ORIGIN, autostart=False, exec_path="/bin/true", ca_file=str(ca))
+    install.install(ORIGIN, ca_file=str(ca))
     monkeypatch.setenv(SERVER_URL_ENV, "https://example.org")
     monkeypatch.setenv(CA_FILE_ENV, "/elsewhere.pem")
     assert cli.main(["run"]) == 0
@@ -392,36 +392,12 @@ def test_run_without_a_record_sets_nothing(home: Path, run_recorder: Recorder) -
     assert run_recorder.env == {SERVER_URL_ENV: None, CA_FILE_ENV: None}
 
 
-def unquote_exec(line: str) -> str:
-    """Inverse of the desktop-entry rules for a single quoted Exec argument."""
-    value = line.removeprefix("Exec=").replace("\\\\", "\\")  # string escape
-    assert value[0] == value[-1] == '"'
-    out, chars = [], iter(value[1:-1])
-    for ch in chars:
-        if ch == "\\":
-            ch = next(chars)  # escaped reserved character
-        elif ch == "%":
-            assert next(chars) == "%"
-        out.append(ch)
-    return "".join(out)
-
-
-def test_autostart_exec_survives_reserved_characters(home: Path) -> None:
-    tricky = '/opt/a b/$HOME/`x`/50%/q"u\\ote/companion'
-    install.install(ORIGIN, autostart=True, exec_path=tricky)
-    (line,) = [
-        ln
-        for ln in install.autostart_path().read_text().splitlines()
-        if ln.startswith("Exec=")
-    ]
-    assert unquote_exec(line) == tricky
-
-
 def test_uninstall_aborts_untouched_when_the_companion_will_not_stop(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(install, "STOP_WAIT_S", 0.5)
-    install.install(ORIGIN, autostart=True, exec_path="/bin/true")
+    install.install(ORIGIN)
+    plant_old_autostart_entry()
     sock = runtime_dir() / "companion.sock"
     code = (
         "import signal, socket, time\n"
@@ -502,7 +478,7 @@ def test_clearing_does_not_depend_on_the_environment_being_valid(
 def test_invalid_environment_skips_the_revoke_but_still_removes_everything(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    install.install(ORIGIN, autostart=False, exec_path="/bin/true")
+    install.install(ORIGIN)
     save_login(ORIGIN, "t", timedelta(days=1))
     monkeypatch.setenv("BREAKROOM_HTTP_TIMEOUT_S", "not-a-number")
     install.uninstall(keep_account=False, make_store=file_store)

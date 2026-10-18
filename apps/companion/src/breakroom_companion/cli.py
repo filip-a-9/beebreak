@@ -5,9 +5,7 @@ Install and uninstall import no Qt, so they work without a display.
 
 import argparse
 import os
-import shutil
 import sys
-from pathlib import Path
 
 from breakroom_companion.endpoint import EndpointRefused, validate_server_url
 from breakroom_companion.install import (
@@ -40,11 +38,6 @@ def _parser() -> argparse.ArgumentParser:
     inst = sub.add_parser("install", help="set up the companion for this user")
     inst.add_argument("--server-url", help="skip the prompt")
     inst.add_argument("--ca-file", help="PEM CA file for a private server CA")
-    inst.add_argument(
-        "--autostart",
-        action="store_true",
-        help="add a login autostart entry (may not run under WSLg)",
-    )
     uninst = sub.add_parser("uninstall", help="remove everything Breakroom created")
     uninst.add_argument(
         "--keep-account",
@@ -67,12 +60,7 @@ def _ask_server_url() -> str | None:
     return None
 
 
-def _exec_path() -> str:
-    found = shutil.which("breakroom-companion")
-    return found if found else str(Path(sys.argv[0]).resolve())
-
-
-def _install(server_url: str | None, ca_file: str | None, autostart: bool) -> int:
+def _install(server_url: str | None, ca_file: str | None) -> int:
     if ca_file is not None:
         try:
             ca_file = validate_ca_file(ca_file)
@@ -89,9 +77,7 @@ def _install(server_url: str | None, ca_file: str | None, autostart: bool) -> in
         except EndpointRefused:
             print("That server URL is not allowed (https, or http on loopback).")
             return EXIT_USAGE
-    for line in install(
-        url, autostart=autostart, exec_path=_exec_path(), ca_file=ca_file
-    ):
+    for line in install(url, ca_file=ca_file):
         print(line)
     print("Next, add the Claude Code plugin:")
     for command in PLUGIN_COMMANDS:
@@ -121,7 +107,7 @@ def _run() -> int:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "install":
-        return _install(args.server_url, args.ca_file, args.autostart)
+        return _install(args.server_url, args.ca_file)
     if args.command == "uninstall":
         apply_saved_settings()  # the revoke must trust the same CA as `run`
         report = uninstall(keep_account=args.keep_account)

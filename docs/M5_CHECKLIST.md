@@ -263,11 +263,12 @@ nickname lines show `Bea` and `Filip` only.
 
 Notification: in A click the main window (so the chat window is not the
 active window) and have B send `ping CANARY-M5-7f3a`. Expect: the main
-window's button becomes `Open chat (1)` (or the count above plus one), and, if
-WSLg has a system tray, a notification titled `Breakroom` reading exactly
-`New message from Bea` and never the text `ping` or `CANARY`. Without a tray
-the companion only flashes the chat window and no text is shown anywhere
-outside the window; record which of the two you saw. A second message from B
+window's button becomes `Open chat (1)` (or the count above plus one), and
+A's taskbar icon flashes. WSLg has no system tray (Qt runs on Wayland, where
+none is available; checked 2026-10-18), so no text is shown anywhere outside
+the window. If a tray does exist, expect a notification titled `Breakroom`
+reading exactly `New message from Bea` and never the text `ping` or `CANARY`;
+record which of the two you saw. A second message from B
 within 10 s raises no second notification. Click **Open chat** to read them.
 
 ## Disconnects
@@ -623,7 +624,7 @@ database).
     "migration_version": "0003",
     "chat_window_opened_without_focus": true,
     "unread_count_shown": "Open chat (3)",
-    "notification_text": "New message from Bea (tray) | window flash only (no tray)",
+    "notification_text": "New message from Bea (tray) | taskbar flash only (no tray)",
     "html_line_rendered_literally": true,
     "missed_messages_after_20s_outage": 3,
     "a_line_after_60s_outage": "The connection was lost.",
