@@ -66,7 +66,7 @@ Some developers will accept unobtrusive invitations, meet an available peer, and
 | Test/tooling | pytest, Ruff, mypy or pyright, property tests, migration tests | Predictable contract and behavior testing |
 | Packaging | `uv` in development; signed/package-verified companion builds per OS later | Stable dependency sets; distribute runnable software rather than requiring source setup |
 | Beta auth | Invite-only email sign-in, private email and public nickname | Simple access control without mandatory GitHub identity; select provider during implementation review |
-| Beta auth, M3 (**CONFIRMED** 2026-10-13) | Self-hosted: admin-CLI invite bound to an email, 8-character one-time code by email typed into the companion; opaque access (15 min) and rotating refresh (30 days) tokens, stored hashed; refresh reuse revokes the device (M6-05: a retry within 30 s gets the same pair back) | No identity vendor; no links or URL-scheme handoff from a desktop app; revocation is a row update |
+| Beta auth, M3 (**CONFIRMED** 2026-10-13) | Self-hosted: admin-CLI invite bound to an email, 8-character one-time code by email typed into the companion; opaque access (15 min) and rotating refresh (30 days) tokens, stored hashed; refresh reuse revokes the device (M6-05: a retry within 90 s gets the same pair back) | No identity vendor; no links or URL-scheme handoff from a desktop app; revocation is a row update |
 | License | Apache-2.0 (**CONFIRMED** 2026-10-12) | Permissive source distribution with explicit patent terms; dependency compliance review still applies, e.g. PySide6 is LGPL |
 
 **Platform decision (CONFIRMED 2026-10-12):** M1 targets WSL2 Linux end to end — Claude Code, hooks, MCP server, companion (GUI via WSLg) and local IPC all run inside WSL. This supersedes the Windows-first proposal below for M1; later platforms remain open (ADR #2).
@@ -153,7 +153,7 @@ The fields `task_category`, `stack_tags`, and time bucket are individually confi
 8. Do not advertise end-to-end encrypted chat. TLS/WSS protects transport, but ordinary server-side chat storage/processing is readable by the service operator. E2EE is deferred.
 9. Enforce outbound network allowlists to the configured service endpoint; never allow prompts or hook JSON to become arbitrary destinations.
 
-**Hard security issue:** Local HTTP is not automatically safe because other processes on the same device may access it. Bind only to `127.0.0.1`, use an unpredictable local bearer token stored with restrictive OS permissions, reject inappropriate Origin/CORS requests, cap request sizes, validate the caller, and define a token-rotation policy. Investigate domain-socket/named-pipe security before calling this production-ready.
+**Local IPC:** loopback HTTP was rejected in favour of a Unix domain socket; see [ADR 0003](ADR/0003-unix-socket-ipc.md).
 
 ## 5. Normalized local event contract
 
@@ -281,13 +281,11 @@ An engine can be `heuristic` or `local_model`, but both return the same validate
 
 ## 8. MCP tool surface
 
-**Proposed minimum tools exposed to Claude Code over local stdio MCP:**
+**Tools exposed to Claude Code over local stdio MCP:**
 
 | Tool | Inputs | Output | Side effect |
 |---|---|---|---|
 | `beebreak_status` | none | Local activity/break status, no private chat content | none |
-| `beebreak_set_suggestions` | `enabled: bool` | Effective local setting | changes local consent preference only on explicit authorized user request |
-| `beebreak_open_window` | none | UI-opening acknowledgment | opens independent companion UI |
 | `beebreak_leave_queue` | none | `cancelled` / `not_searching` / `unavailable` / `companion_not_running` | cancels an existing search; never ends a match (M4) |
 
 M4: `beebreak_status` gains a fixed `queue` field (`none`/`searching`/`matched`); no peer nickname or tag reaches Claude's context. M5: `StatusReply` version 4 renames `matched` to `chatting`; the client still accepts version 3 (mapping `matched` to `chatting`) and version 2 (`queue` unknown). Claude cannot see, send to or end a chat.
@@ -302,17 +300,20 @@ M6: the plugin depends on no venv. Hooks and the MCP server run `beebreak-hook` 
 
 - Sign-in (M3; GitHub added later, ADR 0018). An account is either email or GitHub, never both (no linking in the beta). Which methods exist is server configuration (empty SMTP host = no email, empty `BEEBREAK_GITHUB_CLIENT_ID` = no GitHub; at least one, or the server refuses to start). A method that is off answers 404 `not_found`.
   - `GET /v1/auth/methods` — unauthenticated; `{"email": bool, "github": bool}`. The companion asks before showing its sign-in choice.
-  - `POST /v1/auth/start`, `POST /v1/auth/verify` — email code flow (always 202 with a fresh `challenge_id`; see T15, T16).
+  - `POST /v1/auth/start`, `POST /v1/auth/verify` — email code flow (202 with a fresh `challenge_id` for a well-formed address, known or not; a malformed email address gets 400 `invalid_request`; see T15, T16).
   - `POST /v1/auth/github/start` — no body. The server calls GitHub's device-code endpoint (client id, no scope, no secret) and keeps the `device_code` on an `auth_challenges` row. 200 `{challenge_id, user_code, verification_uri, expires_in_s, interval_s}`; the device code is never sent. 502 `github_unavailable`.
   - `POST /v1/auth/github/poll` — `{challenge_id, device_name}`. The server asks GitHub at most once per interval (claimed with a conditional `UPDATE`; `slow_down` adds 5 s, or takes GitHub's new interval). 200 `{status: "pending", interval_s}` or `{status: "complete", session}` (the same `SessionResponse` as `/verify`). On approval the server calls `GET /user` once, keeps only the numeric `id`, discards the access token, and issues Beebreak tokens. Errors: 400 `expired`, 400 `access_denied`, 400 `invalid_code` (unknown or used challenge), 403 `not_invited` (no account and no open invite for that GitHub id, or a disabled account), 502 `github_unavailable`.
   - `POST /v1/auth/refresh`, `POST /v1/auth/logout` — as before, for either kind of account.
-- `GET /v1/me` — private account and nickname/profile
-- `PATCH /v1/me` — bounded nickname and optional interests
+- `GET /v1/health` — unauthenticated liveness check for the compose healthcheck and outside probes; answers `{"status": "ok"}` and nothing else
+- `GET /v1/me` — private account and nickname/profile; per-user read rate limit
+- `PATCH /v1/me` — bounded nickname and optional interests; shares a per-user write rate limit with `PUT /v1/me/consent`
+- `PUT /v1/me/consent` — record the user's consent choices (version and the three share flags); answers the updated `Me`
 - `POST /v1/queue` — authenticated enqueue; idempotency key (scoped per user) required; body carries the consented `OutboundPresence`. 201, or 200 on replay; 409 `setup_incomplete` / `already_queued` / `already_matched`; per-user rate limit (M4)
+- `GET /v1/queue/current` — the caller's current queue entry and match (`{queue, match}`); per-user read rate limit
 - `DELETE /v1/queue/current` — cancel own queue entry; always 204 (M4)
 - `POST /v1/matches/{id}/end` — leave the active match; 404 `not_found` for non-participants (M4; replaces `/v1/chat/{id}/end`, M5 hangs chat off the match)
 - `POST /v1/matches/{id}/messages` — send a chat message: `client_message_id` (idempotent per user) and plain text, normalized by the server (NFC; control and bidi characters removed; at most 1000 characters; empty rejected). 201 `MessageView`, 200 on replay; 409 `chat_ended`; 20 per 10 s per user (M5)
-- `GET /v1/matches/{id}/messages?after_seq=N` — the messages after sequence number N, oldest first, at most 100, plus the match's `last_seq`. Readable by participants only and only until the bodies are purged (M5)
+- `GET /v1/matches/{id}/messages?after_seq=N` — the messages after sequence number N, oldest first, at most 100, plus the match's `last_seq`. Readable by participants only and only until the bodies are purged (M5); per-user read rate limit
 - `POST /v1/matches/{id}/extension` — `request`/`accept`/`decline`; the server adjudicates and returns the caller's chat status. 409 `chat_ended` / `no_extensions_left` / `no_extension_request` (M5; replaces `/v1/chat/{id}/extension`)
 - `POST /v1/matches/{id}/block` — end the match and block the other participant by account ID (M4; replaces `/v1/users/{id}/block`: clients never see account IDs)
 - `POST /v1/reports` — file a report with explicit user-selected content/evidence. M5: `match_id`, a reason from a fixed list, an optional note (at most 500 characters) and the sequence numbers of the messages the user ticked (none by default). Reporting also blocks the peer and ends the chat. One report per user per chat, accepted up to 24 h after the chat ended (`report_window_s`). 204; 409 `already_reported` / `report_window_closed`
@@ -370,7 +371,7 @@ M4 (**CONFIRMED** 2026-10-13): availability does not filter pairs; the remaining
 - Project paths/source/secrets must never appear in outbound JSON, exception telemetry, stdout, or test fixture snapshots.
 - Include a clear disclaimer: chat is **not** end-to-end encrypted and is retained only per disclosed policy.
 
-**Deployment (M6: deploy-ready, not deployed).** `compose.prod.yaml`: Caddy terminates TLS and is the only service with published ports (80/443); the server has no published port and Postgres sits on an internal network. A one-shot `migrate` service runs before `server`, which then only serves. The server must run as **one worker and one replica**: the realtime hub, presence, rate limiters and matchmaker lock are in-process, so a second process would split waiting users and rate-limit counters (`serve` refuses any other worker count). New settings: `BEEBREAK_TRUSTED_PROXIES`, `BEEBREAK_SMTP_TLS` (`none`/`starttls`/`implicit`), `BEEBREAK_SMTP_USERNAME`, `BEEBREAK_SMTP_PASSWORD`, and the companion's `BEEBREAK_CA_FILE` (loaded once at startup; `install --ca-file` saves it for every start). `BEEBREAK_SMTP_STARTTLS` is a deprecated alias, removed after one release. `BEEBREAK_LOG_FORMAT` (`text` default, `json` in `compose.prod.yaml`) selects one JSON object per log line. M6-05 abuse limits, each per `rate_window_s`: `BEEBREAK_RATE_VERIFY_EMAIL` (10), `BEEBREAK_RATE_QUEUE_ACTION_USER` (60), `BEEBREAK_RATE_QUEUE_READ_USER` (300), `BEEBREAK_MATCHES_PER_WINDOW_USER` (10); and `BEEBREAK_REFRESH_GRACE_S` (30 s), the refresh-retry grace. Former literals: `BEEBREAK_MAX_PAGE` (100 messages per page), `BEEBREAK_EXTENSION_ATTEMPTS` (4), `BEEBREAK_MAX_BODY_BYTES` (16384), `BEEBREAK_PURGE_INTERVAL_S` (60).
+**Deployment (M6: deploy-ready, not deployed).** `compose.prod.yaml`: Caddy terminates TLS and is the only service with published ports (80/443); the server has no published port and Postgres sits on an internal network. A one-shot `migrate` service runs before `server`, which then only serves. The server must run as **one worker and one replica**: the realtime hub, presence, rate limiters and matchmaker lock are in-process, so a second process would split waiting users and rate-limit counters (`serve` refuses any other worker count). New settings: `BEEBREAK_TRUSTED_PROXIES`, `BEEBREAK_SMTP_TLS` (`none`/`starttls`/`implicit`), `BEEBREAK_SMTP_USERNAME`, `BEEBREAK_SMTP_PASSWORD`, and the companion's `BEEBREAK_CA_FILE` (loaded once at startup; `install --ca-file` saves it for every start). `BEEBREAK_SMTP_STARTTLS` is a deprecated alias, removed after one release. `BEEBREAK_LOG_FORMAT` (`text` default, `json` in `compose.prod.yaml`) selects one JSON object per log line. M6-05 abuse limits, each per `rate_window_s`: `BEEBREAK_RATE_VERIFY_EMAIL` (10), `BEEBREAK_RATE_QUEUE_ACTION_USER` (60), `BEEBREAK_RATE_QUEUE_READ_USER` (300), `BEEBREAK_MATCHES_PER_WINDOW_USER` (10); and `BEEBREAK_REFRESH_GRACE_S` (90 s), the refresh-retry grace. Whole-main review (2026-10-18), per `rate_window_s` unless noted: `BEEBREAK_RATE_WS_CONNECT_IP` (120), `BEEBREAK_RATE_MESSAGES_READ_USER` (300), `BEEBREAK_RATE_ME_READ_USER` (120), `BEEBREAK_RATE_ME_WRITE_USER` (30, `PATCH /v1/me` and `PUT /v1/me/consent`); uvicorn caps frames at `BEEBREAK_WS_MAX_MESSAGE_BYTES` (8192); `BEEBREAK_WS_MAX_CONNECTIONS` (500) caps open realtime sockets in the app; former literals `BEEBREAK_WS_FLOOD_FRAMES` (20), `BEEBREAK_WS_FLOOD_WINDOW_S` (10), `BEEBREAK_WS_OUTBOUND_MAX` (64), `BEEBREAK_LAST_SEEN_INTERVAL_S` (60), `BEEBREAK_SMTP_TIMEOUT_S` (10). Former literals: `BEEBREAK_MAX_PAGE` (100 messages per page), `BEEBREAK_EXTENSION_ATTEMPTS` (4), `BEEBREAK_MAX_BODY_BYTES` (16384), `BEEBREAK_PURGE_INTERVAL_S` (60).
 
 **Defensive testing:** prompt injection embedded in hook payload fields, oversized JSON, path-like strings, Unicode confusables, repeated event IDs, process races, multiple active client windows, HTTP origin attacks, WebSocket unauthorized joins, two-account simultaneous pair races.
 
@@ -490,7 +491,7 @@ The layout is a candidate, not a mandate; keep plugin-local and companion-local 
 
 These are deliberately unresolved until the next *non-interview* architecture review:
 
-1. PySide6 versus a lightweight webview/Tauri companion after comparing app footprint, notification support, and packaging.
+1. ~~PySide6 versus a lightweight webview/Tauri companion~~ — resolved 2026-10-18: PySide6 for the beta, see [ADR 0020](ADR/0020-pyside6-companion.md).
 2. Windows + Linux versus one-OS beta; behavior across Windows native/WSL, local terminal/IDE, SSH/cloud sessions.
 3. Local IPC HTTP versus OS socket/pipe, including same-user authentication and permission audit.
 4. Exact availability estimation baseline and calibration; what counts as a reliable task finish. M2 baseline (**CONFIRMED** 2026-10-12): heuristic engine only; nothing counts as a whole-task finish, `TaskCompleted` is a hint; with several sessions, invite only if one qualifies and none waits for input. Calibration stays open.

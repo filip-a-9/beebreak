@@ -1,7 +1,7 @@
 # Architecture decision records
 
 One short record per decided item in [ARCHITECTURE.md](../ARCHITECTURE.md) §16
-and per M6 decision; where no alternative was recorded, the record says so. Items still open (§16 items 1, 5 and
+and per M6 decision; where no alternative was recorded, the record says so. Items still open (§16 items 5 and
 10, and estimate calibration in item 4) have no record.
 
 | # | Title |
@@ -25,3 +25,4 @@ and per M6 decision; where no alternative was recorded, the record says so. Item
 | [0017](0017-single-gdpr-grade-privacy-notice.md) | One GDPR-grade privacy notice |
 | [0018](0018-github-sign-in.md) | GitHub sign-in next to email codes |
 | [0019](0019-rename-to-beebreak.md) | Rename Breakroom to Beebreak |
+| [0020](0020-pyside6-companion.md) | PySide6 for the companion |

@@ -73,8 +73,26 @@ user.
 
 Not stored in the database: the in-memory rate-limit counters (lost on server
 restart). Server logs hold fixed strings, counts and opaque row ids, never an
-email, code, token, nickname, message body, report note, device name or IP
-address.
+email, code, token, nickname, message body, report note or device name, and
+no IP address.
+
+IP addresses. The server keeps a client's IP address (or, behind the trusted
+proxy, the forwarded address; ADR 0015) in memory as the key of its rate
+limiters for sign-in, GitHub polling and WebSocket connects (`_client_key` in
+`apps/server/src/beebreak_server/app.py`). A key is dropped at the next call of the same limiter after its hits are
+older than `BEEBREAK_RATE_WINDOW_S` (default 15 minutes; pruning runs on
+traffic, not on a timer, so on a quiet server a key can stay longer), and all
+of them are lost when the server restarts. Nothing writes them to the database or to the
+server's own logs. Purpose: abuse prevention and security (limiting guessing of
+sign-in codes and flooding). Lawful basis: legitimate interest, as for the
+abuse handling in the privacy notice.
+
+The Caddy proxy (`compose.prod.yaml`) has its own log. Its error log may
+include the client IP address, the host and the request URI, for example on a
+502 while the server restarts. Docker's json-file driver keeps it, capped at 5
+files of 10 MB per service (`max-size: 10m`, `max-file: "5"`), so retention is
+by size, not by time. To confirm at the rehearsal deploy: what the Caddy log
+really contains on the production host, and whether it should be cut down.
 
 GitHub sign-in (OAuth device flow, driven by the server): the server sends GitHub its client id (no scope, no secret), receives a device code and a user code, and later one access token. It uses the token for one `GET /user`, keeps only the numeric `id`, and drops the token; it is never written to the database or to a log, and never reaches the companion. The companion sees only the user code and the page to open. A GitHub username is used once at invite time to find the id and is not stored. Servers with an empty SMTP host send no email at all.
 

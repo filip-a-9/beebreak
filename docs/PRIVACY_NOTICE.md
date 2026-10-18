@@ -19,6 +19,7 @@ The controller is `<operator name>`. Contact: `<contact address>`.
 | Chat | Messages you send (body, time, sequence number), who took part, whether a participant was offline, how many messages each person sent | Contract |
 | Blocking and reporting abuse | Blocks (who blocked whom), reports (reason, optional note up to 500 characters, status), the messages the reporter ticked as evidence | Legitimate interest (keeping the service safe and handling abuse) |
 | Keeping out someone removed for abuse | If your account was disabled for abuse and then deleted: a keyed hash of your email address or GitHub user id (not the address or id itself) and the time, kept for 1 year, so the address cannot be invited again without the operator deciding to | Legitimate interest (abuse prevention), PROPOSED for the lawyer review |
+| Protecting the service from abuse and attacks | Your IP address (or the address a trusted proxy forwards): held in the server's memory only, as a counter key that limits sign-in attempts and connections, dropped at the next request of the same kind after its 15-minute window ends, so on a quiet server it can stay longer, with no fixed upper bound, and always when the server restarts; and in the web proxy's error log, which can include the address, the host name and the page requested, kept in size-limited rotating files (the oldest is overwritten as new entries arrive, so there is no fixed number of days). The server's own logs do not contain it | Legitimate interest (security and abuse prevention) |
 | Appeals, access and erasure requests | The email you send and our reply | Legitimate interest, and legal obligation where it applies |
 
 Your device name is a generic default (`WSL device`) that you can change
@@ -43,7 +44,7 @@ message bodies 24 hours after a chat ends; queue entries and match records 30
 days after they end; report evidence 90 days after a report is resolved (open
 reports until resolved); sign-in challenges 24 hours, refresh tokens 7 days
 after they expire, and expired, redeemed or revoked invites 30 days after they end.
-Account details are kept until the account is deleted. The keyed hash of the
+IP addresses in the server's memory are dropped at the next request of the same kind after their 15-minute window ends (on a quiet server that can be later, with no fixed upper bound), and always on restart. Account details are kept until the account is deleted. The keyed hash of the
 email of a disabled account that was then deleted is kept for 1 year.
 
 ## Who receives it

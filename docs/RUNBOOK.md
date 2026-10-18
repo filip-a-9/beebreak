@@ -31,7 +31,7 @@ Docker healthcheck, and Caddy starts only once it passes.
 
 ## Set secrets
 
-`cp .env.example .env`, then replace every placeholder. `.env` is ignored by
+`cp .env.example .env && chmod 600 .env`, then replace every placeholder. `.env` is ignored by
 git; never commit it. Make each secret with:
 
 ```sh
@@ -147,11 +147,14 @@ scripts/restore.sh backups/beebreak-<time>.dump.age --age-identity key.txt
 scripts/restore.sh backups/beebreak-<time>.dump --force    # replace a database in use
 ```
 
-The script starts `postgres`, **refuses** when the database already has tables
+The script first builds the `server` image (`docker compose build server`; the
+`migrate` service runs that image and never builds it, so a host that has not
+built it yet would fail after the restore; a failed build stops the script
+before the database is touched), starts `postgres`, **refuses** when the database already has tables
 (unless `--force`, which drops them first), stops `server` and `caddy`,
 restores, runs `beebreak-server migrate`, and then runs **one purge pass**
 (`beebreak-server purge`, which you can also run by hand:
-`dc run --rm --no-deps server beebreak-server purge`) with the current
+`dc run --rm --no-deps --pull never server beebreak-server purge`) with the current
 retention settings. If the restore itself fails, the script says so and how to
 retry: the restore is one transaction, so the database is left empty (after a
 `--force` drop) or untouched, and `server` and `caddy` stay stopped. It does not start the stack: run `dc up -d`
@@ -223,7 +226,7 @@ What the secret is used for:
   database never stores the raw token, so a backup plus the secret still does
   not yield a live token. Tokens issued at sign-in are random and stored only
   as SHA-256 hashes.
-- A refresh retried within the grace window (`BEEBREAK_REFRESH_GRACE_S`, 30 s)
+- A refresh retried within the grace window (`BEEBREAK_REFRESH_GRACE_S`, 90 s)
   gets the same pair back; that is why the pair has to be derivable.
 
 Changing it therefore:

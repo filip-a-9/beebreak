@@ -8,7 +8,7 @@
 #   --age-identity FILE   private key for a *.age backup (a *.gpg backup uses
 #                         your gpg keyring)
 #
-# Steps: start postgres, refuse if the database is not empty (unless --force),
+# Steps: build the server image, start postgres, refuse if the database is not empty (unless --force),
 # stop the server, restore, run `beebreak-server migrate`, then run ONE purge
 # pass. Nothing is started for you at the end; run `docker compose up -d`.
 #
@@ -88,6 +88,12 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 compose=(docker compose -f "$compose_file")
 psql=("${compose[@]}" exec -T postgres psql --username "$db_user" --dbname "$db_name" --no-psqlrc --quiet --tuples-only --no-align)
+
+# `migrate` runs the image `server` builds and never builds it itself, so a host
+# that never built it would fail after pg_restore. Build first: a build failure
+# aborts before the database is touched.
+echo "building the server image"
+"${compose[@]}" build server
 
 echo "starting postgres"
 "${compose[@]}" up -d --wait postgres

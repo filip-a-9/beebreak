@@ -25,6 +25,7 @@ DUMP_BYTES = b"PGDMP\x00fake-custom-format-bytes\xff" * 20
 FAKE_DOCKER = r"""#!/usr/bin/env bash
 echo "$*" >>"$FAKE_LOG"
 case "$*" in
+  *" build "*) [[ -z "$FAKE_FAIL_BUILD" ]] || exit 1 ;;
   *pg_dump*) printf '%s' "$FAKE_DUMP" | base64 -d ;;
   *"pg_restore --list"*) cat >/dev/null ;;
   *pg_restore*) cat >"$FAKE_RESTORED"; [[ -z "$FAKE_FAIL_RESTORE" ]] || exit 1 ;;
@@ -65,6 +66,7 @@ def _run(
         "FAKE_DUMP": base64.b64encode(DUMP_BYTES).decode(),
         "FAKE_TABLES": "0",
         "FAKE_FAIL_RESTORE": "",
+        "FAKE_FAIL_BUILD": "",
         **extra,
     }
     return subprocess.run(
@@ -179,11 +181,32 @@ def test_restore_into_an_empty_database_restores_migrates_then_purges(
     def at(needle: str) -> int:
         return next(i for i, call in enumerate(calls) if needle in call)
 
+    assert at(" build ") < at(" up ") < at("pg_restore")
+    assert at(" build ") < at(" migrate")
     assert (
         at(" stop ") < at("pg_restore") < at(" migrate") < at("beebreak-server purge")
     )
     assert "drop schema" not in " ".join(calls)  # nothing to drop in a fresh one
     assert "purge" in result.stdout.lower()
+
+
+def test_a_failed_image_build_stops_the_restore_before_the_database_is_touched(
+    tmp_path: Path, fake_docker: Path
+) -> None:
+    result = _run(
+        RESTORE,
+        [str(_backup_file(tmp_path)), "--force"],
+        tmp_path,
+        fake_docker,
+        FAKE_TABLES="14",
+        FAKE_FAIL_BUILD="1",
+    )
+    assert result.returncode != 0
+    calls = " ".join(_calls(tmp_path))
+    assert " build " in calls
+    for later in ("pg_restore", "drop schema", " migrate", " stop "):
+        assert later not in calls
+    assert not (tmp_path / "restored.bin").exists()
 
 
 def test_restore_with_force_replaces_a_non_empty_database(
