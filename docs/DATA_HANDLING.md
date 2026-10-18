@@ -39,10 +39,10 @@ Paths follow `breakroom_shared.paths`. `$XDG_RUNTIME_DIR` falls back to
 | Chat messages and peer nickname | Companion memory and window only | You | Until the window closes | Close the window |
 
 `breakroom-companion install` writes `install.json` in the state directory
-(`0600`; the server URL chosen at install, no secrets) and, with
-`--autostart`, `~/.config/autostart/breakroom.desktop`.
+(`0600`; the server URL chosen at install, no secrets).
 `breakroom-companion uninstall` deletes the state directory, socket directory
-(socket, salt), keyring entry, credentials file and autostart entry, and
+(socket, salt), keyring entry, credentials file and any
+`~/.config/autostart/breakroom.desktop` an older release wrote, and
 revokes the device on the server unless `--keep-account` is given or the
 server is unreachable (it says which).
 

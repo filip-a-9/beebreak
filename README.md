@@ -76,14 +76,12 @@ breakroom-companion                # start it (it reads the URL saved above)
 A server with a private CA: add `--ca-file /path/to/ca.pem` to
 `breakroom-companion install`. The file must be a PEM owned by you (or root)
 that only its owner can write. It is recorded next to the server URL and
-applied on every start, including autostart, unless `BREAKROOM_CA_FILE` is
+applied on every start unless `BREAKROOM_CA_FILE` is
 already set. It is read once at start: restart the companion after changing it.
 
-Optional: `breakroom-companion install --autostart` adds
-`~/.config/autostart/breakroom.desktop`. WSL2 may not process autostart entries
-at all (WSLg has no desktop session), so it may not start the companion at
-login; this is checked in the M6-10 checklist. Start the companion by hand
-otherwise.
+Start the companion by hand with `breakroom-companion`. There is no login
+autostart: WSLg has no desktop session, so nothing in WSL2 runs autostart
+entries.
 
 Without the `breakroom-hook` command on `PATH` the hooks do nothing and stay
 silent (the `breakroom` MCP server shows as failed in `/mcp`).
@@ -105,8 +103,9 @@ rm -rf ~/breakroom-release
 `uninstall` stops a running companion, revokes this device on the server
 (skipped with `--keep-account`; if the server is unreachable it says so and
 continues), and removes the socket directory, state directory (state,
-credentials file, install record), salt, keyring entry and autostart entry. It
-prints what it removed and works on a partial or already-removed install.
+credentials file, install record), salt, keyring entry and any autostart
+entry left by an older release. It prints what it removed and works on a
+partial or already-removed install.
 
 ## Development quickstart
 

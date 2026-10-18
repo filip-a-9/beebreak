@@ -359,23 +359,13 @@ Claude Code plugin:` with the two `claude plugin ...` commands; the two
 `claude plugin` commands succeed. `ls -l ~/.local/state/breakroom/install.json`
 shows mode `-rw-------`.
 
-Autostart, a separate measurement (the README says WSL2 may not process
-autostart entries at all):
+Autostart is not offered (WSLg has no desktop session to run it):
 
 ```
-breakroom-companion install --server-url http://127.0.0.1:8000 --autostart
-cat ~/.config/autostart/breakroom.desktop
+breakroom-companion install --server-url http://127.0.0.1:8000 --autostart; echo "exit $?"
 ```
 
-Expect `added autostart entry` among the output lines and a desktop entry
-with `Name=Breakroom` and an `Exec=` line that holds the full path of
-`breakroom-companion`. Then in PS `wsl --terminate breakroom-clean`, reopen the
-distro and run `pgrep -af breakroom-companion`. Record whether the companion
-started by itself (`autostart_started_companion` in the report). The step
-passes whether it did or not; it fails only if the entry is wrong or the
-install errors. If the companion did not start, the README's warning is
-accurate. If it did start, the README's "may not start" line is outdated:
-note it. Leave the autostart entry in place for M6-C10 to remove.
+Expect a usage error naming `--autostart` and `exit 2`.
 
 Result (pass / fail / blocked):
 
@@ -426,13 +416,12 @@ Result (pass / fail / blocked):
 before uninstalling, note what exists:
 
 ```
-ls -A ~/.local/state/breakroom "${XDG_RUNTIME_DIR:-/tmp/breakroom-$(id -u)}/breakroom" ~/.config/autostart
+ls -A ~/.local/state/breakroom "${XDG_RUNTIME_DIR:-/tmp/breakroom-$(id -u)}/breakroom"
 ```
 
 Expect (companion still running): `companion-state.json`, `install.json` and,
 if the window showed `Stored unencrypted`, `credentials.json` in the state
-directory; `companion.sock` and `salt` in the socket directory;
-`breakroom.desktop` in the autostart directory. Then the README's Uninstall
+directory; `companion.sock` and `salt` in the socket directory. Then the README's Uninstall
 block, in order:
 
 ```
@@ -446,8 +435,8 @@ rm -rf ~/breakroom-release
 Expect from `breakroom-companion uninstall`, one fixed line each and exit 0:
 `stopped the running companion`, `revoked this device on the server`,
 `cleared stored login`, `removed state directory (state, credentials, install
-record)`, `removed socket directory (socket, salt)`, `removed autostart
-entry`. The companion window closes. Run `breakroom-companion uninstall` a
+record)`, `removed socket directory (socket, salt)`. The companion window
+closes. Run `breakroom-companion uninstall` a
 second time before `uv tool uninstall` (so run the first line of the block
 above, then this, then the other four):
 
@@ -463,7 +452,7 @@ not a leftover. Then verify nothing is left:
 ```
 find ~ /tmp -maxdepth 5 -iname '*breakroom*' -not -path "$HOME/.cache/uv/*" -not -path "$HOME/.claude/*" 2>/dev/null
 ls -d ~/.claude/plugins/cache/*breakroom* ~/.claude/plugins/marketplaces/*breakroom* 2>&1
-ls -d "${XDG_RUNTIME_DIR:-/tmp/breakroom-$(id -u)}/breakroom" ~/.local/state/breakroom ~/.config/autostart/breakroom.desktop 2>&1
+ls -d "${XDG_RUNTIME_DIR:-/tmp/breakroom-$(id -u)}/breakroom" ~/.local/state/breakroom 2>&1
 command -v breakroom-companion breakroom-hook breakroom-mcp
 ```
 
@@ -932,7 +921,6 @@ left; nothing is deleted automatically, each item is yours to confirm:
     "release_tarball_sha256_matches": null,
     "wsl_version": null,
     "extra_install_steps_beyond_readme": [],
-    "autostart_started_companion": null,
     "hook_last_event_at_set": null,
     "mcp_companion_state": null,
     "uninstall_leftovers": [],
