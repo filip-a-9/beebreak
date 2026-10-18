@@ -1,7 +1,7 @@
 [project]
-name = "breakroom-shared"
+name = "beebreak-shared"
 version = "0.1.0"
-description = "Versioned contracts shared by Breakroom components"
+description = "Versioned contracts shared by Beebreak components"
 readme = "README.md"
 authors = [
     { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }

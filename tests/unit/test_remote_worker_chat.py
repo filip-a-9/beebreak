@@ -23,10 +23,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from breakroom_companion.chat_state import ChatState
-from breakroom_companion.credentials import FileCredentialStore, StoredCredentials
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
+from beebreak_companion.chat_state import ChatState
+from beebreak_companion.credentials import FileCredentialStore, StoredCredentials
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
 from tests.fakes.chat import chat_json
 from tests.unit.test_remote_worker_break import (
     PEER,
@@ -1003,7 +1003,7 @@ def test_no_message_body_or_nickname_reaches_the_logs(
     server: ChatServer,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.DEBUG, logger="breakroom_companion")
+    caplog.set_level(logging.DEBUG, logger="beebreak_companion")
     rig = make_rig()
     open_chat(qtbot, rig)
     server.fail_sends = 1

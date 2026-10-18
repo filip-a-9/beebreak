@@ -8,19 +8,19 @@ through the `push_*` helpers.
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from breakroom_companion.break_state import BreakState
-from breakroom_companion.chat_state import ChatState
-from breakroom_companion.credentials import StoredCredentials
-from breakroom_companion.remote import ConnectionState, RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_shared.api import (
+from beebreak_companion.break_state import BreakState
+from beebreak_companion.chat_state import ChatState
+from beebreak_companion.credentials import StoredCredentials
+from beebreak_companion.remote import ConnectionState, RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_shared.api import (
     AuthMethods,
     Consent,
     GitHubStartResponse,
     Me,
     ReportReason,
 )
-from breakroom_shared.presence import OutboundPresence
+from beebreak_shared.presence import OutboundPresence
 
 
 class _NoCredentials:

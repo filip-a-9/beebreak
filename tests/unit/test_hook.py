@@ -21,7 +21,7 @@ def _run(
     full_env = {**os.environ, "XDG_RUNTIME_DIR": runtime, **env}
     start = time.monotonic()
     proc = subprocess.run(
-        [sys.executable, "-m", "breakroom_agent_bridge.hook"],
+        [sys.executable, "-m", "beebreak_agent_bridge.hook"],
         input=stdin,
         capture_output=True,
         env=full_env,
@@ -74,23 +74,23 @@ def test_stdin_cap_comes_from_environment(runtime: str) -> None:
     proc, _ = _run(
         json.dumps(PAYLOADS["Stop"]).encode(),
         runtime,
-        BREAKROOM_HOOK_MAX_STDIN_BYTES="10",
+        BEEBREAK_HOOK_MAX_STDIN_BYTES="10",
     )
     _assert_silent_success(proc)
-    assert not (Path(runtime) / "breakroom" / "salt").exists()
+    assert not (Path(runtime) / "beebreak" / "salt").exists()
 
 
 def test_valid_payload_creates_salt_with_private_runtime_dir(runtime: str) -> None:
     proc, _ = _run(json.dumps(PAYLOADS["Stop"]).encode(), runtime)
     _assert_silent_success(proc)
-    assert (Path(runtime) / "breakroom" / "salt").stat().st_size == 32
+    assert (Path(runtime) / "beebreak" / "salt").stat().st_size == 32
 
 
 def test_empty_salt_file_is_replaced_and_event_still_delivered(runtime: str) -> None:
     import socket
     import threading
 
-    rdir = Path(runtime) / "breakroom"
+    rdir = Path(runtime) / "beebreak"
     rdir.mkdir(mode=0o700)
     (rdir / "salt").write_bytes(b"")  # left by a hook killed mid-create
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -118,7 +118,7 @@ def test_empty_salt_file_is_replaced_and_event_still_delivered(runtime: str) -> 
 
 
 def test_unsafe_runtime_dir_leaves_hook_silent(runtime: str) -> None:
-    sub = Path(runtime) / "breakroom"
+    sub = Path(runtime) / "beebreak"
     sub.mkdir(mode=0o700)
     sub.chmod(0o770)
     proc, _ = _run(json.dumps(PAYLOADS["Stop"]).encode(), runtime)

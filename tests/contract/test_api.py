@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from breakroom_shared.api import (
+from beebreak_shared.api import (
     MAX_SERVER_FRAME_BYTES,
     MAX_WS_FRAME_BYTES,
     WS_CLOSE,
@@ -27,7 +27,7 @@ from breakroom_shared.api import (
     WsChatStatus,
     WsReady,
 )
-from breakroom_shared.chat import MAX_MESSAGE_CHARS
+from beebreak_shared.chat import MAX_MESSAGE_CHARS
 
 
 def test_consent_defaults_all_off() -> None:

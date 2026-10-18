@@ -1,6 +1,6 @@
 """Rule 13 (M4 README): task metadata leaves the companion by exactly one path.
 
-Static check over every module of `breakroom_companion`:
+Static check over every module of `beebreak_companion`:
 
 * `build_presence` is referenced only by `app.py` (called only in `wire_break`,
   the one sender) and `privacy_preview.py` (display only).
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-import breakroom_companion
+import beebreak_companion
 
 NETWORK_LIBS = frozenset({"httpx", "websockets"})
 DYNAMIC = "<dynamic>"
@@ -43,7 +43,7 @@ ALL_NAMES = frozenset(REFERENCE_ALLOWED) | CALL_NAMES
 
 
 def _package_files() -> list[Path]:
-    root = Path(breakroom_companion.__file__).parent
+    root = Path(beebreak_companion.__file__).parent
     return sorted(root.rglob("*.py"))
 
 
@@ -159,7 +159,7 @@ def test_the_one_path_is_really_there() -> None:
 
 def test_the_realtime_client_never_mentions_presence() -> None:
     tree = ast.parse(
-        (Path(breakroom_companion.__file__).parent / "realtime_client.py").read_text(
+        (Path(beebreak_companion.__file__).parent / "realtime_client.py").read_text(
             encoding="utf-8"
         )
     )
@@ -169,7 +169,7 @@ def test_the_realtime_client_never_mentions_presence() -> None:
 @pytest.mark.parametrize(
     ("name", "source"),
     [
-        ("sender.py", "from breakroom_shared.presence import build_presence\n"),
+        ("sender.py", "from beebreak_shared.presence import build_presence\n"),
         ("remote.py", "x = build_presence()\n"),
         ("app.py", "def other():\n    return build_presence()\n"),
         (
@@ -210,8 +210,8 @@ def test_checker_flags_each_violation(name: str, source: str) -> None:
             "remote.py",
             "async def _join_queue():\n    QueueJoinRequest()\n    api.join_queue()\n",
         ),
-        ("remote.py", "from breakroom_shared.presence import OutboundPresence\n"),
-        ("api_client.py", "from breakroom_shared.api import QueueJoinRequest\n"),
+        ("remote.py", "from beebreak_shared.presence import OutboundPresence\n"),
+        ("api_client.py", "from beebreak_shared.api import QueueJoinRequest\n"),
         ("privacy_preview.py", "def example_json():\n    build_presence()\n"),
         ("window.py", "import httpx\n"),
     ],

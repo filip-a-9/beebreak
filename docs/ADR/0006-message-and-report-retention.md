@@ -9,10 +9,10 @@ they exist. Reports need evidence for moderation.
 
 ## Decision
 Message bodies are deleted 24 h after the chat ends
-(`BREAKROOM_MESSAGE_RETENTION_S`). Report evidence is deleted 90 days after the
-report is resolved (`BREAKROOM_REPORT_RETENTION_S`); open reports are kept until
+(`BEEBREAK_MESSAGE_RETENTION_S`). Report evidence is deleted 90 days after the
+report is resolved (`BEEBREAK_REPORT_RETENTION_S`); open reports are kept until
 resolved. Ended queue entries and matches are deleted after 30 days
-(`BREAKROOM_RETENTION_S`). The chat window always says "Not end-to-end
+(`BEEBREAK_RETENTION_S`). The chat window always says "Not end-to-end
 encrypted. Messages are deleted 24 h after the chat ends."
 
 ## Alternatives

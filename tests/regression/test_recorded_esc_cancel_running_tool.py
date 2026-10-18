@@ -7,8 +7,8 @@ cap is 600 s. Times are literals, never computed from the code under test.
 
 from pathlib import Path
 
-from breakroom_companion.config import TriggerConfig
-from breakroom_shared.events import NormalizedEvent
+from beebreak_companion.config import TriggerConfig
+from beebreak_shared.events import NormalizedEvent
 from tools.replay_trace import load_events, replay
 
 TRACE = (

@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = ROOT / "integrations" / "claude-code"
-COMPANION = ROOT / ".venv" / "bin" / "breakroom-companion"
+COMPANION = ROOT / ".venv" / "bin" / "beebreak-companion"
 
 # Filip's per-invocation ceiling (2026-10-12); lower it with --budget-usd.
 MAX_BUDGET_USD = 1.00
@@ -41,14 +41,14 @@ BILLING_VARS = (
 # Two 18 s calls qualify whether the model runs them in parallel (Haiku does)
 # or in sequence: each call's own gap stays under the 20 s quiet gap, and the
 # span from the prompt exceeds the 15 s demo threshold. Two calls also meet
-# BREAKROOM_MIN_TOOL_EVENTS=2 before the second completes.
+# BEEBREAK_MIN_TOOL_EVENTS=2 before the second completes.
 PROMPT = (
     "Run the Bash command `sleep 18` twice, as two separate Bash tool calls. "
     "Do nothing else and reply only 'done'."
 )
 COMPANION_ENV = {
-    "BREAKROOM_ACTIVITY_THRESHOLD_S": "15",
-    "BREAKROOM_MIN_TOOL_EVENTS": "2",
+    "BEEBREAK_ACTIVITY_THRESHOLD_S": "15",
+    "BEEBREAK_MIN_TOOL_EVENTS": "2",
     "QT_QPA_PLATFORM": "offscreen",
 }
 POLL_S = 0.25
@@ -103,7 +103,7 @@ class StatusWatcher(threading.Thread):
         self.event_times: set[str] = set()
 
     def run(self) -> None:
-        from breakroom_agent_bridge.ipc_client import request_status
+        from beebreak_agent_bridge.ipc_client import request_status
 
         previous = None
         while not self._halt.is_set():
@@ -122,7 +122,7 @@ class StatusWatcher(threading.Thread):
 
 
 def _wait_for_socket(sock: Path, timeout_s: float) -> bool:
-    from breakroom_agent_bridge.ipc_client import request_status
+    from beebreak_agent_bridge.ipc_client import request_status
 
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -135,7 +135,7 @@ def _wait_for_socket(sock: Path, timeout_s: float) -> bool:
 def run(budget_usd: float, model: str, timeout_s: float) -> dict[str, object]:
     with tempfile.TemporaryDirectory(dir="/tmp") as tmp:
         runtime = Path(tmp)
-        sock = runtime / "breakroom" / "companion.sock"
+        sock = runtime / "beebreak" / "companion.sock"
         env = claude_env(os.environ, runtime=runtime)
         companion = subprocess.Popen(
             [str(COMPANION)],
@@ -196,13 +196,13 @@ def main() -> int:
     parser.add_argument(
         "--budget-usd",
         type=_budget,
-        default=_budget(os.environ.get("BREAKROOM_E2E_BUDGET_USD", "1.00")),
+        default=_budget(os.environ.get("BEEBREAK_E2E_BUDGET_USD", "1.00")),
     )
     parser.add_argument(
-        "--model", default=os.environ.get("BREAKROOM_E2E_MODEL", "haiku")
+        "--model", default=os.environ.get("BEEBREAK_E2E_MODEL", "haiku")
     )
     parser.add_argument(
-        "--timeout-s", type=float, default=_env_float("BREAKROOM_E2E_TIMEOUT_S", 240)
+        "--timeout-s", type=float, default=_env_float("BEEBREAK_E2E_TIMEOUT_S", 240)
     )
     args = parser.parse_args()
     result = run(args.budget_usd, args.model, args.timeout_s)

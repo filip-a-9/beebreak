@@ -7,13 +7,13 @@ import pytest
 from PySide6.QtWidgets import QPlainTextEdit
 from pytestqt.qtbot import QtBot
 
-from breakroom_companion.privacy_preview import (
+from beebreak_companion.privacy_preview import (
     NEVER_SHARED,
     PrivacyPreviewDialog,
     example_json,
 )
-from breakroom_shared.api import Consent
-from breakroom_shared.presence import StackTag, build_presence
+from beebreak_shared.api import Consent
+from beebreak_shared.presence import StackTag, build_presence
 
 COMBOS = list(itertools.product([False, True], repeat=3))
 
@@ -91,7 +91,7 @@ def test_set_consent_updates_the_text(qtbot: QtBot) -> None:
 
 def test_module_imports_no_network_library() -> None:
     code = (
-        "import sys, breakroom_companion.privacy_preview;"
+        "import sys, beebreak_companion.privacy_preview;"
         "bad = {'httpx', 'websockets'} & set(sys.modules);"
         "sys.exit(1 if bad else 0)"
     )

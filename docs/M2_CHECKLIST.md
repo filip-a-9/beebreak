@@ -18,7 +18,7 @@ step says "replay", it uses `tools/replay_trace.py TRACE.jsonl
 
 **Terminals.** T1: the companion. T2: the Claude session under test ("A").
 T3: a long-lived probe Claude session ("P") used only to ask for
-`breakroom_status`, because a session that is waiting on a prompt cannot be
+`beebreak_status`, because a session that is waiting on a prompt cannot be
 asked anything. Start P as a pre-allowed session (below); A is
 started per step.
 
@@ -36,7 +36,7 @@ backgrounds it, so no long tool is seen). So:
   ZEBRA-7731`. Keep the path inside the project; `/dev/null` or an absolute
   path outside it triggers a read-outside-project prompt.
 
-**Reading `breakroom_status` from P.** Ask P: "Call the breakroom_status tool
+**Reading `beebreak_status` from P.** Ask P: "Call the beebreak_status tool
 and show the raw result." Fields: `companion`, `invitation`, `last_event_at`,
 `activity`, `estimate`. P's own tool call is in flight when the reply is
 computed, so P itself counts as `active`. Therefore `waiting_input` in another
@@ -62,7 +62,7 @@ uv run python tools/replay_trace.py reports/NAME.jsonl --respond none
 The replay prints a timeline (times relative to the first event) and a JSON
 summary (`invitations`, `first_invitation_s`, seconds per activity state).
 Run the replay in the shell that has the C02 exports: the tool reads the same
-`BREAKROOM_*` variables as the companion. If `first_invitation_s` looks like
+`BEEBREAK_*` variables as the companion. If `first_invitation_s` looks like
 the 60 s default where 20 is expected, the exports are missing from that shell.
 
 **Every prompt you send** contains the marker `ZEBRA-7731`, and every Bash
@@ -92,17 +92,17 @@ Expect: all green.
 companion:
 
 ```
-export BREAKROOM_ACTIVITY_THRESHOLD_S=20
-export BREAKROOM_MIN_TOOL_EVENTS=2
-export BREAKROOM_COOLDOWN_S=45
-export BREAKROOM_SUGGESTION_TIMEOUT_S=30
-export BREAKROOM_STALE_AFTER_S=30
-export BREAKROOM_WAITING_MAX_S=90
+export BEEBREAK_ACTIVITY_THRESHOLD_S=20
+export BEEBREAK_MIN_TOOL_EVENTS=2
+export BEEBREAK_COOLDOWN_S=45
+export BEEBREAK_SUGGESTION_TIMEOUT_S=30
+export BEEBREAK_STALE_AFTER_S=30
+export BEEBREAK_WAITING_MAX_S=90
 ```
 
 Defaults: 60 / 2 / 900 / 60 / 180 / 300. Not changed here (defaults apply):
-`BREAKROOM_OPEN_TOOL_MAX_S` (600), `BREAKROOM_FORGET_AFTER_S` (7200),
-`BREAKROOM_TASK_EVIDENCE_WAIT_S` (300). Values
+`BEEBREAK_OPEN_TOOL_MAX_S` (600), `BEEBREAK_FORGET_AFTER_S` (7200),
+`BEEBREAK_TASK_EVIDENCE_WAIT_S` (300). Values
 must be positive integers; anything else makes the companion refuse to start.
 **Restart the companion after changing any of these**: they are read once at
 startup. Export them in the replay shell too (see above).
@@ -111,18 +111,18 @@ Expect: nothing visible yet.
 **M2-C03 — Fresh state directory and companion start.**
 
 ```
-ls -ld ~/.local/state/breakroom 2>&1
-rm -rf ~/.local/state/breakroom        # Breakroom's own directory only
-.venv/bin/breakroom-companion
+ls -ld ~/.local/state/beebreak 2>&1
+rm -rf ~/.local/state/beebreak        # Beebreak's own directory only
+.venv/bin/beebreak-companion
 ```
 
 (Run the venv script directly, not `uv run`.) In the window, uncheck then
 re-check "Suggest breaks" once; this forces the first save. Then in another
-terminal: `ls -la ~/.local/state/breakroom`
-Expect: a `Breakroom` window with the idle text; the directory shows
+terminal: `ls -la ~/.local/state/beebreak`
+Expect: a `Beebreak` window with the idle text; the directory shows
 `drwx------` and contains `companion-state.json` with `-rw-------`. Start T3
 and T2 sessions as described above (T2 is restarted per step where the
-allow-list differs). Ask P for `breakroom_status`: `companion` is `running`,
+allow-list differs). Ask P for `beebreak_status`: `companion` is `running`,
 `invitation` is `idle`.
 
 ## Waiting for the user
@@ -131,7 +131,7 @@ allow-list differs). Ask P for `breakroom_status`: `companion` is `running`,
 `ZEBRA-7731: run the Bash command "sleep 5 && echo ZEBRA-7731"`. When the
 permission prompt appears, **leave it open for 40 s**
 (past the 20 s threshold, before the 90 s wait limit). During that time ask P
-for `breakroom_status`.
+for `beebreak_status`.
 Expect: no invitation in the window; P shows `activity: waiting_input` and
 `invitation: idle`. Then approve the prompt; the command runs and Claude
 answers. Record pass: R as `m2-C04`, same scenario.
@@ -140,11 +140,11 @@ Replay expect: 0 invitations; `waiting_input` seconds greater than 0.
 **M2-C05 — Denied prompt (trace).** Same prompt as M2-C04 (prompting
 session). When the prompt appears, answer **No** (deny). Claude does not
 respond: it asks "What should Claude do instead?" and fires no hook after the
-`waiting_input`. Do not type anything in A. Ask P for `breakroom_status` at
+`waiting_input`. Do not type anything in A. Ask P for `beebreak_status` at
 once, then again after the wait limit (90 s with the C02 values).
 Expect: no invitation; P shows `activity: waiting_input` right after the
 denial and not after the wait limit (the session drops to `unknown` after
-`BREAKROOM_WAITING_MAX_S`; typing the next prompt in A ends the wait sooner).
+`BEEBREAK_WAITING_MAX_S`; typing the next prompt in A ends the wait sooner).
 Until then the denied prompt blocks invitations from every session; this is
 accepted. Record pass: R as `m2-C05`, same scenario; open the trace and write
 down, in order, the event types after the `waiting_input` line (expected:
@@ -177,7 +177,7 @@ ZEBRA-7731"`. After about 5 s press **Esc**.
 Then watch the window for 40 s without typing.
 This step is a **measurement**, not a pass/fail on invitations. Docs say a
 cancelled tool fires no completion hook and `Stop` does not run on a user
-interrupt, so Breakroom may still see an open tool (Claude Code 2.1.302 sent
+interrupt, so Beebreak may still see an open tool (Claude Code 2.1.302 sent
 no event at all after the Esc). Since 2026-10-17 an open tool alone is not
 enough evidence, so no invitation is expected. Write down:
 
@@ -197,7 +197,7 @@ window, invitation that cannot be answered).
 relative to the project; an absolute one prompts) and let Claude answer. A
 failing command (exit 2) arrives as an ordinary `tool_completed`, not as a
 separate failure event. In the window nothing is expected. After the answer, wait 40 s
-(longer than `BREAKROOM_STALE_AFTER_S`), then ask P for `breakroom_status`.
+(longer than `BEEBREAK_STALE_AFTER_S`), then ask P for `beebreak_status`.
 Expect: no invitation. Record pass: R as `m2-C09`, same scenario.
 Replay expect: 0 invitations; the aggregate activity at the end of the replay
 is `idle` or `unknown`, never `active` (the `active` seconds in the summary
@@ -205,7 +205,7 @@ are small, about the length of the turn).
 
 **M2-C10 — Stop never says finished.** After any turn ends (M2-C09 or
 M2-C07), look at the window text, the T1 terminal output, and P's raw
-`breakroom_status` result.
+`beebreak_status` result.
 Expect, by eye: none of them contains the words "finished", "done",
 "complete", or "completed" in any form. The window shows only the idle text
 or an invitation; `invitation` is one of the known state words. In the
@@ -246,10 +246,10 @@ exist in your Claude Code version, mark `blocked`.
 ## Persistence
 
 **M2-C13 — Decline survives a restart.** Stop the companion. Set
-`export BREAKROOM_COOLDOWN_S=300` in T1 and start it (restart after changing
+`export BEEBREAK_COOLDOWN_S=300` in T1 and start it (restart after changing
 env). Run the pre-allowed 60 s command as in M2-C07 and click **Decline** when the
 invitation appears. Ctrl+C the companion, check
-`cat ~/.local/state/breakroom/companion-state.json`, restart it with the same
+`cat ~/.local/state/beebreak/companion-state.json`, restart it with the same
 exports, and run the same command again for 40 s.
 Expect: the file is JSON with `"enabled": true` and a non-null
 `"cooldown_until"` in the future; after the restart, **no invitation** during
@@ -264,12 +264,12 @@ that moment), and the state file shows `"enabled": true`. Re-checking it while
 a run already qualifies invites at once; that is by design (the run is real).
 
 **M2-C15 — Corrupt state starts off.** Ctrl+C the companion, then
-`echo 'not json' > ~/.local/state/breakroom/companion-state.json` and start
+`echo 'not json' > ~/.local/state/beebreak/companion-state.json` and start
 it.
 Expect: the window starts disabled (unchecked box), no crash, and no output
 containing the file content. Fix up: Ctrl+C, `rm
-~/.local/state/breakroom/companion-state.json`, `unset
-BREAKROOM_COOLDOWN_S` and re-export `BREAKROOM_COOLDOWN_S=45`, restart.
+~/.local/state/beebreak/companion-state.json`, `unset
+BEEBREAK_COOLDOWN_S` and re-export `BEEBREAK_COOLDOWN_S=45`, restart.
 Expect: starts enabled (missing file means defaults).
 
 ## Privacy and report

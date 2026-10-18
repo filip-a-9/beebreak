@@ -19,19 +19,19 @@ from PySide6.QtCore import QObject, Slot
 from pytestqt.qtbot import QtBot
 from sqlalchemy import delete, func, select
 
-from breakroom_companion.break_state import BreakState
-from breakroom_companion.credentials import FileCredentialStore
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_server.models import (
+from beebreak_companion.break_state import BreakState
+from beebreak_companion.credentials import FileCredentialStore
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_server.models import (
     Block,
     Match,
     MatchParticipant,
     QueueEntry,
     User,
 )
-from breakroom_shared.api import Consent
-from breakroom_shared.presence import OutboundPresence
+from beebreak_shared.api import Consent
+from beebreak_shared.presence import OutboundPresence
 from tests.e2e_support.server import LiveServer
 
 pytest_plugins = ["tests.e2e_support.server"]  # live_server fixtures

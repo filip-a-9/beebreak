@@ -10,12 +10,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
 
-from breakroom_server import realtime
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.models import Device, User
-from breakroom_server.tokens import hash_token, new_token
-from breakroom_shared.api import MAX_WS_FRAME_BYTES, WS_CLOSE, ServerWsFrame
+from beebreak_server import realtime
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.models import Device, User
+from beebreak_server.tokens import hash_token, new_token
+from beebreak_shared.api import MAX_WS_FRAME_BYTES, WS_CLOSE, ServerWsFrame
 from tests.server.conftest import FixedClock, add_ready_user, seed_match, seed_queued
 
 ACCESS_TTL = 900
@@ -600,7 +600,7 @@ def test_sync_has_no_ended_reason_without_an_ended_chat_or_with_a_live_one(
 
 
 def test_the_wire_form_of_a_sync_without_a_reason_is_unchanged() -> None:
-    from breakroom_shared.api import WsSync
+    from beebreak_shared.api import WsSync
 
     frame = WsSync(
         type="sync",

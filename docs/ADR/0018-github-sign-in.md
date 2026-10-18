@@ -34,5 +34,5 @@ A fake GitHub on a loopback port (real HTTP) in `tests/server/github_fake.py`;
 `tests/unit/test_onboarding_github.py`.
 
 ## Rollback
-Empty `BREAKROOM_GITHUB_CLIENT_ID` turns the method off; existing GitHub
+Empty `BEEBREAK_GITHUB_CLIENT_ID` turns the method off; existing GitHub
 accounts then cannot sign in.

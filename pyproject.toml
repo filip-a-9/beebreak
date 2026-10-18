@@ -20,10 +20,10 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 
 [tool.ruff.lint.isort]
 known-first-party = [
-    "breakroom_agent_bridge",
-    "breakroom_companion",
-    "breakroom_server",
-    "breakroom_shared",
+    "beebreak_agent_bridge",
+    "beebreak_companion",
+    "beebreak_server",
+    "beebreak_shared",
     "tests",
 ]
 

@@ -11,8 +11,8 @@ from uuid import uuid4
 
 import pytest
 
-from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import EventFrame, StatusReply, StatusRequest
+from beebreak_shared.events import NormalizedEvent
+from beebreak_shared.ipc import EventFrame, StatusReply, StatusRequest
 
 TOOL = Path(__file__).parents[2] / "tools" / "record_trace.py"
 
@@ -28,7 +28,7 @@ def _env(runtime: Path) -> dict[str, str]:
 
 
 def _sock(runtime: Path) -> Path:
-    return runtime / "breakroom" / "companion.sock"
+    return runtime / "beebreak" / "companion.sock"
 
 
 def _start(runtime: Path, out: Path) -> subprocess.Popen[bytes]:

@@ -5,8 +5,8 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import EventFrame
+from beebreak_shared.events import NormalizedEvent
+from beebreak_shared.ipc import EventFrame
 
 VALID_EVENT_JSON = """{
   "event_version": 1,

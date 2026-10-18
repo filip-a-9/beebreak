@@ -9,14 +9,14 @@ from pathlib import Path
 import pytest
 from pytestqt.qtbot import QtBot
 
-from breakroom_agent_bridge.ipc_client import (
+from beebreak_agent_bridge.ipc_client import (
     request_leave_queue,
     request_status,
     send_event,
 )
-from breakroom_companion.worker import IpcWorker
-from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import LeaveResult, StatusReply
+from beebreak_companion.worker import IpcWorker
+from beebreak_shared.events import NormalizedEvent
+from beebreak_shared.ipc import LeaveResult, StatusReply
 
 
 def make_event() -> NormalizedEvent:
@@ -136,7 +136,7 @@ def test_worker_without_a_leave_callback_answers_unavailable(sock_path: Path) ->
 def test_hanging_leave_callback_neither_blocks_status_nor_stop(
     sock_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_IPC_READ_TIMEOUT_S", "0.3")
+    monkeypatch.setenv("BEEBREAK_IPC_READ_TIMEOUT_S", "0.3")
     release = threading.Event()
 
     def hang() -> LeaveResult:

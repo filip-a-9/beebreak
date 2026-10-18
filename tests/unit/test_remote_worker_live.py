@@ -12,14 +12,14 @@ from PySide6.QtCore import QObject, Slot
 from pytestqt.qtbot import QtBot
 from sqlalchemy import func, select
 
-from breakroom_companion.api_client import ApiClient
-from breakroom_companion.break_state import BreakPhase, BreakState
-from breakroom_companion.credentials import FileCredentialStore
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_server.models import QueueEntry
-from breakroom_shared.api import Consent, QueueJoinRequest
-from breakroom_shared.presence import OutboundPresence
+from beebreak_companion.api_client import ApiClient
+from beebreak_companion.break_state import BreakPhase, BreakState
+from beebreak_companion.credentials import FileCredentialStore
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_server.models import QueueEntry
+from beebreak_shared.api import Consent, QueueJoinRequest
+from beebreak_shared.presence import OutboundPresence
 
 if TYPE_CHECKING:
     from tests.e2e_support.server import LiveServer

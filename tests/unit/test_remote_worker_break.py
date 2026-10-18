@@ -30,12 +30,12 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from breakroom_companion.break_state import BreakPhase, BreakState
-from breakroom_companion.credentials import FileCredentialStore, StoredCredentials
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_shared.api import QueueJoinRequest
-from breakroom_shared.presence import OutboundPresence
+from beebreak_companion.break_state import BreakPhase, BreakState
+from beebreak_companion.credentials import FileCredentialStore, StoredCredentials
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_shared.api import QueueJoinRequest
+from beebreak_shared.presence import OutboundPresence
 from tests.fakes.chat import chat_json
 
 WAIT_MS = 10_000
@@ -800,7 +800,7 @@ def test_no_log_line_carries_presence_nickname_or_tags(
     text = " ".join(
         r.getMessage()
         for r in caplog.records
-        if r.name.startswith("breakroom_companion")
+        if r.name.startswith("beebreak_companion")
     )
 
     for secret in (

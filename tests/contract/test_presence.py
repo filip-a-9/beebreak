@@ -5,8 +5,8 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from breakroom_shared.api import Consent
-from breakroom_shared.presence import OutboundPresence, build_presence
+from beebreak_shared.api import Consent
+from beebreak_shared.presence import OutboundPresence, build_presence
 from tests.fixtures.privacy_negative import SENSITIVE_STRINGS
 
 PRESENCE_ID = "3f2c9a4e-6b1d-4f8a-9c7e-2a5b8d0e1f34"

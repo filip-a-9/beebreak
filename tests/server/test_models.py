@@ -5,8 +5,8 @@ import pytest
 from sqlalchemy import Engine, inspect, text
 from sqlalchemy.exc import IntegrityError, StatementError
 
-from breakroom_server.db import SessionFactory, make_engine
-from breakroom_server.models import (
+from beebreak_server.db import SessionFactory, make_engine
+from beebreak_server.models import (
     AuthChallenge,
     BetaInvite,
     Device,

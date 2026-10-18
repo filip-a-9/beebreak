@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Back up the Breakroom database: `pg_dump --format=custom` from the `postgres`
+# Back up the Beebreak database: `pg_dump --format=custom` from the `postgres`
 # compose service into a dated file (mode 0600). Prints size and SHA-256.
 #
 #   scripts/backup.sh [--out-dir DIR] [--age-recipient KEY | --gpg-recipient ID]
@@ -14,18 +14,18 @@
 # server it protects.
 #
 # Environment (COMPOSE_PROJECT_NAME is required, the rest optional):
-#   BREAKROOM_COMPOSE_FILE  compose file (default: compose.prod.yaml)
-#   BREAKROOM_DB_USER       database user (default: breakroom)
-#   BREAKROOM_DB_NAME       database name (default: breakroom)
+#   BEEBREAK_COMPOSE_FILE  compose file (default: compose.prod.yaml)
+#   BEEBREAK_DB_USER       database user (default: beebreak)
+#   BEEBREAK_DB_NAME       database name (default: beebreak)
 #   COMPOSE_PROJECT_NAME    REQUIRED: the compose project (non-empty), as docker
 #                           compose reads it; the script refuses to run without
 
 set -euo pipefail
 umask 077
 
-compose_file="${BREAKROOM_COMPOSE_FILE:-compose.prod.yaml}"
-db_user="${BREAKROOM_DB_USER:-breakroom}"
-db_name="${BREAKROOM_DB_NAME:-breakroom}"
+compose_file="${BEEBREAK_COMPOSE_FILE:-compose.prod.yaml}"
+db_user="${BEEBREAK_DB_USER:-beebreak}"
+db_name="${BEEBREAK_DB_NAME:-beebreak}"
 out_dir="backups"
 age_recipient=""
 gpg_recipient=""
@@ -75,7 +75,7 @@ fi
 mkdir -p "$out_dir"
 chmod 700 "$out_dir"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-final="$out_dir/breakroom-$stamp.dump$suffix"
+final="$out_dir/beebreak-$stamp.dump$suffix"
 partial="$final.partial"
 trap 'rm -f "$partial"' EXIT
 

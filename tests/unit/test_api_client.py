@@ -12,8 +12,8 @@ from uuid import UUID
 import httpx
 import pytest
 
-from breakroom_companion.api_client import ApiClient, ApiError
-from breakroom_shared.api import (
+from beebreak_companion.api_client import ApiClient, ApiError
+from beebreak_shared.api import (
     Consent,
     QueueEntryView,
     QueueJoinRequest,
@@ -21,7 +21,7 @@ from breakroom_shared.api import (
     SendMessageRequest,
     SessionResponse,
 )
-from breakroom_shared.presence import OutboundPresence
+from beebreak_shared.presence import OutboundPresence
 
 if TYPE_CHECKING:
     from tests.e2e_support.server import LiveServer

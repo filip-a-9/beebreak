@@ -1,6 +1,6 @@
 import pytest
 
-from breakroom_server.nickname import NicknameError, skeleton, validate_nickname
+from beebreak_server.nickname import NicknameError, skeleton, validate_nickname
 
 
 @pytest.mark.parametrize(
@@ -27,7 +27,7 @@ def test_fullwidth_is_normalized() -> None:
 
 @pytest.mark.parametrize(
     "raw",
-    ["Admin", "ADM1N", "r00t", "admin_x", "Breakroom-HQ", "NULL", "Mod", "5taff9"],
+    ["Admin", "ADM1N", "r00t", "admin_x", "Beebreak-HQ", "NULL", "Mod", "5taff9"],
 )
 def test_reserved_nicknames_are_rejected(raw: str) -> None:
     with pytest.raises(NicknameError) as exc:

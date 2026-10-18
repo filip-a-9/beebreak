@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from breakroom_agent_bridge.reducer import reduce
-from breakroom_shared.events import NormalizedEvent
+from beebreak_agent_bridge.reducer import reduce
+from beebreak_shared.events import NormalizedEvent
 from tests.fixtures.hook_payloads import PAYLOADS, RAW_SESSION_ID
 from tests.fixtures.privacy_negative import SENSITIVE_STRINGS
 

@@ -12,12 +12,12 @@ from PySide6.QtCore import QObject, Slot
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select, update
 
-from breakroom_companion.api_client import ApiClient, ApiError
-from breakroom_companion.credentials import FileCredentialStore, StoredCredentials
-from breakroom_companion.remote import RemoteWorker, refresh_delay_s
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_server.models import Device, User
-from breakroom_shared.api import Consent, Me
+from beebreak_companion.api_client import ApiClient, ApiError
+from beebreak_companion.credentials import FileCredentialStore, StoredCredentials
+from beebreak_companion.remote import RemoteWorker, refresh_delay_s
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_server.models import Device, User
+from beebreak_shared.api import Consent, Me
 
 if TYPE_CHECKING:
     from tests.e2e_support.server import LiveServer
@@ -238,7 +238,7 @@ def test_garbage_refresh_token_in_store_ends_signed_out(
 ) -> None:
     from datetime import timedelta
 
-    from breakroom_companion.credentials import StoredCredentials
+    from beebreak_companion.credentials import StoredCredentials
 
     store = FileCredentialStore(tmp_path / "bad.json", live_server.base_url)
     store.save(StoredCredentials("brr_garbage", datetime.now(UTC) + timedelta(days=1)))

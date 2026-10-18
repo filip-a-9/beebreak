@@ -11,14 +11,14 @@ import pytest
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
-from breakroom_companion.api_client import ApiClient
-from breakroom_companion.realtime_client import (
+from beebreak_companion.api_client import ApiClient
+from beebreak_companion.realtime_client import (
     CLOSE_PROTOCOL_ERROR,
     RealtimeClient,
     RealtimeError,
     ServerFrame,
 )
-from breakroom_shared.api import (
+from beebreak_shared.api import (
     MAX_SERVER_FRAME_BYTES,
     MAX_WS_FRAME_BYTES,
     WsChatMessage,

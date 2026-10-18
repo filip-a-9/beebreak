@@ -8,8 +8,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QToolTip
 from pytestqt.qtbot import QtBot
 
-from breakroom_companion.report_dialog import REASON_LABELS, ReportDialog
-from breakroom_shared.api import ReportReason
+from beebreak_companion.report_dialog import REASON_LABELS, ReportDialog
+from beebreak_shared.api import ReportReason
 from tests.fakes.chat import message_view
 
 MESSAGES = (
@@ -163,8 +163,8 @@ def test_more_than_50_ticked_messages_cannot_be_submitted(qtbot: QtBot) -> None:
 
 
 def test_the_tick_limit_is_the_contract_limit() -> None:
-    from breakroom_companion.report_dialog import MAX_TICKED
-    from breakroom_shared.api import ReportRequest
+    from beebreak_companion.report_dialog import MAX_TICKED
+    from beebreak_shared.api import ReportRequest
 
     limit = ReportRequest.model_fields["message_seqs"].metadata
     assert any(getattr(m, "max_length", None) == MAX_TICKED for m in limit)

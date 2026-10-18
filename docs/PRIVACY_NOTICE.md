@@ -1,8 +1,8 @@
-# Breakroom privacy notice
+# Beebreak privacy notice
 
 > **Draft — not reviewed by a lawyer.**
 
-This notice is for people testing Breakroom. It is written to the standard of
+This notice is for people testing Beebreak. It is written to the standard of
 the EU General Data Protection Regulation (GDPR). It is also meant to cover
 Serbia's Law on Personal Data Protection (ZZPL), which is modeled on the GDPR.
 
@@ -51,7 +51,7 @@ email of a disabled account that was then deleted is kept for 1 year.
 - An email provider (SMTP) that sends your sign-in codes: to be named before
   the beta. Not used if the server offers only GitHub sign-in.
 - GitHub, if you choose "Sign in with GitHub": GitHub learns that you signed in
-  to Breakroom, and from which address the code was entered. Breakroom asks for
+  to Beebreak, and from which address the code was entered. Beebreak asks for
   no permissions, receives your numeric user id once, and does not keep GitHub's
   access token or ask GitHub for anything afterwards.
 - A hosting provider that runs the server and database: to be named before the

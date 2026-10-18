@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from breakroom_server.ratelimit import RateLimiter
+from beebreak_server.ratelimit import RateLimiter
 
 
 class Clock:

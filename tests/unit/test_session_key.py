@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from breakroom_agent_bridge.session_key import derive_key, load_or_create_salt
+from beebreak_agent_bridge.session_key import derive_key, load_or_create_salt
 
 
 def test_same_session_and_salt_give_same_key() -> None:

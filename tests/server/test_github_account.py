@@ -6,21 +6,21 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from breakroom_server.account_data import (
+from beebreak_server.account_data import (
     AccountDisabled,
     AccountNotFound,
     delete_account,
     export_account,
 )
-from breakroom_server.db import SessionFactory
-from breakroom_server.models import (
+from beebreak_server.db import SessionFactory
+from beebreak_server.models import (
     BetaInvite,
     DeletedAccountTombstone,
     Device,
     User,
     UserPreference,
 )
-from breakroom_server.tokens import github_tombstone_hmac, tombstone_hmac
+from beebreak_server.tokens import github_tombstone_hmac, tombstone_hmac
 from tests.server.conftest import START_TIME, TEST_SECRET, add_ready_user
 
 GID = 31_337

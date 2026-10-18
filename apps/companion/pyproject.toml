@@ -1,7 +1,7 @@
 [project]
-name = "breakroom-companion"
+name = "beebreak-companion"
 version = "0.1.0"
-description = "Breakroom desktop companion: local IPC server and invitation window"
+description = "Beebreak desktop companion: local IPC server and invitation window"
 authors = [
     { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }
 ]
@@ -10,7 +10,7 @@ license = "Apache-2.0"
 # with CI.
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "breakroom-shared",
+    "beebreak-shared",
     "httpx==0.28.1",
     "keyring==25.7.0",
     "websockets==17.1",
@@ -19,10 +19,10 @@ dependencies = [
 ]
 
 [project.scripts]
-breakroom-companion = "breakroom_companion.cli:main"
+beebreak-companion = "beebreak_companion.cli:main"
 
 [tool.uv.sources]
-breakroom-shared = { workspace = true }
+beebreak-shared = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]

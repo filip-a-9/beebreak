@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from sqlalchemy import func, select, update
 
-from breakroom_server.account_data import (
+from beebreak_server.account_data import (
     AccountBusy,
     AccountDisabled,
     AccountNotFound,
@@ -18,8 +18,8 @@ from breakroom_server.account_data import (
     finish_delete,
     prepare_delete,
 )
-from breakroom_server.db import SessionFactory
-from breakroom_server.models import (
+from beebreak_server.db import SessionFactory
+from beebreak_server.models import (
     AuthChallenge,
     Base,
     BetaInvite,

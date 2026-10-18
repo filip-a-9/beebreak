@@ -24,3 +24,4 @@ and per M6 decision; where no alternative was recorded, the record says so. Item
 | [0016](0016-account-export-and-delete.md) | Account export and delete semantics |
 | [0017](0017-single-gdpr-grade-privacy-notice.md) | One GDPR-grade privacy notice |
 | [0018](0018-github-sign-in.md) | GitHub sign-in next to email codes |
+| [0019](0019-rename-to-beebreak.md) | Rename Breakroom to Beebreak |

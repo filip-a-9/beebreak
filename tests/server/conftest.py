@@ -2,7 +2,7 @@
 
 - `engine`: a fresh database with the schema created from the models. SQLite in
   a temp *file* by default (several threads can share it); PostgreSQL when
-  BREAKROOM_TEST_DATABASE_URL is set (its tables are dropped and recreated).
+  BEEBREAK_TEST_DATABASE_URL is set (its tables are dropped and recreated).
 - `session_factory`, `server_config`, `clock` build on it.
 - `app` is built with the matchmaker loop off (rule 15): tests call
   `app.state.matchmaker.run_once()` themselves.
@@ -12,8 +12,8 @@
 - M5 helpers: `seed_match` also fills the chat columns; `seed_message`,
   `seed_report`.
 
-BREAKROOM_TEST_DATABASE_URL is read once at import time. tests/conftest.py
-deletes every BREAKROOM_* variable before each test, so a fixture reading the
+BEEBREAK_TEST_DATABASE_URL is read once at import time. tests/conftest.py
+deletes every BEEBREAK_* variable before each test, so a fixture reading the
 variable later would never see it. Import `TEST_DATABASE_URL` instead.
 """
 
@@ -32,11 +32,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, inspect, select, text
 from sqlalchemy.orm import sessionmaker
 
-from breakroom_server.app import create_app
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory, make_engine
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import (
+from beebreak_server.app import create_app
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory, make_engine
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import (
     Base,
     BetaInvite,
     Device,
@@ -50,18 +50,18 @@ from breakroom_server.models import (
     UserPreference,
     join_tags,
 )
-from breakroom_server.nickname import skeleton
-from breakroom_server.tokens import hmac_code, new_code
-from breakroom_shared.api import Consent, ReportReason
-from breakroom_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
+from beebreak_server.nickname import skeleton
+from beebreak_server.tokens import hmac_code, new_code
+from beebreak_shared.api import Consent, ReportReason
+from beebreak_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
 
-TEST_DATABASE_URL: str | None = os.environ.get("BREAKROOM_TEST_DATABASE_URL") or None
-TEST_SECRET = b"breakroom-test-secret-0123456789"  # 32 bytes, tests only
+TEST_DATABASE_URL: str | None = os.environ.get("BEEBREAK_TEST_DATABASE_URL") or None
+TEST_SECRET = b"beebreak-test-secret-01234567890"  # 32 bytes, tests only
 START_TIME = datetime(2026, 10, 13, 12, 0, 0, tzinfo=UTC)
 
 requires_postgres = pytest.mark.skipif(
     TEST_DATABASE_URL is None or "postgres" not in TEST_DATABASE_URL,
-    reason="set BREAKROOM_TEST_DATABASE_URL to a PostgreSQL URL",
+    reason="set BEEBREAK_TEST_DATABASE_URL to a PostgreSQL URL",
 )
 
 
@@ -88,7 +88,7 @@ def clock() -> FixedClock:
 def database_url(tmp_path: Path) -> str:
     if TEST_DATABASE_URL is not None:
         return TEST_DATABASE_URL
-    return f"sqlite:///{tmp_path / 'breakroom-test.db'}"
+    return f"sqlite:///{tmp_path / 'beebreak-test.db'}"
 
 
 def _reset_schema(engine: Engine) -> None:
@@ -155,9 +155,9 @@ def server_env(
     """Environment for code that calls ServerConfig.from_env()."""
     import base64
 
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", database_url)
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", database_url)
     monkeypatch.setenv(
-        "BREAKROOM_SERVER_SECRET", base64.urlsafe_b64encode(TEST_SECRET).decode()
+        "BEEBREAK_SERVER_SECRET", base64.urlsafe_b64encode(TEST_SECRET).decode()
     )
 
 

@@ -11,16 +11,16 @@ from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
-from breakroom_companion.app import setup_remote
-from breakroom_companion.onboarding import (
+from beebreak_companion.app import setup_remote
+from beebreak_companion.onboarding import (
     PAGE_DONE,
     PAGE_NICKNAME,
     PAGE_PRIVACY,
     OnboardingDialog,
 )
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.window import CompanionWindow
-from breakroom_server.models import User, UserPreference
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.window import CompanionWindow
+from beebreak_server.models import User, UserPreference
 
 if TYPE_CHECKING:
     from tests.e2e_support.server import LiveServer
@@ -37,10 +37,10 @@ def env(
 ) -> LiveServer:
     # Never touch the real state dir; a fresh dir has no stored login.
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
-    monkeypatch.setenv("BREAKROOM_SERVER_URL", live_server.base_url)
-    monkeypatch.setenv("BREAKROOM_RECONNECT_MIN_S", "0.05")
-    monkeypatch.setenv("BREAKROOM_RECONNECT_MAX_S", "0.2")
-    monkeypatch.setenv("BREAKROOM_WS_PING_INTERVAL_S", "1")
+    monkeypatch.setenv("BEEBREAK_SERVER_URL", live_server.base_url)
+    monkeypatch.setenv("BEEBREAK_RECONNECT_MIN_S", "0.05")
+    monkeypatch.setenv("BEEBREAK_RECONNECT_MAX_S", "0.2")
+    monkeypatch.setenv("BEEBREAK_WS_PING_INTERVAL_S", "1")
     return live_server
 
 

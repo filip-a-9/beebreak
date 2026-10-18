@@ -1,0 +1,1 @@
+"""Beebreak hosted service."""

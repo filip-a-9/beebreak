@@ -1,6 +1,6 @@
 import pytest
 
-from breakroom_server.tokens import (
+from beebreak_server.tokens import (
     CODE_ALPHABET,
     hash_token,
     hmac_code,

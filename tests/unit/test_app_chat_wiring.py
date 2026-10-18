@@ -10,13 +10,13 @@ import pytest
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
-from breakroom_companion.app import BreakTracker, wire_chat
-from breakroom_companion.break_state import BreakState
-from breakroom_companion.chat_state import ChatState, PendingMessage
-from breakroom_companion.chat_window import ChatWindow
-from breakroom_companion.desktop_notify import DesktopNotifier
-from breakroom_companion.window import CompanionWindow
-from breakroom_shared.api import MatchView
+from beebreak_companion.app import BreakTracker, wire_chat
+from beebreak_companion.break_state import BreakState
+from beebreak_companion.chat_state import ChatState, PendingMessage
+from beebreak_companion.chat_window import ChatWindow
+from beebreak_companion.desktop_notify import DesktopNotifier
+from beebreak_companion.window import CompanionWindow
+from beebreak_shared.api import MatchView
 from tests.fakes.chat import T0, chat_state, chat_status, message_view
 from tests.fakes.remote_worker import FakeRemoteWorker
 
@@ -277,7 +277,7 @@ def test_a_never_shown_window_still_counts_unread_and_notifies(rig: Rig) -> None
     rig.remote.push_chat(chat_state(peer_nickname="bob_b", messages=(_peer(1),)))
     assert not rig.chat.isVisible()
     assert rig.window.open_chat_button.text() == "Open chat (1)"
-    assert rig.sent() == [("Breakroom", "New message from bob_b")]
+    assert rig.sent() == [("Beebreak", "New message from bob_b")]
 
 
 def test_unread_counts_peer_messages_while_the_window_is_not_active(
@@ -370,7 +370,7 @@ def test_a_peer_message_notifies_with_the_nickname_only(rig: Rig) -> None:
             messages=(_peer(1, CANARY),),
         )
     )
-    assert rig.sent() == [("Breakroom", "New message from bob_b")]
+    assert rig.sent() == [("Beebreak", "New message from bob_b")]
 
 
 def test_own_and_pending_messages_never_notify(rig: Rig) -> None:
@@ -408,7 +408,7 @@ def test_notifications_are_throttled_per_chat(rig: Rig) -> None:
 def test_the_notification_interval_follows_the_environment(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_NOTIFY_INTERVAL_S", "2")
+    monkeypatch.setenv("BEEBREAK_NOTIFY_INTERVAL_S", "2")
     match_id = uuid4()
     rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1),)))
     rig.now[0] += 2.5
@@ -436,7 +436,7 @@ def test_a_new_chat_has_its_own_throttle(rig: Rig) -> None:
 
 def test_a_hostile_nickname_is_validated_in_the_notification(rig: Rig) -> None:
     rig.remote.push_chat(chat_state(peer_nickname="<b>x</b>", messages=(_peer(1),)))
-    assert rig.sent() == [("Breakroom", "New message from ?")]
+    assert rig.sent() == [("Beebreak", "New message from ?")]
 
 
 def test_no_body_reaches_a_notification_or_a_log(

@@ -1,4 +1,4 @@
-"""The real `breakroom-server serve` path in a subprocess (rule 10, proxy headers).
+"""The real `beebreak-server serve` path in a subprocess (rule 10, proxy headers).
 
 TestClient skips uvicorn's own logging and proxy handling, so these start the
 CLI the way docker compose does.
@@ -75,15 +75,15 @@ class Served:
 
 def _env(tmp_path: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
     return {
-        **{k: v for k, v in os.environ.items() if not k.startswith("BREAKROOM_")},
-        "BREAKROOM_DATABASE_URL": f"sqlite:///{tmp_path / 'serve.db'}",
-        "BREAKROOM_SERVER_SECRET": base64.urlsafe_b64encode(TEST_SECRET).decode(),
-        "BREAKROOM_MAILER": "record",
+        **{k: v for k, v in os.environ.items() if not k.startswith("BEEBREAK_")},
+        "BEEBREAK_DATABASE_URL": f"sqlite:///{tmp_path / 'serve.db'}",
+        "BEEBREAK_SERVER_SECRET": base64.urlsafe_b64encode(TEST_SECRET).decode(),
+        "BEEBREAK_MAILER": "record",
         **(extra or {}),
     }
 
 
-CLI = [sys.executable, "-m", "breakroom_server.cli"]
+CLI = [sys.executable, "-m", "beebreak_server.cli"]
 
 
 def _start(env: dict[str, str]) -> Iterator[Served]:
@@ -123,13 +123,13 @@ def served(tmp_path: Path) -> Iterator[Served]:
 @pytest.fixture
 def served_behind_trusted_proxy(tmp_path: Path) -> Iterator[Served]:
     # The test client connects from 127.0.0.1, so it plays the proxy.
-    yield from _start(_env(tmp_path, {"BREAKROOM_TRUSTED_PROXIES": "127.0.0.1/32"}))
+    yield from _start(_env(tmp_path, {"BEEBREAK_TRUSTED_PROXIES": "127.0.0.1/32"}))
 
 
 @pytest.fixture
 def served_other_proxy_trusted(tmp_path: Path) -> Iterator[Served]:
     # A proxy list that does not include the connecting peer.
-    yield from _start(_env(tmp_path, {"BREAKROOM_TRUSTED_PROXIES": "10.99.0.0/16"}))
+    yield from _start(_env(tmp_path, {"BEEBREAK_TRUSTED_PROXIES": "10.99.0.0/16"}))
 
 
 def test_serve_logs_no_address_query_or_token(served: Served) -> None:
@@ -224,7 +224,7 @@ def test_example_database_password_stops_the_command(
 ) -> None:
     env = _env(
         tmp_path,
-        {"BREAKROOM_DATABASE_URL": "postgresql+psycopg://u:change-me@127.0.0.1:1/db"},
+        {"BEEBREAK_DATABASE_URL": "postgresql+psycopg://u:change-me@127.0.0.1:1/db"},
     )
     result = subprocess.run(
         [*CLI, command],

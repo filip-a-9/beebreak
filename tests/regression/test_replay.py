@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from breakroom_companion.config import TriggerConfig
-from breakroom_shared.events import NormalizedEvent
+from beebreak_companion.config import TriggerConfig
+from beebreak_shared.events import NormalizedEvent
 from tests.fixtures.traces import synthetic as syn
 from tools.replay_trace import Respond, Transition, replay
 
@@ -127,14 +127,14 @@ def test_07_cli_output_never_claims_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # An exported setting in the owner's shell must not reach the CLI.
-    monkeypatch.setenv("BREAKROOM_ACTIVITY_THRESHOLD_S", "not-a-number")
+    monkeypatch.setenv("BEEBREAK_ACTIVITY_THRESHOLD_S", "not-a-number")
     trace = tmp_path / "s07.jsonl"
     trace.write_text(
         "\n".join(e.model_dump_json() for e in syn.s07_stop_at_fifty()) + "\n",
         encoding="utf-8",
     )
     tool = Path(__file__).parents[2] / "tools" / "replay_trace.py"
-    env = {k: v for k, v in os.environ.items() if not k.startswith("BREAKROOM_")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("BEEBREAK_")}
     result = subprocess.run(
         [sys.executable, str(tool), str(trace)],
         capture_output=True,

@@ -9,25 +9,25 @@
 #                         your gpg keyring)
 #
 # Steps: start postgres, refuse if the database is not empty (unless --force),
-# stop the server, restore, run `breakroom-server migrate`, then run ONE purge
+# stop the server, restore, run `beebreak-server migrate`, then run ONE purge
 # pass. Nothing is started for you at the end; run `docker compose up -d`.
 #
 # Retention: a backup brings back rows that were purged after it was taken
 # (ended matches, message bodies, resolved reports, old sign-in rows). The purge
 # pass applies the current retention settings to the restored data. Anyone who
-# asked for deletion in the meantime still needs `breakroom-admin account
+# asked for deletion in the meantime still needs `beebreak-admin account
 # delete` again if their account came back (see docs/RUNBOOK.md).
 #
 # Environment: COMPOSE_PROJECT_NAME is REQUIRED (non-empty; the script refuses to
 # run without it, so --force cannot reach the dev stack's database). Optional:
-# BREAKROOM_COMPOSE_FILE, BREAKROOM_DB_USER, BREAKROOM_DB_NAME, as for backup.sh.
+# BEEBREAK_COMPOSE_FILE, BEEBREAK_DB_USER, BEEBREAK_DB_NAME, as for backup.sh.
 
 set -Eeuo pipefail
 umask 077
 
-compose_file="${BREAKROOM_COMPOSE_FILE:-compose.prod.yaml}"
-db_user="${BREAKROOM_DB_USER:-breakroom}"
-db_name="${BREAKROOM_DB_NAME:-breakroom}"
+compose_file="${BEEBREAK_COMPOSE_FILE:-compose.prod.yaml}"
+db_user="${BEEBREAK_DB_USER:-beebreak}"
+db_name="${BEEBREAK_DB_NAME:-beebreak}"
 backup=""
 force=0
 age_identity=""
@@ -135,7 +135,7 @@ echo "running migrations"
 
 echo "running one purge pass"
 # --pull never: use the image already built; do not rebuild it here.
-"${compose[@]}" run --rm --no-deps --pull never server breakroom-server purge
+"${compose[@]}" run --rm --no-deps --pull never server beebreak-server purge
 
 echo
 echo "Restored. One purge pass has run: rows past their retention period that the"

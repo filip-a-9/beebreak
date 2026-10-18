@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from breakroom_companion.break_state import (
+from beebreak_companion.break_state import (
     BreakEvent,
     BreakPhase,
     BreakState,
@@ -20,7 +20,7 @@ from breakroom_companion.break_state import (
     Sync,
     reduce,
 )
-from breakroom_shared.api import (
+from beebreak_shared.api import (
     MatchView,
     QueueEntryView,
     WsMatchCreated,

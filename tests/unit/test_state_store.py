@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from breakroom_companion.state_store import FileStateStore, PersistedState
+from beebreak_companion.state_store import FileStateStore, PersistedState
 
 WHEN = datetime(2026, 10, 12, 12, 0, 0, tzinfo=UTC)
 

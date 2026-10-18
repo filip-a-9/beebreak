@@ -15,8 +15,8 @@ from PySide6.QtWidgets import QLabel
 from pytestqt.qtbot import QtBot
 from sqlalchemy import update
 
-from breakroom_companion.credentials import FileCredentialStore
-from breakroom_companion.onboarding import (
+from beebreak_companion.credentials import FileCredentialStore
+from beebreak_companion.onboarding import (
     ERROR_TEXT,
     PAGE_CODE,
     PAGE_DONE,
@@ -28,11 +28,11 @@ from breakroom_companion.onboarding import (
     valid_email,
     valid_nickname,
 )
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_server.models import AuthChallenge
-from breakroom_shared.api import Consent, Me
-from breakroom_shared.presence import StackTag
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_server.models import AuthChallenge
+from beebreak_shared.api import Consent, Me
+from beebreak_shared.presence import StackTag
 from tests.fakes.remote_worker import FakeRemoteWorker
 
 if TYPE_CHECKING:

@@ -7,7 +7,7 @@ from a fixed epoch; there is no wall clock and no randomness.
 from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_OID, uuid5
 
-from breakroom_shared.events import EventType, NormalizedEvent, ToolClass
+from beebreak_shared.events import EventType, NormalizedEvent, ToolClass
 
 EPOCH = datetime(2026, 1, 5, 9, 0, 0, tzinfo=UTC)
 

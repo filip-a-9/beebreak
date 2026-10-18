@@ -1,4 +1,4 @@
-# Breakroom — MVP Architecture Specification
+# Beebreak — MVP Architecture Specification
 
 **Status:** Draft v0.1, engineering proposal (not an authorization to implement)  
 **Date:** 2026-10-12  
@@ -238,7 +238,7 @@ M5 (**CONFIRMED** 2026-10-14):
 - **Extension:** suggested `10 minutes` when both opt in; do not reset from a single client request.
 - All concrete values are **PROPOSED defaults**, controlled from configuration/remote policy, not accepted product decisions.
 
-M5 (**CONFIRMED** 2026-10-14): session 15 min; grace is the last 2 min before the deadline (there is no confirmed task finish to start it from); extension 10 min, at most 2, both must agree; offline hold 60 s. All are server configuration (`BREAKROOM_CHAT_*`). The deadline travels as `ends_at` (UTC) in every chat status and `match.created`/`sync`; clients show it against the server time carried by each frame.
+M5 (**CONFIRMED** 2026-10-14): session 15 min; grace is the last 2 min before the deadline (there is no confirmed task finish to start it from); extension 10 min, at most 2, both must agree; offline hold 60 s. All are server configuration (`BEEBREAK_CHAT_*`). The deadline travels as `ends_at` (UTC) in every chat status and `match.created`/`sync`; clients show it against the server time carried by each frame.
 
 ## 7. Invitation and local decision engine
 
@@ -285,26 +285,26 @@ An engine can be `heuristic` or `local_model`, but both return the same validate
 
 | Tool | Inputs | Output | Side effect |
 |---|---|---|---|
-| `breakroom_status` | none | Local activity/break status, no private chat content | none |
-| `breakroom_set_suggestions` | `enabled: bool` | Effective local setting | changes local consent preference only on explicit authorized user request |
-| `breakroom_open_window` | none | UI-opening acknowledgment | opens independent companion UI |
-| `breakroom_leave_queue` | none | `cancelled` / `not_searching` / `unavailable` / `companion_not_running` | cancels an existing search; never ends a match (M4) |
+| `beebreak_status` | none | Local activity/break status, no private chat content | none |
+| `beebreak_set_suggestions` | `enabled: bool` | Effective local setting | changes local consent preference only on explicit authorized user request |
+| `beebreak_open_window` | none | UI-opening acknowledgment | opens independent companion UI |
+| `beebreak_leave_queue` | none | `cancelled` / `not_searching` / `unavailable` / `companion_not_running` | cancels an existing search; never ends a match (M4) |
 
-M4: `breakroom_status` gains a fixed `queue` field (`none`/`searching`/`matched`); no peer nickname or tag reaches Claude's context. M5: `StatusReply` version 4 renames `matched` to `chatting`; the client still accepts version 3 (mapping `matched` to `chatting`) and version 2 (`queue` unknown). Claude cannot see, send to or end a chat.
+M4: `beebreak_status` gains a fixed `queue` field (`none`/`searching`/`matched`); no peer nickname or tag reaches Claude's context. M5: `StatusReply` version 4 renames `matched` to `chatting`; the client still accepts version 3 (mapping `matched` to `chatting`) and version 2 (`queue` unknown). Claude cannot see, send to or end a chat.
 
 Agent-facing tools should not be able to silently enroll a user into remote matchmaking: queue entry requires a **direct user acceptance in the companion UI**, independent of what the LLM requests. Tool responses must be bounded and not leak messages or peer profile details into Claude's context. Additional tools require separate acceptance criteria.
 
-M6: the plugin depends on no venv. Hooks and the MCP server run `breakroom-hook` and `breakroom-mcp` from `PATH` (`~/.local/bin` prepended; a repo checkout's `.venv/bin` first), installed with `uv tool install --python 3.12 --with-executables-from breakroom-agent-bridge breakroom-companion` from release wheels (`scripts/build_release.sh`). A missing hook binary exits 0 silently, so Claude execution **fails open**; a missing `breakroom-mcp` shows as a failed server in `/mcp`.
+M6: the plugin depends on no venv. Hooks and the MCP server run `beebreak-hook` and `beebreak-mcp` from `PATH` (`~/.local/bin` prepended; a repo checkout's `.venv/bin` first), installed with `uv tool install --python 3.12 --with-executables-from beebreak-agent-bridge beebreak-companion` from release wheels (`scripts/build_release.sh`). A missing hook binary exits 0 silently, so Claude execution **fails open**; a missing `beebreak-mcp` shows as a failed server in `/mcp`.
 
 ## 9. Companion ↔ backend contract
 
 ### 9.1 HTTP API (proposed)
 
-- Sign-in (M3; GitHub added later, ADR 0018). An account is either email or GitHub, never both (no linking in the beta). Which methods exist is server configuration (empty SMTP host = no email, empty `BREAKROOM_GITHUB_CLIENT_ID` = no GitHub; at least one, or the server refuses to start). A method that is off answers 404 `not_found`.
+- Sign-in (M3; GitHub added later, ADR 0018). An account is either email or GitHub, never both (no linking in the beta). Which methods exist is server configuration (empty SMTP host = no email, empty `BEEBREAK_GITHUB_CLIENT_ID` = no GitHub; at least one, or the server refuses to start). A method that is off answers 404 `not_found`.
   - `GET /v1/auth/methods` — unauthenticated; `{"email": bool, "github": bool}`. The companion asks before showing its sign-in choice.
   - `POST /v1/auth/start`, `POST /v1/auth/verify` — email code flow (always 202 with a fresh `challenge_id`; see T15, T16).
   - `POST /v1/auth/github/start` — no body. The server calls GitHub's device-code endpoint (client id, no scope, no secret) and keeps the `device_code` on an `auth_challenges` row. 200 `{challenge_id, user_code, verification_uri, expires_in_s, interval_s}`; the device code is never sent. 502 `github_unavailable`.
-  - `POST /v1/auth/github/poll` — `{challenge_id, device_name}`. The server asks GitHub at most once per interval (claimed with a conditional `UPDATE`; `slow_down` adds 5 s, or takes GitHub's new interval). 200 `{status: "pending", interval_s}` or `{status: "complete", session}` (the same `SessionResponse` as `/verify`). On approval the server calls `GET /user` once, keeps only the numeric `id`, discards the access token, and issues Breakroom tokens. Errors: 400 `expired`, 400 `access_denied`, 400 `invalid_code` (unknown or used challenge), 403 `not_invited` (no account and no open invite for that GitHub id, or a disabled account), 502 `github_unavailable`.
+  - `POST /v1/auth/github/poll` — `{challenge_id, device_name}`. The server asks GitHub at most once per interval (claimed with a conditional `UPDATE`; `slow_down` adds 5 s, or takes GitHub's new interval). 200 `{status: "pending", interval_s}` or `{status: "complete", session}` (the same `SessionResponse` as `/verify`). On approval the server calls `GET /user` once, keeps only the numeric `id`, discards the access token, and issues Beebreak tokens. Errors: 400 `expired`, 400 `access_denied`, 400 `invalid_code` (unknown or used challenge), 403 `not_invited` (no account and no open invite for that GitHub id, or a disabled account), 502 `github_unavailable`.
   - `POST /v1/auth/refresh`, `POST /v1/auth/logout` — as before, for either kind of account.
 - `GET /v1/me` — private account and nickname/profile
 - `PATCH /v1/me` — bounded nickname and optional interests
@@ -351,7 +351,7 @@ M4 (**CONFIRMED** 2026-10-13): availability does not filter pairs; the remaining
 - `queue_entries`: user ID, public sanitized activity buckets, admitted/expires timestamps, status, idempotency key.
 - `matches` and `match_participants` (M4): two participants per match, `active` flag per participant, end deadline and reason, the shared tags/category shown to both. M5: the match is the chat session (§10's former `chat_sessions` is not a separate table). `matches` adds `extensions_used`, `extension_requested_by` and `last_seq` (the message sequence); `match_participants` adds `offline_since` (set by the sweep) and `messages_sent` (kept after the bodies are purged, for the §13 metric).
 - `messages` (M5): match ID (deleted with the match), per-match sequence number, author ID, client message ID (unique per author), normalized text, server timestamp. Bodies are deleted 24 h after the chat ends (`message_retention_s`).
-- `reports` (M5): reporting user, reported user, match ID without a foreign key (so the match purge leaves it), reason, optional note, status (`open`, `dismissed`, `actioned`), created and resolved times; one per reporter and match. `report_messages`: copies of only the messages the reporter ticked (sequence, `reporter`/`reported`, text, time). Open reports are kept until resolved; resolved reports and their evidence are deleted 90 days after resolution (`report_retention_s`). Moderation is the admin CLI only (`breakroom-admin report list/show/resolve`); appeals go by email (policy in M6).
+- `reports` (M5): reporting user, reported user, match ID without a foreign key (so the match purge leaves it), reason, optional note, status (`open`, `dismissed`, `actioned`), created and resolved times; one per reporter and match. `report_messages`: copies of only the messages the reporter ticked (sequence, `reporter`/`reported`, text, time). Open reports are kept until resolved; resolved reports and their evidence are deleted 90 days after resolution (`report_retention_s`). Moderation is the admin CLI only (`beebreak-admin report list/show/resolve`); appeals go by email (policy in M6).
 - `beta_invites`: invitation token (hashed), invitee/role, expiry, redemption state. An invite is for an email (with a code) or for a GitHub numeric id (no code; `invite create --github <username>` resolves the id once through `GET /users/<username>` and stores only the id).
 
 **Retention proposal:** short-lived queue metadata (purged promptly after expiry; M4: presence fields nulled when the entry ends, ended entries and matches deleted after 30 days), chat messages deleted automatically after a proposed 24-hour recovery window, and longer report evidence retained under a separately disclosed moderation policy. M5 (**CONFIRMED** 2026-10-14): message bodies 24 h after the chat ends; report evidence 90 days after the report is resolved, open reports until resolved; the chat window always says "Not end-to-end encrypted. Messages are deleted 24 h after the chat ends." M6 (**CONFIRMED** 2026-10-16): the same purge removes stale sign-in rows (§16 item 7), and account export/deletion is operator-run on request; per-item retention is listed in `docs/DATA_HANDLING.md`. Logs should contain structured IDs, no message bodies or task metadata beyond minimal operational metrics.
@@ -370,7 +370,7 @@ M4 (**CONFIRMED** 2026-10-13): availability does not filter pairs; the remaining
 - Project paths/source/secrets must never appear in outbound JSON, exception telemetry, stdout, or test fixture snapshots.
 - Include a clear disclaimer: chat is **not** end-to-end encrypted and is retained only per disclosed policy.
 
-**Deployment (M6: deploy-ready, not deployed).** `compose.prod.yaml`: Caddy terminates TLS and is the only service with published ports (80/443); the server has no published port and Postgres sits on an internal network. A one-shot `migrate` service runs before `server`, which then only serves. The server must run as **one worker and one replica**: the realtime hub, presence, rate limiters and matchmaker lock are in-process, so a second process would split waiting users and rate-limit counters (`serve` refuses any other worker count). New settings: `BREAKROOM_TRUSTED_PROXIES`, `BREAKROOM_SMTP_TLS` (`none`/`starttls`/`implicit`), `BREAKROOM_SMTP_USERNAME`, `BREAKROOM_SMTP_PASSWORD`, and the companion's `BREAKROOM_CA_FILE` (loaded once at startup; `install --ca-file` saves it for every start). `BREAKROOM_SMTP_STARTTLS` is a deprecated alias, removed after one release. `BREAKROOM_LOG_FORMAT` (`text` default, `json` in `compose.prod.yaml`) selects one JSON object per log line. M6-05 abuse limits, each per `rate_window_s`: `BREAKROOM_RATE_VERIFY_EMAIL` (10), `BREAKROOM_RATE_QUEUE_ACTION_USER` (60), `BREAKROOM_RATE_QUEUE_READ_USER` (300), `BREAKROOM_MATCHES_PER_WINDOW_USER` (10); and `BREAKROOM_REFRESH_GRACE_S` (30 s), the refresh-retry grace. Former literals: `BREAKROOM_MAX_PAGE` (100 messages per page), `BREAKROOM_EXTENSION_ATTEMPTS` (4), `BREAKROOM_MAX_BODY_BYTES` (16384), `BREAKROOM_PURGE_INTERVAL_S` (60).
+**Deployment (M6: deploy-ready, not deployed).** `compose.prod.yaml`: Caddy terminates TLS and is the only service with published ports (80/443); the server has no published port and Postgres sits on an internal network. A one-shot `migrate` service runs before `server`, which then only serves. The server must run as **one worker and one replica**: the realtime hub, presence, rate limiters and matchmaker lock are in-process, so a second process would split waiting users and rate-limit counters (`serve` refuses any other worker count). New settings: `BEEBREAK_TRUSTED_PROXIES`, `BEEBREAK_SMTP_TLS` (`none`/`starttls`/`implicit`), `BEEBREAK_SMTP_USERNAME`, `BEEBREAK_SMTP_PASSWORD`, and the companion's `BEEBREAK_CA_FILE` (loaded once at startup; `install --ca-file` saves it for every start). `BEEBREAK_SMTP_STARTTLS` is a deprecated alias, removed after one release. `BEEBREAK_LOG_FORMAT` (`text` default, `json` in `compose.prod.yaml`) selects one JSON object per log line. M6-05 abuse limits, each per `rate_window_s`: `BEEBREAK_RATE_VERIFY_EMAIL` (10), `BEEBREAK_RATE_QUEUE_ACTION_USER` (60), `BEEBREAK_RATE_QUEUE_READ_USER` (300), `BEEBREAK_MATCHES_PER_WINDOW_USER` (10); and `BEEBREAK_REFRESH_GRACE_S` (30 s), the refresh-retry grace. Former literals: `BEEBREAK_MAX_PAGE` (100 messages per page), `BEEBREAK_EXTENSION_ATTEMPTS` (4), `BEEBREAK_MAX_BODY_BYTES` (16384), `BEEBREAK_PURGE_INTERVAL_S` (60).
 
 **Defensive testing:** prompt injection embedded in hook payload fields, oversized JSON, path-like strings, Unicode confusables, repeated event IDs, process races, multiple active client windows, HTTP origin attacks, WebSocket unauthorized joins, two-account simultaneous pair races.
 
@@ -445,7 +445,7 @@ Avoid fabricated benchmarks. Numeric latency/uptime objectives should be set aft
 ## 15. Proposed repository layout
 
 ```text
-breakroom/
+beebreak/
 ├── README.md
 ├── LICENSE                       # Apache-2.0
 ├── CONTRIBUTING.md
@@ -496,7 +496,7 @@ These are deliberately unresolved until the next *non-interview* architecture re
 4. Exact availability estimation baseline and calibration; what counts as a reliable task finish. M2 baseline (**CONFIRMED** 2026-10-12): heuristic engine only; nothing counts as a whole-task finish, `TaskCompleted` is a hint; with several sessions, invite only if one qualifies and none waits for input. Calibration stays open.
 5. Local model candidates and resource budgets. No default model weight bundled until evaluated.
 6. Auth provider, email invitation workflow, token/device lifecycle. M3 (**CONFIRMED** 2026-10-13): self-hosted email codes with admin invites, see §2; email change stays open, account deletion is item 7.
-7. Message and reports retention policy, deletion/export UX, locale/jurisdiction requirements. M5 (**CONFIRMED** 2026-10-14): message bodies deleted 24 h after the chat ends, report evidence 90 days after resolution, open reports kept until resolved, all configurable. M6 (**CONFIRMED** 2026-10-16): export and hard delete are operator-run (`breakroom-admin account export|delete`), requested by email and answered within 14 days, with no in-app UI; deletion is refused while the user is queued, in a live match or on either side of an open report, and for a disabled account without an explicit operator override, which then leaves a tombstone (a keyed hash of the email, kept 1 year) so a new invite for that email needs `--override-tombstone`. Sign-in rows: challenges 24 h after use or expiry, refresh tokens 7 days after expiry, terminal invites 30 days, all configurable. Jurisdiction: one GDPR-grade privacy notice (`docs/PRIVACY_NOTICE.md`), lawyer review recommended before M7.
+7. Message and reports retention policy, deletion/export UX, locale/jurisdiction requirements. M5 (**CONFIRMED** 2026-10-14): message bodies deleted 24 h after the chat ends, report evidence 90 days after resolution, open reports kept until resolved, all configurable. M6 (**CONFIRMED** 2026-10-16): export and hard delete are operator-run (`beebreak-admin account export|delete`), requested by email and answered within 14 days, with no in-app UI; deletion is refused while the user is queued, in a live match or on either side of an open report, and for a disabled account without an explicit operator override, which then leaves a tombstone (a keyed hash of the email, kept 1 year) so a new invite for that email needs `--override-tombstone`. Sign-in rows: challenges 24 h after use or expiry, refresh tokens 7 days after expiry, terminal invites 30 days, all configurable. Jurisdiction: one GDPR-grade privacy notice (`docs/PRIVACY_NOTICE.md`), lawyer review recommended before M7.
 8. Exact timer defaults, UI presentation when estimated duration changes. M2 (**CONFIRMED** 2026-10-12): the invitation shows the remaining-time bucket as a range, nothing when unknown; no live countdown. M5 (**CONFIRMED** 2026-10-14): 15 min chat, grace the last 2 min before the deadline, 10 min extensions by mutual agreement, at most 2; 60 s offline hold.
 9. ~~Apache-2.0 versus MIT/AGPL~~ — resolved 2026-10-12: Apache-2.0.
 10. Hosting cost ceiling, monitoring and abuse operational responsibilities (backup/restore: `docs/RUNBOOK.md`). M3 runs on local Docker only; a host is chosen later.
@@ -510,7 +510,7 @@ Each architecture decision should have its own ADR explaining choice, alternativ
 
 **Prerequisites:** M0 schemas, lint/tests/CI, outbound privacy fixture suite, manual integration instructions. No hosted server is required.
 
-**Ticket M1-01:** Create plugin manifest and a local stdio MCP server exposing `breakroom_status`. Verify tool discovery/calls from Claude Code.
+**Ticket M1-01:** Create plugin manifest and a local stdio MCP server exposing `beebreak_status`. Verify tool discovery/calls from Claude Code.
 
 **Ticket M1-02:** Wire a minimal hook event to a strict event-reduction subprocess. Verify raw user prompts/commands are absent from output with privacy-negative fixtures.
 

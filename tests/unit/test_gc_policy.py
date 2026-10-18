@@ -16,7 +16,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QObject, QTimer
 from pytestqt.qtbot import QtBot
 
-from breakroom_companion.gc_policy import collect_on_gui_thread
+from beebreak_companion.gc_policy import collect_on_gui_thread
 
 WAIT_MS = 5000
 
@@ -51,7 +51,7 @@ def _drop_cyclic_qobject(freed_on: list[str], *, old: bool = False) -> None:
 @pytest.fixture
 def policy(qapp: QCoreApplication, monkeypatch: pytest.MonkeyPatch) -> Iterator[QTimer]:
     # Short ticks: the oldest generation is due only after 100 of them.
-    monkeypatch.setenv("BREAKROOM_GC_INTERVAL_S", "0.001")
+    monkeypatch.setenv("BEEBREAK_GC_INTERVAL_S", "0.001")
     was_enabled = gc.isenabled()
     gc.enable()
     timer = collect_on_gui_thread(qapp)

@@ -1,7 +1,7 @@
 [project]
-name = "breakroom-agent-bridge"
+name = "beebreak-agent-bridge"
 version = "0.1.0"
-description = "Claude Code hook reducer, MCP server, and IPC client for Breakroom"
+description = "Claude Code hook reducer, MCP server, and IPC client for Beebreak"
 authors = [
     { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }
 ]
@@ -10,16 +10,16 @@ license = "Apache-2.0"
 # with CI.
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "breakroom-shared",
+    "beebreak-shared",
     "mcp==2.3.0",
 ]
 
 [project.scripts]
-breakroom-hook = "breakroom_agent_bridge.hook:main"
-breakroom-mcp = "breakroom_agent_bridge.mcp_server:main"
+beebreak-hook = "beebreak_agent_bridge.hook:main"
+beebreak-mcp = "beebreak_agent_bridge.mcp_server:main"
 
 [tool.uv.sources]
-breakroom-shared = { workspace = true }
+beebreak-shared = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]

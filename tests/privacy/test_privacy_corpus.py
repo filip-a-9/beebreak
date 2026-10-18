@@ -123,7 +123,7 @@ def _hits(blob: bytes, value: str = BASE.value) -> list[str]:
     ids=["plain", "json", "json-utf8", "url", "upper", "lower"],
 )
 def test_scanner_finds_a_text_reencoding(encode) -> None:  # type: ignore[no-untyped-def]
-    value = 'Path "C:\\Users\\breakroom-canary\\x" é\nline2'
+    value = 'Path "C:\\Users\\beebreak-canary\\x" é\nline2'
     assert _hits(f"prefix {encode(value)} suffix".encode(), value)
 
 
@@ -173,8 +173,9 @@ def test_corpus_file_matches_its_pinned_hash() -> None:
     assert CURRENT_VERSION in SHA256
 
 
-def test_generator_reproduces_v1_byte_for_byte() -> None:
-    path = Path(__file__).parents[1] / "fixtures" / "privacy_corpus" / "v1.json"
+def test_generator_reproduces_the_current_version_byte_for_byte() -> None:
+    name = f"v{CURRENT_VERSION}.json"
+    path = Path(__file__).parents[1] / "fixtures" / "privacy_corpus" / name
     assert build().encode("utf-8") == path.read_bytes()
 
 
@@ -189,7 +190,7 @@ def test_scanner_finds_form_encoded_spaces_in_a_real_httpx_request() -> None:
 
 
 def test_scanner_finds_quote_plus_form() -> None:
-    value = "two words, breakroom-canary & more"
+    value = "two words, beebreak-canary & more"
     assert _hits(urllib.parse.quote_plus(value).encode(), value)
 
 
@@ -198,14 +199,14 @@ def test_scanner_finds_upper_case_hex() -> None:
 
 
 def test_scanner_finds_urlsafe_base64() -> None:
-    value = "\u00ff\u00fe??>>breakroom-canary~~\u00ff"
+    value = "\u00ff\u00fe??>>beebreak-canary~~\u00ff"
     wrapped = base64.urlsafe_b64encode(b"zz" + value.encode()).rstrip(b"=")
     assert b"-" in wrapped or b"_" in wrapped
     assert _hits(b"t=" + wrapped, value)
 
 
 def test_scanner_finds_a_truncated_fragment_through_the_marker() -> None:
-    channels = {"c": [b"... breakroom-canary-0001-9f8e ..."]}
+    channels = {"c": [b"... beebreak-canary-0001-9f8e ..."]}
     assert find_corpus_leaks(channels, CORPUS.bases[:1]) == []  # not the full value
     assert find_marker_leaks(channels, CORPUS.marker) == ["c: marker"]
 

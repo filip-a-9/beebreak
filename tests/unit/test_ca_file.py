@@ -1,4 +1,4 @@
-"""BREAKROOM_CA_FILE: the companion trusts a private CA, for httpx and websockets.
+"""BEEBREAK_CA_FILE: the companion trusts a private CA, for httpx and websockets.
 
 Real TLS servers with a self-signed certificate (made with the openssl CLI);
 the clients under test are the real ApiClient and RealtimeClient.
@@ -19,10 +19,10 @@ from uuid import uuid4
 import pytest
 from websockets.asyncio.server import ServerConnection, serve
 
-from breakroom_companion import install
-from breakroom_companion.api_client import ApiClient, ApiError
-from breakroom_companion.realtime_client import RealtimeClient, RealtimeError
-from breakroom_companion.remote_config import CA_FILE_ENV, RemoteConfig
+from beebreak_companion import install
+from beebreak_companion.api_client import ApiClient, ApiError
+from beebreak_companion.realtime_client import RealtimeClient, RealtimeError
+from beebreak_companion.remote_config import CA_FILE_ENV, RemoteConfig
 
 TIMEOUT_S = 3.0
 
@@ -70,7 +70,7 @@ def test_ca_file_from_env_builds_a_verifying_context(
 ) -> None:
     ca = cert_pair[0]
     ca.chmod(0o644)
-    monkeypatch.setenv("BREAKROOM_CA_FILE", str(ca))
+    monkeypatch.setenv("BEEBREAK_CA_FILE", str(ca))
     config = RemoteConfig.from_env()
     assert config.ca_file == ca
     ctx = config.ssl_context()
@@ -84,7 +84,7 @@ def test_ca_file_writable_by_others_is_refused(
 ) -> None:
     ca = cert_pair[0]
     ca.chmod(mode)
-    monkeypatch.setenv("BREAKROOM_CA_FILE", str(ca))
+    monkeypatch.setenv("BEEBREAK_CA_FILE", str(ca))
     try:
         with pytest.raises(ValueError):
             RemoteConfig.from_env()
@@ -99,7 +99,7 @@ def test_ca_file_missing_directory_or_garbage_is_refused(
     garbage.write_text("not a certificate\n")
     garbage.chmod(0o600)
     for bad in (tmp_path / "absent.pem", tmp_path, garbage):
-        monkeypatch.setenv("BREAKROOM_CA_FILE", str(bad))
+        monkeypatch.setenv("BEEBREAK_CA_FILE", str(bad))
         with pytest.raises(ValueError) as info:
             RemoteConfig.from_env()
         assert str(bad) not in str(info.value)
@@ -111,12 +111,12 @@ def test_ca_file_symlink_is_followed_but_must_be_a_regular_file(
     cert_pair[0].chmod(0o644)
     good = tmp_path / "link-to-cert"
     good.symlink_to(cert_pair[0])
-    monkeypatch.setenv("BREAKROOM_CA_FILE", str(good))
+    monkeypatch.setenv("BEEBREAK_CA_FILE", str(good))
     assert RemoteConfig.from_env().ssl_context() is not None
 
     bad = tmp_path / "link-to-dir"
     bad.symlink_to(tmp_path)
-    monkeypatch.setenv("BREAKROOM_CA_FILE", str(bad))
+    monkeypatch.setenv("BEEBREAK_CA_FILE", str(bad))
     with pytest.raises(ValueError):
         RemoteConfig.from_env()
 
@@ -126,7 +126,7 @@ def test_ca_file_fifo_is_refused_without_blocking(
 ) -> None:
     fifo = tmp_path / "fifo"
     os.mkfifo(fifo)
-    monkeypatch.setenv("BREAKROOM_CA_FILE", str(fifo))
+    monkeypatch.setenv("BEEBREAK_CA_FILE", str(fifo))
     with pytest.raises(ValueError):
         RemoteConfig.from_env()
 
@@ -138,7 +138,7 @@ def test_ca_file_owned_by_another_user_is_refused(
     # current user: the file then belongs to someone else, and is not root's.
     cert_pair[0].chmod(0o644)
     monkeypatch.setattr(os, "getuid", lambda: os.stat(cert_pair[0]).st_uid + 1)
-    monkeypatch.setenv("BREAKROOM_CA_FILE", str(cert_pair[0]))
+    monkeypatch.setenv("BEEBREAK_CA_FILE", str(cert_pair[0]))
     with pytest.raises(ValueError):
         RemoteConfig.from_env()
 
@@ -147,7 +147,7 @@ def test_ca_file_owned_by_root_is_accepted(monkeypatch: pytest.MonkeyPatch) -> N
     system_bundle = Path("/etc/ssl/certs/ca-certificates.crt")
     if not system_bundle.is_file() or system_bundle.stat().st_uid != 0:
         pytest.skip("no root-owned PEM bundle on this machine")
-    monkeypatch.setenv("BREAKROOM_CA_FILE", str(system_bundle))
+    monkeypatch.setenv("BEEBREAK_CA_FILE", str(system_bundle))
     assert RemoteConfig.from_env().ssl_context() is not None
 
 

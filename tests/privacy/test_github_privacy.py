@@ -25,26 +25,26 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
-from breakroom_server.admin import main as admin_main
-from breakroom_server.app import create_app
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import make_engine
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import (
+from beebreak_server.admin import main as admin_main
+from beebreak_server.app import create_app
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import make_engine
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import (
     Base,
     BetaInvite,
     DeletedAccountTombstone,
     Device,
     User,
 )
-from breakroom_server.tokens import github_tombstone_hmac
+from beebreak_server.tokens import github_tombstone_hmac
 from tests.fixtures.privacy_corpus import scan
 from tests.server.conftest import TEST_SECRET, FixedClock
 from tests.server.github_fake import DEVICE_CODE, FakeGitHub, fake_github
 
 __all__ = ["fake_github"]
 
-TOKEN = "gho_breakroom-canary-token-8841"
+TOKEN = "gho_beebreak-canary-token-8841"
 GITHUB_ID = 987_654_321_012  # past 32 bits and unmistakable in text
 USERNAME = "canary-octo-user"
 
@@ -83,14 +83,14 @@ def world(
     )
     clock = FixedClock()
     caplog.set_level(logging.DEBUG)
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", url)
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", url)
     monkeypatch.setenv(
-        "BREAKROOM_SERVER_SECRET", base64.urlsafe_b64encode(TEST_SECRET).decode()
+        "BEEBREAK_SERVER_SECRET", base64.urlsafe_b64encode(TEST_SECRET).decode()
     )
-    monkeypatch.setenv("BREAKROOM_MAILER", "record")
-    monkeypatch.setenv("BREAKROOM_GITHUB_CLIENT_ID", fake_github.client_id)
-    monkeypatch.setenv("BREAKROOM_GITHUB_OAUTH_URL", fake_github.url)
-    monkeypatch.setenv("BREAKROOM_GITHUB_API_URL", fake_github.url)
+    monkeypatch.setenv("BEEBREAK_MAILER", "record")
+    monkeypatch.setenv("BEEBREAK_GITHUB_CLIENT_ID", fake_github.client_id)
+    monkeypatch.setenv("BEEBREAK_GITHUB_OAUTH_URL", fake_github.url)
+    monkeypatch.setenv("BEEBREAK_GITHUB_API_URL", fake_github.url)
     app = create_app(
         config, mailer=RecordingMailer(), clock=clock, run_matchmaker=False
     )
@@ -227,6 +227,6 @@ def test_the_scanner_sees_planted_values_in_the_database_and_the_logs(
         user_id = s.scalars(select(User.id)).one()
         s.add(Device(user_id=user_id, name=TOKEN, created_at=datetime.now(UTC)))
         s.commit()
-    logging.getLogger("breakroom_server.test").warning("leaked %s", TOKEN)
+    logging.getLogger("beebreak_server.test").warning("leaked %s", TOKEN)
     hits = scan.find_leaks(channels(world, caplog), [("token", TOKEN)])
     assert sorted(hits) == ["db.devices: token", "server_logs: token"]

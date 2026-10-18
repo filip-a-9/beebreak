@@ -29,12 +29,12 @@ here: see "Moved to the rehearsal deploy" near the end.
 **Terminals.**
 
 - T1: the development Docker stack (`docker compose ...`,
-  `breakroom-admin` commands, git and `gh`), in the main distro.
+  `beebreak-admin` commands, git and `gh`), in the main distro.
 - T2: companion A in the main distro (default state and runtime directories),
   account `FilipM6`.
 - T3: companion B in the main distro (separate directories, see M6-C11),
   account `BeaM6`.
-- T4: the fresh distro `breakroom-clean` (M6-C07 to M6-C10): its shell, the
+- T4: the fresh distro `beebreak-clean` (M6-C07 to M6-C10): its shell, the
   companion and one Claude Code session.
 - PS: a Windows PowerShell window. Commands there are **run by Filip** (this
   checklist never asks an agent to run them).
@@ -42,15 +42,15 @@ here: see "Moved to the rehearsal deploy" near the end.
 **Two companions on one machine.** As in M4: companion B gets its own
 `XDG_RUNTIME_DIR` and `XDG_STATE_HOME`; never set them in T2. In the main
 distro run the companion from the venv script, not `uv run`:
-`.venv/bin/breakroom-companion`. In the fresh distro it is the installed
-command `breakroom-companion` (M6-C08).
+`.venv/bin/beebreak-companion`. In the fresh distro it is the installed
+command `beebreak-companion` (M6-C08).
 
 **Window texts** (unchanged from M3 to M5): account row `Not signed in`,
 `Signing in…`, `Connecting…`, `Connected as <nickname>`, `Offline – retrying`,
 `Finish setup`; a note `Stored unencrypted` shows when the refresh token is
 kept in the 0600 file instead of the keyring. Buttons `Sign in`, `Settings`,
 `Sign out`; `Find a break partner`; `Open chat`. Sign-in dialog (title `Sign
-in to Breakroom`): page 1 `Email` and `Invite code (first sign-in only)`; page
+in to Beebreak`): page 1 `Email` and `Invite code (first sign-in only)`; page
 2 `We emailed you an 8-character code. Type it here.`, `Code`, the line `Name
 for this device. Letters, digits, space, . _ and -, up to 40 characters.` over
 an edit box that starts with `WSL device`, and a button `Show what is sent`;
@@ -60,12 +60,12 @@ then `You are all set.`. The preview window is titled `What this app shares`.
 **Admin commands** (inside the server container of the development stack):
 
 ```
-docker compose exec server breakroom-admin invite create EMAIL
-docker compose exec server breakroom-admin devices
-docker compose exec server breakroom-admin account export EMAIL
-docker compose exec server breakroom-admin account delete EMAIL --yes
-docker compose exec server breakroom-admin matches
-docker compose exec server breakroom-admin report list
+docker compose exec server beebreak-admin invite create EMAIL
+docker compose exec server beebreak-admin devices
+docker compose exec server beebreak-admin account export EMAIL
+docker compose exec server beebreak-admin account delete EMAIL --yes
+docker compose exec server beebreak-admin matches
+docker compose exec server beebreak-admin report list
 ```
 
 `invite create` prints the invite code once (`XXXX-XXXX`). `devices` prints one
@@ -83,8 +83,8 @@ already relies on this).
 **Postgres queries** (the second is `TB` in M6-C14):
 
 ```
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT u.nickname, d.name, d.revoked_at IS NOT NULL AS revoked FROM devices d JOIN users u ON u.id = d.user_id ORDER BY u.nickname, d.created_at"
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT u.nickname, d.name, d.revoked_at IS NOT NULL AS revoked FROM devices d JOIN users u ON u.id = d.user_id ORDER BY u.nickname, d.created_at"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1"
 ```
 
 **Test identities** (new for this run, never the M3 to M5 accounts):
@@ -110,8 +110,8 @@ Then the Postgres suite, as in M5-C01 (own database, needs `.env`):
 
 ```
 docker compose up -d postgres
-(set -a; . ./.env; set +a; docker compose exec postgres createdb -U breakroom breakroom_test
-BREAKROOM_TEST_DATABASE_URL="postgresql+psycopg://breakroom:${POSTGRES_PASSWORD}@127.0.0.1:5432/breakroom_test" uv run pytest tests/server tests/privacy tests/e2e)
+(set -a; . ./.env; set +a; docker compose exec postgres createdb -U beebreak beebreak_test
+BEEBREAK_TEST_DATABASE_URL="postgresql+psycopg://beebreak:${POSTGRES_PASSWORD}@127.0.0.1:5432/beebreak_test" uv run pytest tests/server tests/privacy tests/e2e)
 ```
 
 Expect: both runs green. `tests/privacy/test_privacy_corpus.py` and
@@ -129,8 +129,8 @@ cp -n .env.example .env     # first time only; replace the two secrets as in M3-
 docker compose up -d --build
 docker compose ps
 curl -s http://127.0.0.1:8000/v1/health
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT version_num FROM alembic_version"
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT version_num FROM alembic_version"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY 1"
 ```
 
 Expect: `postgres`, `mailpit` and `server` running; health prints
@@ -140,8 +140,8 @@ Expect: `postgres`, `mailpit` and `server` running; health prints
 `messages`, `queue_entries`, `refresh_tokens`, `report_messages`, `reports`,
 `user_preferences`, `users`). A different version or table list is a `fail`
 against the spec that changed the schema. An `.env` made in M3 lacks the
-production keys that `.env.example` has now (`BREAKROOM_PUBLIC_HOST`,
-`BREAKROOM_SMTP_*`, `BREAKROOM_MAIL_FROM`): add them from `.env.example`
+production keys that `.env.example` has now (`BEEBREAK_PUBLIC_HOST`,
+`BEEBREAK_SMTP_*`, `BEEBREAK_MAIL_FROM`): add them from `.env.example`
 before M6-C13, which needs them.
 
 Result (pass / fail / blocked):
@@ -266,13 +266,13 @@ checklist, not a pass).
 
 ```
 scripts/build_release.sh
-sha256sum dist/breakroom-release.tar.gz
-tar tzf dist/breakroom-release.tar.gz | sort
+sha256sum dist/beebreak-release.tar.gz
+tar tzf dist/beebreak-release.tar.gz | sort
 ```
 
 Expect: the script prints `built:` and lists `SHA256SUMS`,
-`breakroom-release.tar.gz`, `breakroom_agent_bridge-*.whl`,
-`breakroom_companion-*.whl`, `breakroom_shared-*.whl` and `marketplace`.
+`beebreak-release.tar.gz`, `beebreak_agent_bridge-*.whl`,
+`beebreak_companion-*.whl`, `beebreak_shared-*.whl` and `marketplace`.
 The tarball lists the three wheels, `SHA256SUMS`, `./.gitignore` and
 `marketplace/` (with `.claude-plugin/marketplace.json` and
 `integrations/claude-code/`). Write the
@@ -281,23 +281,23 @@ SHA-256 down for M6-C08. `dist/` is git-ignored.
 Result (pass / fail / blocked):
 
 **M6-C07 — Fresh distro (PS, run by Filip).** Import a distro that has never
-been used, so nothing of Breakroom, uv or Claude Code exists in it. **Never
+been used, so nothing of Beebreak, uv or Claude Code exists in it. **Never
 export a distro you work in** (it holds your files and credentials). Needs
 WSL 2.4.4 or newer for `--name` (`wsl --version`; write the version down).
 
 ```
-wsl --install Ubuntu-24.04 --name breakroom-clean --no-launch
+wsl --install Ubuntu-24.04 --name beebreak-clean --no-launch
 ```
 
 On an older WSL, download the official Ubuntu WSL root filesystem tarball and
-import that instead (`wsl --import breakroom-clean C:\wsl\breakroom-clean
+import that instead (`wsl --import beebreak-clean C:\wsl\beebreak-clean
 <rootfs tarball> --version 2`); do not use `wsl --export` for this. Then set
 up the user:
 
 ```
-wsl -d breakroom-clean -u root -- bash -c "useradd -m -s /bin/bash tester && echo 'tester ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/tester && printf '[user]\ndefault=tester\n' >> /etc/wsl.conf"
-wsl --terminate breakroom-clean
-wsl -d breakroom-clean
+wsl -d beebreak-clean -u root -- bash -c "useradd -m -s /bin/bash tester && echo 'tester ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/tester && printf '[user]\ndefault=tester\n' >> /etc/wsl.conf"
+wsl --terminate beebreak-clean
+wsl -d beebreak-clean
 ```
 
 (If the distro opens as root, the `useradd` command has not taken effect:
@@ -309,16 +309,16 @@ not a finding):
 
 ```
 # in the main distro
-mkdir -p /mnt/c/Temp && cp dist/breakroom-release.tar.gz /mnt/c/Temp/
+mkdir -p /mnt/c/Temp && cp dist/beebreak-release.tar.gz /mnt/c/Temp/
 # in T4
-sha256sum /mnt/c/Temp/breakroom-release.tar.gz
+sha256sum /mnt/c/Temp/beebreak-release.tar.gz
 ```
 
 Expect: the SHA-256 in T4 equals the one from M6-C06 (this is the README's
 "compare with the release page" step; there is no release page yet). `echo
-$WSL_DISTRO_NAME` prints `breakroom-clean`, and `ls ~/.local ~/.config`
+$WSL_DISTRO_NAME` prints `beebreak-clean`, and `ls ~/.local ~/.config`
 printing `No such file or directory` is the expected pass on a new user
-(otherwise it shows no `breakroom`, `uv` or `claude`). The fresh distro does not have uv and
+(otherwise it shows no `beebreak`, `uv` or `claude`). The fresh distro does not have uv and
 Claude Code: install them per their own official instructions (the README
 lists them as prerequisites and does not say how). Write down every package
 you had to add (for example `curl`, `ca-certificates`, Qt libraries); each is
@@ -338,31 +338,31 @@ distro that has no `python3` makes uv fetch a newer managed Python, which the
 companion does not support:
 
 ```
-mkdir -p ~/breakroom-release && tar xzf /mnt/c/Temp/breakroom-release.tar.gz -C ~/breakroom-release
-(cd ~/breakroom-release && sha256sum -c SHA256SUMS)
-R=~/breakroom-release
-uv tool install --python 3.12 $R/breakroom_companion-*.whl \
-  --with $R/breakroom_shared-*.whl \
-  --with $R/breakroom_agent_bridge-*.whl \
-  --with-executables-from breakroom-agent-bridge
-command -v breakroom-companion breakroom-hook breakroom-mcp
-breakroom-companion install
-claude plugin marketplace add ~/breakroom-release/marketplace
-claude plugin install breakroom@breakroom
+mkdir -p ~/beebreak-release && tar xzf /mnt/c/Temp/beebreak-release.tar.gz -C ~/beebreak-release
+(cd ~/beebreak-release && sha256sum -c SHA256SUMS)
+R=~/beebreak-release
+uv tool install --python 3.12 $R/beebreak_companion-*.whl \
+  --with $R/beebreak_shared-*.whl \
+  --with $R/beebreak_agent_bridge-*.whl \
+  --with-executables-from beebreak-agent-bridge
+command -v beebreak-companion beebreak-hook beebreak-mcp
+beebreak-companion install
+claude plugin marketplace add ~/beebreak-release/marketplace
+claude plugin install beebreak@beebreak
 ```
 
 At the `Server URL` prompt press Enter (the default is
 `http://127.0.0.1:8000`). Expect: `sha256sum -c` prints `OK` for the three
 wheels; `command -v` prints three paths under `~/.local/bin`;
-`breakroom-companion install` prints `saved server URL`, then `Next, add the
+`beebreak-companion install` prints `saved server URL`, then `Next, add the
 Claude Code plugin:` with the two `claude plugin ...` commands; the two
-`claude plugin` commands succeed. `ls -l ~/.local/state/breakroom/install.json`
+`claude plugin` commands succeed. `ls -l ~/.local/state/beebreak/install.json`
 shows mode `-rw-------`.
 
 Autostart is not offered (WSLg has no desktop session to run it):
 
 ```
-breakroom-companion install --server-url http://127.0.0.1:8000 --autostart; echo "exit $?"
+beebreak-companion install --server-url http://127.0.0.1:8000 --autostart; echo "exit $?"
 ```
 
 Expect a usage error naming `--autostart` and `exit 2`.
@@ -373,10 +373,10 @@ Result (pass / fail / blocked):
 the main distro (T1) make an invite:
 
 ```
-docker compose exec server breakroom-admin invite create clean@example.com
+docker compose exec server beebreak-admin invite create clean@example.com
 ```
 
-In T4 start the companion (`breakroom-companion`). If it does not start with
+In T4 start the companion (`beebreak-companion`). If it does not start with
 an error (an `ImportError` naming `libEGL` or `libGL`, or `Could not load
 the Qt platform plugin "xcb"`), write down the missing system library and
 install it: that is a finding (the README lists the system packages; the set
@@ -387,13 +387,13 @@ name `WSL device`; nickname `Clean`; save the privacy page with all three
 boxes off. Expect `Connected as Clean`. Then, in the main distro:
 
 ```
-docker compose exec server breakroom-admin devices
+docker compose exec server beebreak-admin devices
 ```
 
 Expect one line starting `Clean`, then `WSL device`, then `connected=yes`.
 
 Now the Claude Code part, in a new terminal in T4, from a scratch directory
-outside `~/breakroom-release`:
+outside `~/beebreak-release`:
 
 ```
 mkdir -p ~/scratch && cd ~/scratch
@@ -401,11 +401,11 @@ claude
 ```
 
 (no `--plugin-dir`: the plugin comes from the marketplace install). Send:
-`Call the breakroom_status tool and show the raw result`. Expect the keys
+`Call the beebreak_status tool and show the raw result`. Expect the keys
 `companion`, `invitation`, `last_event_at`, `activity`, `estimate` and
 `queue`; `companion` is `running` (not `not_running`), `last_event_at` is a
 timestamp, not `null` (the hooks of this very session reached the companion),
-and `queue` is `none`. `/mcp` lists the server as connected (it shows as `plugin:breakroom:breakroom`). To show the
+and `queue` is `none`. `/mcp` lists the server as connected (it shows as `plugin:beebreak:beebreak`). To show the
 hooks again after the tool call, ask for the same tool a second time and
 expect a later `last_event_at`. Exit Claude Code. Leave the companion running
 for M6-C10.
@@ -416,7 +416,7 @@ Result (pass / fail / blocked):
 before uninstalling, note what exists:
 
 ```
-ls -A ~/.local/state/breakroom "${XDG_RUNTIME_DIR:-/tmp/breakroom-$(id -u)}/breakroom"
+ls -A ~/.local/state/beebreak "${XDG_RUNTIME_DIR:-/tmp/beebreak-$(id -u)}/beebreak"
 ```
 
 Expect (companion still running): `companion-state.json`, `install.json` and,
@@ -425,23 +425,23 @@ directory; `companion.sock` and `salt` in the socket directory. Then the README'
 block, in order:
 
 ```
-breakroom-companion uninstall
-claude plugin uninstall breakroom@breakroom
-claude plugin marketplace remove breakroom
-uv tool uninstall breakroom-companion
-rm -rf ~/breakroom-release
+beebreak-companion uninstall
+claude plugin uninstall beebreak@beebreak
+claude plugin marketplace remove beebreak
+uv tool uninstall beebreak-companion
+rm -rf ~/beebreak-release
 ```
 
-Expect from `breakroom-companion uninstall`, one fixed line each and exit 0:
+Expect from `beebreak-companion uninstall`, one fixed line each and exit 0:
 `stopped the running companion`, `revoked this device on the server`,
 `cleared stored login`, `removed state directory (state, credentials, install
 record)`, `removed socket directory (socket, salt)`. The companion window
-closes. Run `breakroom-companion uninstall` a
+closes. Run `beebreak-companion uninstall` a
 second time before `uv tool uninstall` (so run the first line of the block
 above, then this, then the other four):
 
 ```
-breakroom-companion uninstall; echo "exit $?"
+beebreak-companion uninstall; echo "exit $?"
 ```
 
 Expect exit 0, no traceback and no `NOT revoked` line (`no stored login;
@@ -450,32 +450,33 @@ again, because it recreates the two directories before removing them; that is
 not a leftover. Then verify nothing is left:
 
 ```
-find ~ /tmp -maxdepth 5 -iname '*breakroom*' -not -path "$HOME/.cache/uv/*" -not -path "$HOME/.claude/*" 2>/dev/null
-ls -d ~/.claude/plugins/cache/*breakroom* ~/.claude/plugins/marketplaces/*breakroom* 2>&1
-ls -d "${XDG_RUNTIME_DIR:-/tmp/breakroom-$(id -u)}/breakroom" ~/.local/state/breakroom 2>&1
-command -v breakroom-companion breakroom-hook breakroom-mcp
+find ~ /tmp -maxdepth 5 -iname '*beebreak*' -not -path "$HOME/.cache/uv/*" -not -path "$HOME/.claude/*" -not -path "$HOME/.cache/claude-cli-nodejs/*" 2>/dev/null
+ls -d ~/.claude/plugins/cache/*beebreak* ~/.claude/plugins/marketplaces/*beebreak* 2>&1
+ls -d "${XDG_RUNTIME_DIR:-/tmp/beebreak-$(id -u)}/beebreak" ~/.local/state/beebreak 2>&1
+command -v beebreak-companion beebreak-hook beebreak-mcp
 ```
 
 Expect: `find` prints nothing (the release tarball is outside the home
 directory, in `/mnt/c/Temp`, on purpose); the `ls` lines all say `No such file
-or directory`. Anything under `~/.claude/` is Claude Code's own cache: if
-`claude plugin uninstall` left a `breakroom` folder there, record it as a
-Claude Code leftover in the note, not as a Breakroom `fail`; `command -v` prints nothing. Keyring: if the window showed no
+or directory`. Anything under `~/.claude/` or `~/.cache/claude-cli-nodejs/` (its MCP logs)
+is Claude Code's own cache: if
+`claude plugin uninstall` left a `beebreak` folder there, record it as a
+Claude Code leftover in the note, not as a Beebreak `fail`; `command -v` prints nothing. Keyring: if the window showed no
 `Stored unencrypted` note the token was in a keyring, so also run
-`secret-tool search service breakroom` if that tool exists (it should print
+`secret-tool search service beebreak` if that tool exists (it should print
 nothing); otherwise record "file store only, no keyring". Then in the main
 distro:
 
 ```
-docker compose exec server breakroom-admin devices
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT u.nickname, d.name, d.revoked_at IS NOT NULL AS revoked FROM devices d JOIN users u ON u.id = d.user_id WHERE u.nickname = 'Clean'"
+docker compose exec server beebreak-admin devices
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT u.nickname, d.name, d.revoked_at IS NOT NULL AS revoked FROM devices d JOIN users u ON u.id = d.user_id WHERE u.nickname = 'Clean'"
 ```
 
 Expect: `devices` no longer lists `Clean`; the query shows one row, `Clean`,
 `WSL device`, `revoked` `t`. (The spec words this as "shows revoked in
-`breakroom-admin devices`"; that command lists only active devices, so the
+`beebreak-admin devices`"; that command lists only active devices, so the
 query is the proof: see the report's deviations.) Last, in PS remove the
-distro: `wsl --unregister breakroom-clean`.
+distro: `wsl --unregister beebreak-clean`.
 
 Result (pass / fail / blocked):
 
@@ -486,12 +487,12 @@ Needs the stack of M6-C02, two new accounts (create the invites for
 `filip-m6@example.com` and `bea-m6@example.com` with `invite create`; see
 "Test identities") and two companions in the main distro. Note the start time
 in T1: `T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)`. T2 (A, default directories):
-`.venv/bin/breakroom-companion`. T3 (B):
+`.venv/bin/beebreak-companion`. T3 (B):
 
 ```
 export B_ROOT="${B_ROOT:-$(mktemp -d)}"
 mkdir -p -m 700 "$B_ROOT/run" "$B_ROOT/state"
-XDG_RUNTIME_DIR="$B_ROOT/run" XDG_STATE_HOME="$B_ROOT/state" .venv/bin/breakroom-companion
+XDG_RUNTIME_DIR="$B_ROOT/run" XDG_STATE_HOME="$B_ROOT/state" .venv/bin/beebreak-companion
 ```
 
 (Always start B with this command.) B starts `Not signed in`; if A's default
@@ -509,9 +510,9 @@ and see **Next** disabled, then restore `WSL device`. Save each privacy
 page with all boxes off; wait for `Connected as FilipM6` and `Connected as BeaM6`.
 
 ```
-docker compose exec server breakroom-admin devices
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT u.nickname, d.name, d.revoked_at IS NOT NULL AS revoked FROM devices d JOIN users u ON u.id = d.user_id ORDER BY u.nickname, d.created_at"
-echo "hostname hits in this run's device rows: $(docker compose exec -T postgres psql -U breakroom breakroom -At -c "SELECT d.name FROM devices d JOIN users u ON u.id = d.user_id WHERE u.email_canonical LIKE '%-m6@example.com'" | grep -ci "$(hostname)")"
+docker compose exec server beebreak-admin devices
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT u.nickname, d.name, d.revoked_at IS NOT NULL AS revoked FROM devices d JOIN users u ON u.id = d.user_id ORDER BY u.nickname, d.created_at"
+echo "hostname hits in this run's device rows: $(docker compose exec -T postgres psql -U beebreak beebreak -At -c "SELECT d.name FROM devices d JOIN users u ON u.id = d.user_id WHERE u.email_canonical LIKE '%-m6@example.com'" | grep -ci "$(hostname)")"
 echo "hostname hits in the server log since the start: $(docker compose logs --since "$T0" server 2>&1 | grep -ci "$(hostname)")"
 ```
 
@@ -536,11 +537,11 @@ partner** in both so they match. Send `export-test A1` from A and
 
 ```
 mkdir -p reports
-(umask 077; docker compose exec -T server breakroom-admin account export bea-m6@example.com > reports/m6-bea-export.json)
+(umask 077; docker compose exec -T server beebreak-admin account export bea-m6@example.com > reports/m6-bea-export.json)
 python3 -c "import json; d=json.load(open('reports/m6-bea-export.json')); print(sorted(d)); print([m['body'] for m in d['messages']]); print(d['user']['nickname'], d['devices'][0]['name'])"
 ls -l reports/m6-bea-export.json
-docker compose exec server breakroom-admin account delete bea-m6@example.com; echo "exit $?"
-docker compose exec server breakroom-admin account delete bea-m6@example.com --yes; echo "exit $?"
+docker compose exec server beebreak-admin account delete bea-m6@example.com; echo "exit $?"
+docker compose exec server beebreak-admin account delete bea-m6@example.com --yes; echo "exit $?"
 ```
 
 Expect: the key list is `blocks, challenges, devices, export_version,
@@ -559,13 +560,13 @@ match's `ended_at` and `end_reason`, so an export taken during the live chat
 would never compare equal. Then delete:
 
 ```
-(umask 077; docker compose exec -T server breakroom-admin account export filip-m6@example.com > reports/m6-filip-before.json)
-docker compose exec server breakroom-admin account delete bea-m6@example.com --yes; echo "exit $?"
-docker compose exec server breakroom-admin account export bea-m6@example.com; echo "exit $?"
-(umask 077; docker compose exec -T server breakroom-admin account export filip-m6@example.com > reports/m6-filip-after.json)
+(umask 077; docker compose exec -T server beebreak-admin account export filip-m6@example.com > reports/m6-filip-before.json)
+docker compose exec server beebreak-admin account delete bea-m6@example.com --yes; echo "exit $?"
+docker compose exec server beebreak-admin account export bea-m6@example.com; echo "exit $?"
+(umask 077; docker compose exec -T server beebreak-admin account export filip-m6@example.com > reports/m6-filip-after.json)
 python3 -c "import json; a=json.load(open('reports/m6-filip-before.json')); b=json.load(open('reports/m6-filip-after.json')); print(a['messages']==b['messages'], a['matches']==b['matches'], len(b['matches']), [m['body'] for m in b['messages']])"
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT count(*) FROM matches"
-docker compose exec server breakroom-admin devices
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT count(*) FROM matches"
+docker compose exec server beebreak-admin devices
 ```
 
 Expect: `delete` exits 0 and prints one line of `table=count` pairs (names
@@ -591,10 +592,10 @@ production file and the development file share the directory name, so
 without `COMPOSE_PROJECT_NAME` the drill would share (and `down -v` would
 destroy) the development database volume. `backup.sh` and `restore.sh` exit 2
 without `COMPOSE_PROJECT_NAME`, but still fall back to `compose.prod.yaml`
-when `BREAKROOM_COMPOSE_FILE` is missing, and `restore.sh --force` runs `drop
+when `BEEBREAK_COMPOSE_FILE` is missing, and `restore.sh --force` runs `drop
 schema public cascade`. So nothing here relies on exported variables. Two shell
 functions pass both values on every call, and `drill` refuses to run unless the
-merged file's project name is `breakroom-m6drill` (a python one-liner reads it,
+merged file's project name is `beebreak-m6drill` (a python one-liner reads it,
 because `jq` is not installed on this machine). Define them in the shell you
 use for this step:
 
@@ -611,22 +612,22 @@ services:
     ports:
       - "127.0.0.1:18000:8000"
     environment:
-      BREAKROOM_SMTP_HOST: mailpit
-      BREAKROOM_SMTP_PORT: "1025"
-      BREAKROOM_SMTP_TLS: none
-      BREAKROOM_SMTP_USERNAME: ""
-      BREAKROOM_SMTP_PASSWORD: ""
+      BEEBREAK_SMTP_HOST: mailpit
+      BEEBREAK_SMTP_PORT: "1025"
+      BEEBREAK_SMTP_TLS: none
+      BEEBREAK_SMTP_USERNAME: ""
+      BEEBREAK_SMTP_PASSWORD: ""
   caddy:
     environment:
-      BREAKROOM_PUBLIC_HOST: localhost
+      BEEBREAK_PUBLIC_HOST: localhost
 EOF
-(umask 077; COMPOSE_PROJECT_NAME=breakroom-m6drill docker compose -f compose.prod.yaml -f reports/compose.m6-drill.yaml config > reports/compose.m6-drill-merged.yaml)
-dcd() { COMPOSE_PROJECT_NAME=breakroom-m6drill docker compose -f reports/compose.m6-drill-merged.yaml "$@"; }
+(umask 077; COMPOSE_PROJECT_NAME=beebreak-m6drill docker compose -f compose.prod.yaml -f reports/compose.m6-drill.yaml config > reports/compose.m6-drill-merged.yaml)
+dcd() { COMPOSE_PROJECT_NAME=beebreak-m6drill docker compose -f reports/compose.m6-drill-merged.yaml "$@"; }
 drill() {  # run a script against the drill project only
   local name
-  name=$(COMPOSE_PROJECT_NAME=breakroom-m6drill docker compose -f reports/compose.m6-drill-merged.yaml config --format json | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
-  [ "$name" = breakroom-m6drill ] || { echo "REFUSING: project is '$name', not breakroom-m6drill" >&2; return 1; }
-  BREAKROOM_COMPOSE_FILE=reports/compose.m6-drill-merged.yaml COMPOSE_PROJECT_NAME=breakroom-m6drill "$@"
+  name=$(COMPOSE_PROJECT_NAME=beebreak-m6drill docker compose -f reports/compose.m6-drill-merged.yaml config --format json | python3 -c "import json,sys; print(json.load(sys.stdin)['name'])")
+  [ "$name" = beebreak-m6drill ] || { echo "REFUSING: project is '$name', not beebreak-m6drill" >&2; return 1; }
+  BEEBREAK_COMPOSE_FILE=reports/compose.m6-drill-merged.yaml COMPOSE_PROJECT_NAME=beebreak-m6drill "$@"
 }
 drill true && echo "guard ok"
 ```
@@ -649,17 +650,17 @@ they are taken, stop what uses them.) Then:
    ```
    dcd up -d --build --wait
    dcd ps -a
-   dcd exec server breakroom-admin invite create drill@example.com
+   dcd exec server beebreak-admin invite create drill@example.com
    export D_ROOT="${D_ROOT:-$(mktemp -d)}"
    mkdir -p -m 700 "$D_ROOT/run" "$D_ROOT/state"
-   BREAKROOM_SERVER_URL=http://127.0.0.1:18000 XDG_RUNTIME_DIR="$D_ROOT/run" XDG_STATE_HOME="$D_ROOT/state" .venv/bin/breakroom-companion
+   BEEBREAK_SERVER_URL=http://127.0.0.1:18000 XDG_RUNTIME_DIR="$D_ROOT/run" XDG_STATE_HOME="$D_ROOT/state" .venv/bin/beebreak-companion
    ```
 
    Sign in as `drill@example.com` with the invite code and the code from
    Mailpit at `http://127.0.0.1:18025`; nickname `Drill`; privacy page all
    off; wait for `Connected as Drill`; then stop the companion with Ctrl+C.
    Expect `dcd ps -a`: `postgres` and `server` healthy, `caddy` up, `migrate`
-   exited 0 (`ps` without `-a` hides exited containers); `dcd exec server breakroom-admin devices` lists `Drill`.
+   exited 0 (`ps` without `-a` hides exited containers); `dcd exec server beebreak-admin devices` lists `Drill`.
 
 2. Back up, keeping the dump out of the repository tree's tracked paths
    (`backups/` is not in `.gitignore`, so use `--out-dir`):
@@ -671,22 +672,22 @@ they are taken, stop what uses them.) Then:
 
    Expect `file:`, `size:` and `sha256:` lines, and mode `600`.
 3. Destroy: `dcd down -v`. Expect the containers and the `postgres-data` and
-   `caddy-data` volumes of the `breakroom-m6drill` project gone;
-   `docker volume ls | grep breakroom-m6drill` prints nothing and
+   `caddy-data` volumes of the `beebreak-m6drill` project gone;
+   `docker volume ls | grep beebreak-m6drill` prints nothing and
    `curl -s http://127.0.0.1:18000/v1/health` fails to connect. The
    development stack (M6-C02) is untouched: `curl -s
    http://127.0.0.1:8000/v1/health` still answers.
 4. Restore into the fresh volume:
 
    ```
-   B=$(ls -t reports/m6-backups/breakroom-*.dump | head -1)
+   B=$(ls -t reports/m6-backups/beebreak-*.dump | head -1)
    drill scripts/restore.sh "$B"
    ```
 
    Expect, in order: `starting postgres`, `stopping server and caddy`,
    `restoring <path>`, `running migrations`, `running one purge pass`, and a
    closing line starting `Restored.`. Exit 0. Running the same command again
-   (`drill scripts/restore.sh "$B"`) without `--force` must refuse: `database 'breakroom' is not empty (...
+   (`drill scripts/restore.sh "$B"`) without `--force` must refuse: `database 'beebreak' is not empty (...
    tables); nothing was changed.` and exit 1.
 5. `dcd up -d` and `curl -s http://127.0.0.1:18000/v1/health` print
    `{"status":"ok"}`.
@@ -705,9 +706,9 @@ whether it worked or that `age` was not available.
 
 Clean up: `dcd down -v`; then remove the companion's login with D's own
 environment, because a keyring entry (if one was used) is keyed by the server
-address and the state directory: `BREAKROOM_SERVER_URL=http://127.0.0.1:18000
+address and the state directory: `BEEBREAK_SERVER_URL=http://127.0.0.1:18000
 XDG_RUNTIME_DIR="$D_ROOT/run" XDG_STATE_HOME="$D_ROOT/state"
-.venv/bin/breakroom-companion uninstall --keep-account`; then `rm -rf
+.venv/bin/beebreak-companion uninstall --keep-account`; then `rm -rf
 reports/m6-backups reports/compose.m6-drill*.yaml reports/m6-age.key
 "$D_ROOT"` and `unset -f dcd drill`. Any failure of the scripts goes back to M6-08; a failure that
 only comes from merging the compose files is a finding for the RUNBOOK (it
@@ -739,7 +740,7 @@ account is gone after M6-C12):
 3. **Retention values.** DATA_HANDLING gives these defaults; check the code:
 
    ```
-   grep -nE '^    (code_ttl_s|access_ttl_s|refresh_ttl_s|invite_ttl_s|queue_ttl_s|retention_s|message_retention_s|report_retention_s|challenge_retention_s|refresh_token_retention_s|invite_retention_s|tombstone_retention_s):' apps/server/src/breakroom_server/config.py
+   grep -nE '^    (code_ttl_s|access_ttl_s|refresh_ttl_s|invite_ttl_s|queue_ttl_s|retention_s|message_retention_s|report_retention_s|challenge_retention_s|refresh_token_retention_s|invite_retention_s|tombstone_retention_s):' apps/server/src/beebreak_server/config.py
    ```
 
    Expect the defaults `86_400` (challenges, messages), `604_800` (refresh
@@ -752,7 +753,7 @@ account is gone after M6-C12):
 4. **Local files.** With A running as in M6-C11:
 
    ```
-   stat -c '%a %n' ~/.local/state/breakroom ~/.local/state/breakroom/* "${XDG_RUNTIME_DIR:-/tmp/breakroom-$(id -u)}/breakroom" "${XDG_RUNTIME_DIR:-/tmp/breakroom-$(id -u)}/breakroom"/*
+   stat -c '%a %n' ~/.local/state/beebreak ~/.local/state/beebreak/* "${XDG_RUNTIME_DIR:-/tmp/beebreak-$(id -u)}/beebreak" "${XDG_RUNTIME_DIR:-/tmp/beebreak-$(id -u)}/beebreak"/*
    ```
 
    Expect the directories `700`, the files and `companion.sock` `600`, and the
@@ -760,7 +761,7 @@ account is gone after M6-C12):
    the state directory, `companion.sock` in the socket directory, and `salt`
    there too once a hook has run (the hook creates it, so a Claude Code
    session must have been active).
-   Nothing else appears (`install.json` only after a `breakroom-companion
+   Nothing else appears (`install.json` only after a `beebreak-companion
    install`).
 5. **Chat footer.** The sentence in DATA_HANDLING ("Not end-to-end encrypted.
    Messages are deleted 24 h after the chat ends.") is the one in the chat
@@ -815,7 +816,7 @@ Result (pass / fail / blocked):
 **M6-C16 — Usability flows (ARCHITECTURE §14). Run after the design pass
 (README "Next" step 6), not with the rest of this list.** Mark it `blocked`
 (pending) in the report until then. One person who has never seen
-Breakroom goes through, using only the documents (README, the in-app texts):
+Beebreak goes through, using only the documents (README, the in-app texts):
 install, onboarding, a first invite, a match, a chat, an extension, report
 and block, and uninstall. Use the fresh distro of M6-C07 (re-import it, the
 last run removed it) and the development stack, with a second tester or Filip
@@ -835,14 +836,14 @@ two-machine run; see README "Next" step 8). They are run on the rehearsal host
 with the real domain, then the host is destroyed, and again on the real
 deployment:
 
-- TLS: a public certificate for `BREAKROOM_PUBLIC_HOST` from Caddy; a client on
+- TLS: a public certificate for `BEEBREAK_PUBLIC_HOST` from Caddy; a client on
   another network signs in, matches and chats through it; the WebSocket
   (`/v1/realtime`) works through Caddy (M6-03).
 - Proxy limits: a spoofed `X-Forwarded-For` sent to the public address does not
   change the limiter key, while the real peer address does (M6-03,
-  `BREAKROOM_TRUSTED_PROXIES`).
+  `BEEBREAK_TRUSTED_PROXIES`).
 - Mail: a real provider sends the sign-in code (SPF and DKIM set before any
-  real send); `BREAKROOM_SMTP_TLS` starttls or implicit with credentials.
+  real send); `BEEBREAK_SMTP_TLS` starttls or implicit with credentials.
 - The restore drill repeated on the host (RUNBOOK: the local drill ran without
   Caddy or real SMTP), including the `age` path and an off-host copy of the
   backup.
@@ -877,14 +878,14 @@ left; nothing is deleted automatically, each item is yours to confirm:
 
 - `reports/m6-*.json` exports and `reports/m6-junit.xml` once the report is
   written; `dist/` if the bundle is no longer needed.
-- `/mnt/c/Temp/breakroom-release.tar.gz` and any `C:\wsl\` files you created;
-  the test distro (`wsl --unregister breakroom-clean` in PS, run by Filip;
+- `/mnt/c/Temp/beebreak-release.tar.gz` and any `C:\wsl\` files you created;
+  the test distro (`wsl --unregister beebreak-clean` in PS, run by Filip;
   `wsl --list` must no longer show it).
 - Companion B's directories: `XDG_RUNTIME_DIR="$B_ROOT/run"
-  XDG_STATE_HOME="$B_ROOT/state" .venv/bin/breakroom-companion uninstall
+  XDG_STATE_HOME="$B_ROOT/state" .venv/bin/beebreak-companion uninstall
   --keep-account`, then `rm -rf "$B_ROOT"`.
-- The `breakroom-server:prod` image of the drill: `docker image rm
-  breakroom-server:prod`.
+- The `beebreak-server:prod` image of the drill: `docker image rm
+  beebreak-server:prod`.
 - Opt-in, only if you want an empty development database: `docker compose
   down -v` deletes it and every account in it. Skip it otherwise.
 

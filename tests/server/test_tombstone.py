@@ -9,13 +9,13 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import func, select
 
-from breakroom_server.account_data import delete_account
-from breakroom_server.admin import main
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.matchmaking import Matchmaker
-from breakroom_server.models import BetaInvite, DeletedAccountTombstone, User
-from breakroom_server.tokens import tombstone_hmac
+from beebreak_server.account_data import delete_account
+from beebreak_server.admin import main
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.matchmaking import Matchmaker
+from beebreak_server.models import BetaInvite, DeletedAccountTombstone, User
+from beebreak_server.tokens import tombstone_hmac
 from tests.fixtures.privacy_corpus import load_corpus
 from tests.fixtures.privacy_corpus.scan import find_corpus_leaks
 from tests.server.conftest import START_TIME, TEST_SECRET, FixedClock, add_ready_user
@@ -149,7 +149,7 @@ def test_a_changed_secret_makes_the_old_tombstone_not_match(
 ) -> None:
     _delete_disabled(session_factory, clock)
     monkeypatch.setenv(
-        "BREAKROOM_SERVER_SECRET",
+        "BEEBREAK_SERVER_SECRET",
         base64.urlsafe_b64encode(b"a-different-secret-of-32-bytes!!").decode(),
     )
     assert run(["invite", "create", ADA], clock) == 0

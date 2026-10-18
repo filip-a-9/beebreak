@@ -18,7 +18,7 @@ hosting).
 
 **Terminals.**
 
-- T1: the Docker stack (`docker compose ...` and `breakroom-admin` commands).
+- T1: the Docker stack (`docker compose ...` and `beebreak-admin` commands).
 - T2: companion A (default state and runtime directories), account `Filip`.
 - T3: companion B (separate directories, see M4-C03), account `Bea`.
 - T4: a Claude Code session used only by M4-C11 and M4-C12, attached to A.
@@ -29,7 +29,7 @@ Never set these variables in T2. Companion A's hooks and MCP server reach A
 only, because T4 runs with the default directories.
 
 **Run the companion from the venv script**, not `uv run`:
-`.venv/bin/breakroom-companion`.
+`.venv/bin/beebreak-companion`.
 
 **Window texts.** Account row (M3): `Not signed in`, `Signing in…`,
 `Connecting…`, `Connected as <nickname>`, `Offline – retrying`, `Finish setup`.
@@ -55,11 +55,11 @@ An invitation reads `Your agent is busy. Want to take a short break?` with
 **Admin commands** run inside the server container:
 
 ```
-docker compose exec server breakroom-admin queue list
-docker compose exec server breakroom-admin matches
-docker compose exec server breakroom-admin block list NICKNAME
-docker compose exec server breakroom-admin block remove BLOCKER BLOCKED
-docker compose exec server breakroom-admin user disable NICKNAME
+docker compose exec server beebreak-admin queue list
+docker compose exec server beebreak-admin matches
+docker compose exec server beebreak-admin block list NICKNAME
+docker compose exec server beebreak-admin block remove BLOCKER BLOCKED
+docker compose exec server beebreak-admin user disable NICKNAME
 ```
 
 `queue list` prints one line per queued entry, tab separated:
@@ -80,7 +80,7 @@ below use fewer than 12).
 **Postgres queries** used to read the stored rows:
 
 ```
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT u.nickname, q.status, q.task_category, q.stack_tags, q.remaining_time_bucket, q.presence_id IS NOT NULL AS has_presence_id FROM queue_entries q JOIN users u ON u.id = q.user_id ORDER BY q.admitted_at"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT u.nickname, q.status, q.task_category, q.stack_tags, q.remaining_time_bucket, q.presence_id IS NOT NULL AS has_presence_id FROM queue_entries q JOIN users u ON u.id = q.user_id ORDER BY q.admitted_at"
 ```
 
 (`Q` in the steps below.) In this output `stack_tags` is comma-joined in
@@ -104,8 +104,8 @@ so it uses its own database, not the one the stack uses. Start Postgres first
 ```
 docker compose up -d postgres
 set -a; . ./.env; set +a
-docker compose exec postgres createdb -U breakroom breakroom_test
-BREAKROOM_TEST_DATABASE_URL="postgresql+psycopg://breakroom:${POSTGRES_PASSWORD}@127.0.0.1:5432/breakroom_test" uv run pytest tests/server tests/privacy tests/e2e
+docker compose exec postgres createdb -U beebreak beebreak_test
+BEEBREAK_TEST_DATABASE_URL="postgresql+psycopg://beebreak:${POSTGRES_PASSWORD}@127.0.0.1:5432/beebreak_test" uv run pytest tests/server tests/privacy tests/e2e
 ```
 
 Expect: both runs green; the second also runs the migration and race tests
@@ -120,33 +120,33 @@ cp -n .env.example .env     # first time only; fill the two secrets as in M3-C02
 docker compose up -d --build
 docker compose ps
 curl -s http://127.0.0.1:8000/v1/health
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT version_num FROM alembic_version"
-docker compose exec -T postgres psql -U breakroom breakroom -c "\dt"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT version_num FROM alembic_version"
+docker compose exec -T postgres psql -U beebreak beebreak -c "\dt"
 ```
 
 Expect: `postgres`, `mailpit` and `server` running; health prints
 `{"status":"ok"}`; the migration query prints `0003` (the M5
 migration); the table list contains
 `queue_entries`, `matches`, `match_participants` and `blocks`. (The server
-container runs `breakroom-server migrate` on every start.)
+container runs `beebreak-server migrate` on every start.)
 
 **M4-C03 — Companions A and B signed in, tags chosen.** If the two accounts
 from M3 still exist, start both companions and wait for `Connected as Filip`
 and `Connected as Bea`. Otherwise redo M3-C03 to M3-C05 first (invites and
 sign-in). If M3-C11 left `Filip` disabled, run
-`docker compose exec server breakroom-admin user enable Filip` and sign A in
+`docker compose exec server beebreak-admin user enable Filip` and sign A in
 again.
 
 Start A with the demo thresholds from M2-C02, so M4-C11 can use it. In T2:
 
 ```
-export BREAKROOM_ACTIVITY_THRESHOLD_S=20
-export BREAKROOM_MIN_TOOL_EVENTS=2
-export BREAKROOM_COOLDOWN_S=45
-export BREAKROOM_SUGGESTION_TIMEOUT_S=30
-export BREAKROOM_STALE_AFTER_S=30
-export BREAKROOM_WAITING_MAX_S=90
-.venv/bin/breakroom-companion
+export BEEBREAK_ACTIVITY_THRESHOLD_S=20
+export BEEBREAK_MIN_TOOL_EVENTS=2
+export BEEBREAK_COOLDOWN_S=45
+export BEEBREAK_SUGGESTION_TIMEOUT_S=30
+export BEEBREAK_STALE_AFTER_S=30
+export BEEBREAK_WAITING_MAX_S=90
+.venv/bin/beebreak-companion
 ```
 
 Start B in T3 as in M3-C05 (`$B_ROOT` with its own `run` and `state`
@@ -165,7 +165,7 @@ nothing else. Both windows show `Connected as ...` and a **Find a break
 partner** button. Check the server stores no tags yet:
 
 ```
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT count(*) FROM queue_entries"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT count(*) FROM queue_entries"
 ```
 
 prints `0` (or only rows from earlier runs): tags stay on the computer until a
@@ -177,8 +177,8 @@ search starts.
 each other click **Find a break partner** in A and in B. Then:
 
 ```
-docker compose exec server breakroom-admin matches
-docker compose exec server breakroom-admin queue list
+docker compose exec server beebreak-admin matches
+docker compose exec server beebreak-admin queue list
 ```
 
 Expect: both windows show `Looking for a break partner…` for a moment, then A
@@ -193,7 +193,7 @@ must not be matched with anyone else at any time.
 **End**.
 
 ```
-docker compose exec server breakroom-admin matches
+docker compose exec server beebreak-admin matches
 ```
 
 Expect: both main windows show `Break ended.`; `matches` prints nothing.
@@ -205,7 +205,7 @@ M4-C04 and End from B; A shows `Break ended.` too.
 **Find a break partner** and watch for about 95 s.
 
 ```
-docker compose exec server breakroom-admin queue list
+docker compose exec server beebreak-admin queue list
 ```
 
 Expect: right after the click `queue list` shows one `Filip` line with
@@ -218,7 +218,7 @@ Click OK; Find returns.
 **M4-C07 — Cancel.** In A click Find, wait 2 s, click **Cancel**.
 
 ```
-docker compose exec server breakroom-admin queue list
+docker compose exec server beebreak-admin queue list
 ```
 
 Expect: within a second of Cancel the window shows the Find button again and
@@ -229,7 +229,7 @@ Ctrl+C in T2 and start it again within 60 s (same command as in M4-C03, in the
 same shell so the demo variables stay set).
 
 ```
-docker compose exec server breakroom-admin queue list
+docker compose exec server beebreak-admin queue list
 ```
 
 Expect: after the restart A goes `Connecting…`, `Connected as Filip`, and then
@@ -251,8 +251,8 @@ docker compose restart server
 Then:
 
 ```
-docker compose exec server breakroom-admin matches
-docker compose exec server breakroom-admin matches | cut -f1,2 | tr '\t' '\n' | sort | uniq -d
+docker compose exec server beebreak-admin matches
+docker compose exec server beebreak-admin matches | cut -f1,2 | tr '\t' '\n' | sort | uniq -d
 ```
 
 Expect: both windows show `Offline – retrying` and then `Connected as ...`
@@ -269,8 +269,8 @@ click **Block**
 and answer **Yes** to `Block this person?`.
 
 ```
-docker compose exec server breakroom-admin block list Bea
-docker compose exec server breakroom-admin matches
+docker compose exec server beebreak-admin block list Bea
+docker compose exec server beebreak-admin matches
 ```
 
 Expect: both windows show `Break ended.`; A shows no hint that it was blocked
@@ -280,8 +280,8 @@ no match is made and both show `Nobody is around right now. Try again later.`
 Change nothing about nicknames; the block is by account. Then:
 
 ```
-docker compose exec server breakroom-admin block remove Bea Filip
-docker compose exec server breakroom-admin block list Bea
+docker compose exec server beebreak-admin block remove Bea Filip
+docker compose exec server beebreak-admin block list Bea
 ```
 
 Expect: `block remove` prints nothing and exits 0 (a second run exits 1 with
@@ -310,23 +310,23 @@ done"` again: **no invitation** appears for the 45 s cooldown after the break
 ended. After the cooldown, another sleep brings an invitation again.
 
 **M4-C12 — MCP: cancel only, no peer data.** In the same T4 session (A
-connected; B available), ask Claude: `Call the breakroom_status tool and show
+connected; B available), ask Claude: `Call the beebreak_status tool and show
 the raw result`. Expect the keys `companion`, `invitation`, `last_event_at`,
 `activity`, `estimate` and `queue`, and `queue` is `none`.
 
 - While A is searching (click Find in A, B idle): ask `Call the
-  breakroom_leave_queue tool and show the raw result`. Expect
+  beebreak_leave_queue tool and show the raw result`. Expect
   `{"result": "cancelled"}`; A's window drops the search (Find is back) and
-  `queue list` is empty within a second. Ask for `breakroom_status` during a
+  `queue list` is empty within a second. Ask for `beebreak_status` during a
   search and expect `queue` `searching`.
-- While A is matched (Find in A and B): ask for `breakroom_leave_queue` again.
+- While A is matched (Find in A and B): ask for `beebreak_leave_queue` again.
   Expect `{"result": "not_searching"}`; the match continues and `matches`
-  still has the line. `breakroom_status` shows `queue` `chatting`.
+  still has the line. `beebreak_status` shows `queue` `chatting`.
 - Neither result contains `Bea`, `python`, a bucket or a tag; Claude has no
-  tool to start a search or end a match (`/mcp` lists `breakroom_status` and
-  `breakroom_leave_queue` only).
+  tool to start a search or end a match (`/mcp` lists `beebreak_status` and
+  `beebreak_leave_queue` only).
 - With A closed (Ctrl+C), the same call returns `companion_not_running` and
-  `breakroom_status` shows `queue` as `null`. Start A again.
+  `beebreak_status` shows `queue` as `null`. Start A again.
 
 ## Privacy and report
 
@@ -349,9 +349,9 @@ entries and both companions idle and connected.
    tag `python`; an ended match keeps none.)
 
 ```
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT shared_tags, shared_category FROM matches"
-echo "access lines (must be > 0): $(docker compose logs server 2>&1 | grep -c breakroom_server.access)"
-echo "queue requests logged (must be > 0): $(docker compose logs server 2>&1 | grep breakroom_server.access | grep -c '/v1/queue')"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT shared_tags, shared_category FROM matches"
+echo "access lines (must be > 0): $(docker compose logs server 2>&1 | grep -c beebreak_server.access)"
+echo "queue requests logged (must be > 0): $(docker compose logs server 2>&1 | grep beebreak_server.access | grep -c '/v1/queue')"
 echo "server logs: $(docker compose logs server 2>&1 | grep -cE 'python|docker|10_20m|5_10m|Filip|Bea|filip@|bea@|bra_|brr_')"
 ```
 

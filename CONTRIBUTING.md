@@ -1,6 +1,6 @@
 # Contributing
 
-Breakroom is pre-beta. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
+Beebreak is pre-beta. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
 decisions marked CONFIRMED are settled, PROPOSED ones are open to discussion.
 Report security problems privately, see [SECURITY.md](SECURITY.md).
 
@@ -26,7 +26,7 @@ uv run ruff format --check . && uv run ruff check . && uv run mypy packages apps
 ```
 
 - ruff does both lint and format, line length 88, configured in `pyproject.toml`.
-- Postgres race and migration tests skip unless `BREAKROOM_TEST_DATABASE_URL`
+- Postgres race and migration tests skip unless `BEEBREAK_TEST_DATABASE_URL`
   points at a database.
 - Unix socket paths must stay under 108 bytes: in tests create socket
   directories with `tempfile.mkdtemp(dir="/tmp")`.

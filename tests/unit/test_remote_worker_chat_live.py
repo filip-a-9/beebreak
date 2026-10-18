@@ -21,11 +21,11 @@ from PySide6.QtCore import Slot
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
-from breakroom_companion.chat_state import ChatState
-from breakroom_companion.credentials import FileCredentialStore
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_server.models import Message
+from beebreak_companion.chat_state import ChatState
+from beebreak_companion.credentials import FileCredentialStore
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_server.models import Message
 from tests.unit.test_remote_worker_live import (
     FAST,
     PRESENCE,

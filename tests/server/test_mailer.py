@@ -11,7 +11,7 @@ from email.message import EmailMessage, Message
 
 import pytest
 
-from breakroom_server.mailer import RecordingMailer, SmtpMailer
+from beebreak_server.mailer import RecordingMailer, SmtpMailer
 
 ADDRESS = "someone.private@example.test"
 CODE = "ABCD2345"
@@ -79,13 +79,13 @@ def _payload(msg: Message) -> str:
 
 
 def test_code_mail_arrives_with_fixed_template(sink: _Sink) -> None:
-    mailer = SmtpMailer("127.0.0.1", _port(sink), "Breakroom <no-reply@breakroom.test>")
+    mailer = SmtpMailer("127.0.0.1", _port(sink), "Beebreak <no-reply@beebreak.test>")
     try:
         mailer.send_code(ADDRESS, CODE)
         msg = sink.received.get(timeout=5)
     finally:
         mailer.close()
-    assert msg["Subject"] == "Your Breakroom sign-in code"
+    assert msg["Subject"] == "Your Beebreak sign-in code"
     assert msg["To"] == ADDRESS
     body = _payload(msg)
     assert "ABCD-2345" in body
@@ -94,7 +94,7 @@ def test_code_mail_arrives_with_fixed_template(sink: _Sink) -> None:
 
 
 def test_invite_mail_carries_the_invite_code(sink: _Sink) -> None:
-    mailer = SmtpMailer("127.0.0.1", _port(sink), "no-reply@breakroom.test")
+    mailer = SmtpMailer("127.0.0.1", _port(sink), "no-reply@beebreak.test")
     try:
         mailer.send_invite(ADDRESS, CODE)
         msg = sink.received.get(timeout=5)
@@ -105,7 +105,7 @@ def test_invite_mail_carries_the_invite_code(sink: _Sink) -> None:
 
 
 def test_close_drains_queued_mail(sink: _Sink) -> None:
-    mailer = SmtpMailer("127.0.0.1", _port(sink), "no-reply@breakroom.test")
+    mailer = SmtpMailer("127.0.0.1", _port(sink), "no-reply@beebreak.test")
     for _ in range(3):
         mailer.send_code(ADDRESS, CODE)
     mailer.close()
@@ -119,11 +119,11 @@ def test_dead_port_drops_mail_without_raising_or_leaking(
         s.bind(("127.0.0.1", 0))
         dead_port = int(s.getsockname()[1])
     caplog.set_level(logging.DEBUG)
-    mailer = SmtpMailer("127.0.0.1", dead_port, "no-reply@breakroom.test", timeout_s=1)
+    mailer = SmtpMailer("127.0.0.1", dead_port, "no-reply@beebreak.test", timeout_s=1)
     mailer.send_code(ADDRESS, CODE)
     mailer.send_invite(ADDRESS, CODE)
     mailer.close()
-    assert any(r.name == "breakroom_server.mailer" for r in caplog.records)
+    assert any(r.name == "beebreak_server.mailer" for r in caplog.records)
     assert ADDRESS not in caplog.text
     assert CODE not in caplog.text
     assert "ABCD-2345" not in caplog.text
@@ -133,7 +133,7 @@ def test_bad_address_is_dropped_quietly(
     sink: _Sink, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.DEBUG)
-    mailer = SmtpMailer("127.0.0.1", _port(sink), "no-reply@breakroom.test")
+    mailer = SmtpMailer("127.0.0.1", _port(sink), "no-reply@beebreak.test")
     mailer.send_code("a@b.test\r\nBcc: evil@x.test", CODE)
     mailer.send_code(ADDRESS, CODE)
     try:
@@ -155,7 +155,7 @@ def test_full_queue_drops_without_raising(
         def _deliver(self, msg: EmailMessage) -> None:
             gate.wait(timeout=5)
 
-    mailer = Blocked("127.0.0.1", 1, "no-reply@breakroom.test")
+    mailer = Blocked("127.0.0.1", 1, "no-reply@beebreak.test")
     try:
         for _ in range(250):
             mailer.send_code(ADDRESS, CODE)
@@ -167,7 +167,7 @@ def test_full_queue_drops_without_raising(
 
 
 def test_send_after_close_does_not_raise() -> None:
-    mailer = SmtpMailer("127.0.0.1", 1, "no-reply@breakroom.test")
+    mailer = SmtpMailer("127.0.0.1", 1, "no-reply@beebreak.test")
     mailer.close()
     mailer.send_code(ADDRESS, CODE)
 
@@ -196,7 +196,7 @@ def test_starttls_verifies_the_server_certificate(
 
     monkeypatch.setattr(smtplib, "SMTP", _RecordingSMTP)
     mailer = SmtpMailer(
-        "127.0.0.1", _port(sink), "Breakroom <no-reply@breakroom.test>", tls="starttls"
+        "127.0.0.1", _port(sink), "Beebreak <no-reply@beebreak.test>", tls="starttls"
     )
     try:
         mailer.send_code(ADDRESS, CODE)

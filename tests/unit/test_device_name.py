@@ -13,13 +13,13 @@ import pytest
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
-from breakroom_companion.credentials import FileCredentialStore
-from breakroom_companion.onboarding import PAGE_CODE, PAGE_NICKNAME, OnboardingDialog
-from breakroom_companion.privacy_preview import PrivacyPreviewDialog
-from breakroom_companion.remote import DEFAULT_DEVICE_NAME, RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_server.models import Device
-from breakroom_shared.api import Consent, Me
+from beebreak_companion.credentials import FileCredentialStore
+from beebreak_companion.onboarding import PAGE_CODE, PAGE_NICKNAME, OnboardingDialog
+from beebreak_companion.privacy_preview import PrivacyPreviewDialog
+from beebreak_companion.remote import DEFAULT_DEVICE_NAME, RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_server.models import Device
+from beebreak_shared.api import Consent, Me
 from tests.fakes.remote_worker import FakeRemoteWorker
 
 if TYPE_CHECKING:

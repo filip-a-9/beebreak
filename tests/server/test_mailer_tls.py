@@ -17,11 +17,11 @@ from typing import Literal
 
 import pytest
 
-from breakroom_server.mailer import SmtpMailer
+from beebreak_server.mailer import SmtpMailer
 
 ADDRESS = "someone.private@example.test"
 CODE = "ABCD2345"
-FROM = "Breakroom <no-reply@breakroom.test>"
+FROM = "Beebreak <no-reply@beebreak.test>"
 PASSWORD = "pw-value-9876"
 
 

@@ -1,7 +1,7 @@
 """Onboarding: the choice between GitHub and email, and the GitHub page.
 
 Part one drives the dialog with a fake worker (no network). Part two signs in
-for real: dialog, RemoteWorker, a live Breakroom server and a fake GitHub.
+for real: dialog, RemoteWorker, a live Beebreak server and a fake GitHub.
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ import pytest
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
-from breakroom_companion.credentials import FileCredentialStore
-from breakroom_companion.onboarding import (
+from beebreak_companion.credentials import FileCredentialStore
+from beebreak_companion.onboarding import (
     ERROR_TEXT,
     PAGE_EMAIL,
     PAGE_GITHUB,
@@ -28,10 +28,10 @@ from breakroom_companion.onboarding import (
     OnboardingDialog,
     safe_verification_uri,
 )
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_server.models import AuthChallenge, BetaInvite, User
-from breakroom_shared.api import AuthMethods, GitHubStartResponse
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_server.models import AuthChallenge, BetaInvite, User
+from beebreak_shared.api import AuthMethods, GitHubStartResponse
 from tests.fakes.remote_worker import FakeRemoteWorker
 from tests.server.github_fake import (
     ACCESS_TOKEN,
@@ -96,7 +96,7 @@ def test_the_dialog_asks_for_the_methods_once_and_starts_on_email(
 
 
 def test_a_dialog_for_a_signed_in_user_does_not_ask(qtbot: QtBot) -> None:
-    from breakroom_shared.api import Me
+    from beebreak_shared.api import Me
 
     worker = FakeRemoteWorker()
     dialog = OnboardingDialog(
@@ -246,7 +246,7 @@ def test_going_back_from_a_waiting_attempt_stops_it(qtbot: QtBot) -> None:
 
 
 def test_a_session_arriving_moves_on_to_the_nickname_page(qtbot: QtBot) -> None:
-    from breakroom_shared.api import Me
+    from beebreak_shared.api import Me
 
     dialog, worker = dialog_with(qtbot)
     worker.push_methods(GITHUB_ONLY)

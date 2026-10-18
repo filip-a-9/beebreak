@@ -10,16 +10,16 @@ from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 
-from breakroom_companion.app import initial_status, setup_remote, wire
-from breakroom_companion.break_state import BreakPhase, BreakState
-from breakroom_companion.config import TriggerConfig
-from breakroom_companion.controller import Controller
-from breakroom_companion.window import CATEGORY_LABELS, TAG_LABELS, CompanionWindow
-from breakroom_companion.worker import IpcWorker
-from breakroom_shared.api import Consent, MatchView, Me, QueueEntryView
-from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import InvitationState
-from breakroom_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
+from beebreak_companion.app import initial_status, setup_remote, wire
+from beebreak_companion.break_state import BreakPhase, BreakState
+from beebreak_companion.config import TriggerConfig
+from beebreak_companion.controller import Controller
+from beebreak_companion.window import CATEGORY_LABELS, TAG_LABELS, CompanionWindow
+from beebreak_companion.worker import IpcWorker
+from beebreak_shared.api import Consent, MatchView, Me, QueueEntryView
+from beebreak_shared.events import NormalizedEvent
+from beebreak_shared.ipc import InvitationState
+from beebreak_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
 from tests.fakes.chat import chat_status
 
 
@@ -440,7 +440,7 @@ def test_invitation_area_still_works_with_the_account_row(
 def test_refused_server_url_leaves_the_companion_running(
     window: CompanionWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_SERVER_URL", "http://example.com")
+    monkeypatch.setenv("BEEBREAK_SERVER_URL", "http://example.com")
     assert setup_remote(window) is None
     assert window.account_label.text() != ""
     assert "ada_l" not in window.account_label.text()
@@ -452,7 +452,7 @@ def test_refused_server_url_leaves_the_companion_running(
 def test_allowed_server_url_builds_a_worker_and_wires_the_row(
     window: CompanionWindow, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_SERVER_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("BEEBREAK_SERVER_URL", "http://127.0.0.1:9")
     worker = setup_remote(window)
     assert worker is not None
     worker.state_changed.emit("connecting")

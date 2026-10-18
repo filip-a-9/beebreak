@@ -9,10 +9,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import func, select
 
-from breakroom_server.admin import main
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import (
+from beebreak_server.admin import main
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import (
     BetaInvite,
     Block,
     Device,
@@ -23,7 +23,7 @@ from breakroom_server.models import (
     Report,
     User,
 )
-from breakroom_server.tokens import hmac_code, normalize_code
+from beebreak_server.tokens import hmac_code, normalize_code
 from tests.server.conftest import (
     START_TIME,
     TEST_SECRET,
@@ -142,7 +142,7 @@ def test_send_without_a_mailer_uses_the_configured_one(
     clock: FixedClock,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_MAILER", "record")
+    monkeypatch.setenv("BEEBREAK_MAILER", "record")
     assert run(["invite", "create", EMAIL, "--send"], clock) == 0
     assert normalize_code(capsys.readouterr().out.strip()) is not None
 
@@ -158,7 +158,7 @@ def test_missing_config_exits_2(
     clock: FixedClock,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.delenv("BREAKROOM_SERVER_SECRET")
+    monkeypatch.delenv("BEEBREAK_SERVER_SECRET")
     assert run(["invite", "list"], clock) == 2
     assert capsys.readouterr().out == ""
 
@@ -168,7 +168,7 @@ def test_database_without_schema_exits_1_without_traceback(
     clock: FixedClock,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", "sqlite://")
     assert run(["invite", "list"], clock) == 1
     captured = capsys.readouterr()
     assert "Traceback" not in captured.err and captured.out == ""

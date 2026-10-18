@@ -8,7 +8,7 @@ M0 was done except CI. The checks were run by hand.
 
 ## Decision
 GitHub Actions runs ruff format and check, mypy, and pytest with a Postgres
-service (`BREAKROOM_TEST_DATABASE_URL`) and Qt offscreen. It gates merges to
+service (`BEEBREAK_TEST_DATABASE_URL`) and Qt offscreen. It gates merges to
 `main` once branch protection requires the `checks` status.
 
 ## Alternatives

@@ -4,10 +4,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
-from breakroom_companion.activity import SessionActivity
-from breakroom_companion.config import TriggerConfig
-from breakroom_companion.decision import Decision, DecisionResult, HeuristicEngine
-from breakroom_shared.ipc import ActivityState
+from beebreak_companion.activity import SessionActivity
+from beebreak_companion.config import TriggerConfig
+from beebreak_companion.decision import Decision, DecisionResult, HeuristicEngine
+from beebreak_shared.ipc import ActivityState
 
 NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 CFG = TriggerConfig(activity_threshold_s=60, min_tool_events=2)

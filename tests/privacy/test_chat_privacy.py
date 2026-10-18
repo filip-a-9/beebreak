@@ -6,7 +6,7 @@ recording notifier. Canary bodies and a canary report note are used throughout.
 
 Scanned for canaries: every log record (server and companion, DEBUG), every
 notifier call, every `StatusReply` the companion would answer and every MCP
-`breakroom_status` result (these two also for nicknames), and finally the
+`beebreak_status` result (these two also for nicknames), and finally the
 database after the retention purges: bodies are gone after
 `message_retention_s`, and nothing at all remains after `report_retention_s`
 past a report's resolution.
@@ -27,19 +27,19 @@ from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select, update
 
-from breakroom_agent_bridge.mcp_server import build_server
-from breakroom_companion.app import BreakTracker, initial_status, wire_chat
-from breakroom_companion.break_state import BreakState
-from breakroom_companion.chat_window import ChatWindow
-from breakroom_companion.config import TriggerConfig
-from breakroom_companion.controller import Controller
-from breakroom_companion.desktop_notify import DesktopNotifier
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.state_store import FileStateStore
-from breakroom_companion.window import CompanionWindow
-from breakroom_server.matchmaking import Matchmaker
-from breakroom_server.models import Report, ReportMessage
-from breakroom_shared.presence import build_presence
+from beebreak_agent_bridge.mcp_server import build_server
+from beebreak_companion.app import BreakTracker, initial_status, wire_chat
+from beebreak_companion.break_state import BreakState
+from beebreak_companion.chat_window import ChatWindow
+from beebreak_companion.config import TriggerConfig
+from beebreak_companion.controller import Controller
+from beebreak_companion.desktop_notify import DesktopNotifier
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.state_store import FileStateStore
+from beebreak_companion.window import CompanionWindow
+from beebreak_server.matchmaking import Matchmaker
+from beebreak_server.models import Report, ReportMessage
+from beebreak_shared.presence import build_presence
 from tests.e2e_support.server import LiveServer
 from tests.privacy.test_outbound_leaks import (
     ALL_CONSENT,
@@ -104,7 +104,7 @@ class Side:
 
         async def call() -> dict[str, Any]:
             async with Client(build_server(lambda: reply)) as client:
-                result = await client.call_tool("breakroom_status", {})
+                result = await client.call_tool("beebreak_status", {})
                 assert not result.is_error and result.structured_content
                 return dict(result.structured_content)
 
@@ -326,8 +326,8 @@ def test_the_detector_sees_canaries_in_each_chat_channel(
     caplog.set_level(logging.DEBUG)
     worker, rec = worker_factory(live_server.port)
     side = make_side(qtbot, tmp_path, "d", worker, rec)
-    side.notifier.notify("Breakroom", f"New message from {A1}")
-    logging.getLogger("breakroom_companion.test").warning("body %s", A1)
+    side.notifier.notify("Beebreak", f"New message from {A1}")
+    logging.getLogger("beebreak_companion.test").warning("body %s", A1)
     side.replies.append(f'{{"queue": "{A1}", "nick": "{ADA}"}}')
     notified = [f"{t} {x}".encode() for t, x in side.notifier.calls]
     channels = {

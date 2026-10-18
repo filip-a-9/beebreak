@@ -1,0 +1,437 @@
+"""ORM models: accounts, invites, sign-in challenges, devices (M3-01); queue
+entries, matches and blocks (M4-01); chat messages and reports (M5-01).
+
+Primary keys are UUIDs generated in Python. Every timestamp is an aware UTC
+datetime: `timestamptz` on PostgreSQL, and the `UtcDateTime` decorator keeps
+SQLite (which stores naive text) honest. No model reads the wall clock; callers
+pass the injected clock's time explicitly.
+"""
+
+import uuid
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any, get_args
+
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    MetaData,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    text,
+)
+from sqlalchemy.engine import Dialect
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
+
+from beebreak_shared.api import ReportReason
+from beebreak_shared.presence import StackTag
+
+MAX_EMAIL_LENGTH = 254
+
+
+def email_canonical(raw: str) -> str | None:
+    """Lower-cased, trimmed address, or None if it cannot be an address.
+
+    Deliberately shallow (no DNS, no RFC 5322 parser): exactly one `@`, a
+    non-empty local part, a domain with an inner dot, no whitespace, and at most
+    254 characters.
+    """
+    email = raw.strip().lower()
+    if not email or len(email) > MAX_EMAIL_LENGTH:
+        return None
+    if any(c.isspace() or not c.isprintable() for c in email):
+        return None
+    if email.count("@") != 1:
+        return None
+    local, domain = email.split("@")
+    if not local or "." not in domain:
+        return None
+    if domain.startswith(".") or domain.endswith("."):
+        return None
+    return email
+
+
+class UtcDateTime(TypeDecorator[datetime]):
+    """`timestamptz` that only accepts and only returns aware UTC datetimes."""
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> Any:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("naive datetime; timestamps must be timezone-aware")
+        return value.astimezone(UTC)
+
+    def process_result_value(
+        self, value: datetime | None, dialect: Dialect
+    ) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+
+class Base(DeclarativeBase):
+    metadata = MetaData(
+        naming_convention={
+            "ix": "ix_%(column_0_label)s",
+            "uq": "uq_%(table_name)s_%(column_0_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+            "pk": "pk_%(table_name)s",
+        }
+    )
+    type_annotation_map = {  # noqa: RUF012
+        datetime: UtcDateTime,
+        uuid.UUID: Uuid,
+        bytes: LargeBinary,
+    }
+
+
+def _uuid_pk() -> Mapped[uuid.UUID]:
+    return mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'disabled')", name="status"),
+        CheckConstraint(
+            "email_canonical IS NOT NULL OR github_id IS NOT NULL", name="identity"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # An account is either email or GitHub (no linking in the beta).
+    email_canonical: Mapped[str | None] = mapped_column(
+        String(MAX_EMAIL_LENGTH), unique=True, default=None
+    )
+    # GitHub's numeric user id: the only thing kept about a GitHub identity.
+    github_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, default=None)
+    nickname: Mapped[str | None] = mapped_column(String(24), default=None)
+    nickname_skeleton: Mapped[str | None] = mapped_column(
+        String(24), unique=True, default=None
+    )
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime]
+
+
+class BetaInvite(Base):
+    __tablename__ = "beta_invites"
+    __table_args__ = (
+        # Exactly one identity: an email (with a code) or a GitHub id (no code).
+        CheckConstraint(
+            "(email_canonical IS NULL) <> (github_id IS NULL)", name="identity"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    email_canonical: Mapped[str | None] = mapped_column(
+        String(MAX_EMAIL_LENGTH), default=None
+    )
+    github_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    code_hmac: Mapped[bytes | None] = mapped_column(
+        LargeBinary(32), unique=True, default=None
+    )
+    expires_at: Mapped[datetime]
+    redeemed_at: Mapped[datetime | None] = mapped_column(default=None)
+    redeemed_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), default=None
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(default=None)
+    created_at: Mapped[datetime]
+
+
+class DeletedAccountTombstone(Base):
+    """Keyed hash of the identity of a disabled account that was then deleted.
+
+    The identity is the canonical email, or "github:<id>" for a GitHub account;
+    the column keeps its old name. Exists only for disabled accounts, so it
+    carries no flag. No email, no GitHub id, no user reference.
+    """
+
+    __tablename__ = "deleted_account_tombstones"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    email_hmac: Mapped[bytes] = mapped_column(LargeBinary(32), unique=True)
+    created_at: Mapped[datetime]
+
+
+class AuthChallenge(Base):
+    __tablename__ = "auth_challenges"
+    __table_args__ = (
+        CheckConstraint("attempts >= 0", name="attempts_nonneg"),
+        # An email challenge (address and code hash) or a GitHub one (interval).
+        CheckConstraint(
+            "(email_canonical IS NOT NULL AND code_hmac IS NOT NULL) "
+            "OR github_interval_s IS NOT NULL",
+            name="method",
+        ),
+        Index("ix_auth_challenges_email_consumed", "email_canonical", "consumed_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    email_canonical: Mapped[str | None] = mapped_column(
+        String(MAX_EMAIL_LENGTH), default=None
+    )
+    code_hmac: Mapped[bytes | None] = mapped_column(LargeBinary(32), default=None)
+    # GitHub device flow (migration 0005). The device code is a short-lived
+    # secret: set on start, cleared when the challenge is consumed or purged.
+    github_device_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    github_interval_s: Mapped[int | None] = mapped_column(default=None)
+    github_next_poll_at: Mapped[datetime | None] = mapped_column(default=None)
+    invite_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("beta_invites.id"), default=None
+    )
+    expires_at: Mapped[datetime]
+    attempts: Mapped[int] = mapped_column(default=0)
+    consumed_at: Mapped[datetime | None] = mapped_column(default=None)
+    created_at: Mapped[datetime]
+
+
+class Device(Base):
+    __tablename__ = "devices"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(40))
+    access_hash: Mapped[bytes | None] = mapped_column(
+        LargeBinary(32), unique=True, default=None
+    )
+    access_expires_at: Mapped[datetime | None] = mapped_column(default=None)
+    revoked_at: Mapped[datetime | None] = mapped_column(default=None)
+    created_at: Mapped[datetime]
+    last_seen_at: Mapped[datetime | None] = mapped_column(default=None)
+    connected_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    token_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    device_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("devices.id"), index=True)
+    expires_at: Mapped[datetime]
+    used_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class UserPreference(Base):
+    __tablename__ = "user_preferences"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    consent_version: Mapped[int]
+    share_task_category: Mapped[bool] = mapped_column(default=False)
+    share_stack_tags: Mapped[bool] = mapped_column(default=False)
+    share_time_bucket: Mapped[bool] = mapped_column(default=False)
+    consented_at: Mapped[datetime]
+
+
+# --- matchmaking (M4-01) ---------------------------------------------------
+
+_STACK_TAGS: tuple[StackTag, ...] = get_args(StackTag)
+
+
+def join_tags(tags: Iterable[str]) -> str | None:
+    """Vocabulary tags, comma-joined in vocabulary order; None when empty."""
+    wanted = set(tags)
+    kept = [t for t in _STACK_TAGS if t in wanted]
+    return ",".join(kept) if kept else None
+
+
+def split_tags(raw: str | None) -> tuple[StackTag, ...]:
+    """The stored tags back as vocabulary values; unknown values are dropped."""
+    if not raw:
+        return ()
+    stored = set(raw.split(","))
+    return tuple(t for t in _STACK_TAGS if t in stored)
+
+
+MATCH_END_REASONS = (
+    "ended",
+    "blocked",
+    "expired",
+    "disabled",
+    "disconnected",
+    "reported",
+)
+
+
+def _in(column: str, values: Iterable[str]) -> str:
+    return f"{column} IN ({', '.join(repr(v) for v in values)})"
+
+
+class Match(Base):
+    """A match is also the chat (M5): the chat columns live here."""
+
+    __tablename__ = "matches"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'ended')", name="status"),
+        CheckConstraint(_in("end_reason", MATCH_END_REASONS), name="end_reason"),
+        CheckConstraint("extensions_used >= 0", name="extensions_used_nonneg"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime]
+    ends_at: Mapped[datetime]
+    ended_at: Mapped[datetime | None] = mapped_column(default=None)
+    end_reason: Mapped[str | None] = mapped_column(String(16), default=None)
+    shared_tags: Mapped[str | None] = mapped_column(String(200), default=None)
+    shared_category: Mapped[str | None] = mapped_column(String(16), default=None)
+    # Chat (M5-01).
+    extensions_used: Mapped[int] = mapped_column(default=0)
+    extension_requested_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), default=None
+    )
+    last_seq: Mapped[int] = mapped_column(default=0)
+
+
+class QueueEntry(Base):
+    __tablename__ = "queue_entries"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'matched', 'cancelled', 'expired')", name="status"
+        ),
+        UniqueConstraint(
+            "user_id", "idempotency_key", name="uq_queue_entries_user_idempotency"
+        ),
+        # One queued entry per user, enforced by the database (not the matcher).
+        Index(
+            "uq_queue_entries_user_queued",
+            "user_id",
+            unique=True,
+            postgresql_where=text("status = 'queued'"),
+            sqlite_where=text("status = 'queued'"),
+        ),
+        Index("ix_queue_entries_status_expires", "status", "expires_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    device_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("devices.id"))
+    idempotency_key: Mapped[uuid.UUID]
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    # Presence fields: nulled as soon as the entry ends (retention, spec §10).
+    presence_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    task_category: Mapped[str | None] = mapped_column(String(16), default=None)
+    stack_tags: Mapped[str | None] = mapped_column(String(200), default=None)
+    remaining_time_bucket: Mapped[str | None] = mapped_column(String(16), default=None)
+    admitted_at: Mapped[datetime]
+    expires_at: Mapped[datetime]
+    ended_at: Mapped[datetime | None] = mapped_column(default=None)
+    match_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("matches.id"), default=None
+    )
+
+
+class MatchParticipant(Base):
+    __tablename__ = "match_participants"
+    __table_args__ = (
+        # One active match per user, enforced by the database.
+        Index(
+            "uq_match_participants_user_active",
+            "user_id",
+            unique=True,
+            postgresql_where=text("active"),
+            sqlite_where=text("active"),
+        ),
+    )
+
+    match_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("matches.id"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    active: Mapped[bool] = mapped_column(default=True)
+    # Chat (M5-01): set by the sweep while no device of the user is connected.
+    offline_since: Mapped[datetime | None] = mapped_column(default=None)
+    # Kept after the bodies are purged (spec §13 metric).
+    messages_sent: Mapped[int] = mapped_column(default=0)
+
+
+class Block(Base):
+    __tablename__ = "blocks"
+    __table_args__ = (CheckConstraint("blocker_id <> blocked_id", name="not_self"),)
+
+    blocker_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), primary_key=True
+    )
+    blocked_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), primary_key=True
+    )
+    created_at: Mapped[datetime]
+
+
+# --- chat and reports (M5-01) -----------------------------------------------
+
+REPORT_REASONS: tuple[ReportReason, ...] = get_args(ReportReason)
+REPORT_STATUSES = ("open", "dismissed", "actioned")
+REPORT_AUTHORS = ("reporter", "reported")
+
+
+class Message(Base):
+    """A chat message. Bodies are deleted `message_retention_s` after the end."""
+
+    __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint("seq >= 1", name="seq_positive"),
+        UniqueConstraint(
+            "author_id", "client_message_id", name="uq_messages_author_client_id"
+        ),
+    )
+
+    match_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("matches.id", ondelete="CASCADE"), primary_key=True
+    )
+    seq: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    author_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    client_message_id: Mapped[uuid.UUID]
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime]
+
+
+class Report(Base):
+    """A user's report about a chat peer. No foreign key to the match: the
+    30-day match purge must not touch it."""
+
+    __tablename__ = "reports"
+    __table_args__ = (
+        CheckConstraint(_in("status", REPORT_STATUSES), name="status"),
+        CheckConstraint(_in("reason", REPORT_REASONS), name="reason"),
+        CheckConstraint("reporter_id <> reported_id", name="not_self"),
+        UniqueConstraint("reporter_id", "match_id", name="uq_reports_reporter_match"),
+        Index("ix_reports_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    reporter_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    reported_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    match_id: Mapped[uuid.UUID]
+    reason: Mapped[str] = mapped_column(String(16))
+    note: Mapped[str | None] = mapped_column(String(2000), default=None)
+    status: Mapped[str] = mapped_column(String(16), default="open")
+    created_at: Mapped[datetime]
+    resolved_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class ReportMessage(Base):
+    """A copy of one message the reporter ticked as evidence."""
+
+    __tablename__ = "report_messages"
+    __table_args__ = (CheckConstraint(_in("author", REPORT_AUTHORS), name="author"),)
+
+    report_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("reports.id", ondelete="CASCADE"), primary_key=True
+    )
+    seq: Mapped[int] = mapped_column(primary_key=True, autoincrement=False)
+    author: Mapped[str] = mapped_column(String(16))
+    body: Mapped[str] = mapped_column(Text)
+    sent_at: Mapped[datetime]

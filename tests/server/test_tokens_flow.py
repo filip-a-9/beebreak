@@ -8,13 +8,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from breakroom_server.app import create_app
-from breakroom_server.auth import authenticate_access
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import Device, RefreshToken, User
-from breakroom_server.tokens import hash_token
+from beebreak_server.app import create_app
+from beebreak_server.auth import authenticate_access
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import Device, RefreshToken, User
+from beebreak_server.tokens import hash_token
 from tests.server.conftest import START_TIME, FixedClock, bearer, sign_in
 
 UNAUTHORIZED = {"error": "unauthorized"}

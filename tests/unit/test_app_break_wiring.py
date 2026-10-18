@@ -10,20 +10,20 @@ import pytest
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
-from breakroom_companion.app import (
+from beebreak_companion.app import (
     BreakTracker,
     initial_status,
     wire,
     wire_break,
 )
-from breakroom_companion.break_state import BreakPhase, BreakState
-from breakroom_companion.config import TriggerConfig
-from breakroom_companion.controller import Controller
-from breakroom_companion.state_store import FileStateStore
-from breakroom_companion.window import CompanionWindow
-from breakroom_companion.worker import IpcWorker
-from breakroom_shared.api import Consent, MatchView, Me, QueueEntryView
-from breakroom_shared.events import EventType, NormalizedEvent
+from beebreak_companion.break_state import BreakPhase, BreakState
+from beebreak_companion.config import TriggerConfig
+from beebreak_companion.controller import Controller
+from beebreak_companion.state_store import FileStateStore
+from beebreak_companion.window import CompanionWindow
+from beebreak_companion.worker import IpcWorker
+from beebreak_shared.api import Consent, MatchView, Me, QueueEntryView
+from beebreak_shared.events import EventType, NormalizedEvent
 from tests.fakes.chat import chat_status
 from tests.fakes.remote_worker import FakeRemoteWorker
 

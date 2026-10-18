@@ -26,14 +26,14 @@ services:
     # postgres:17
     image: postgres@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
     environment:
-      POSTGRES_USER: breakroom
+      POSTGRES_USER: beebreak
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: breakroom
+      POSTGRES_DB: beebreak
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks: [backend]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U breakroom -d breakroom"]
+      test: ["CMD-SHELL", "pg_isready -U beebreak -d beebreak"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -45,11 +45,11 @@ services:
     logging: *logging
     # Runs the image `server` builds. No `build:` here, so it is built once;
     # `never` makes compose wait for that local build instead of pulling.
-    image: breakroom-server:prod
+    image: beebreak-server:prod
     pull_policy: never
-    command: ["breakroom-server", "migrate"]
+    command: ["beebreak-server", "migrate"]
     environment:
-      BREAKROOM_DATABASE_URL: postgresql+psycopg://breakroom:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/breakroom
+      BEEBREAK_DATABASE_URL: postgresql+psycopg://beebreak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/beebreak
     depends_on:
       postgres:
         condition: service_healthy
@@ -58,29 +58,29 @@ services:
 
   server:
     logging: *logging
-    image: breakroom-server:prod
+    image: beebreak-server:prod
     # Always build locally; never look this name up in a registry.
     pull_policy: build
     build:
       context: .
       dockerfile: apps/server/Dockerfile
     environment:
-      BREAKROOM_DATABASE_URL: postgresql+psycopg://breakroom:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/breakroom
-      BREAKROOM_SERVER_SECRET: ${BREAKROOM_SERVER_SECRET:?set BREAKROOM_SERVER_SECRET in .env}
-      # Email codes are off when BREAKROOM_SMTP_HOST is empty (GitHub-only); the
-      # server then needs BREAKROOM_GITHUB_CLIENT_ID and ignores the SMTP values.
-      BREAKROOM_SMTP_HOST: ${BREAKROOM_SMTP_HOST:-}
-      BREAKROOM_SMTP_PORT: ${BREAKROOM_SMTP_PORT:-587}
-      BREAKROOM_SMTP_USERNAME: ${BREAKROOM_SMTP_USERNAME:-}
-      BREAKROOM_SMTP_PASSWORD: ${BREAKROOM_SMTP_PASSWORD:-}
-      BREAKROOM_SMTP_TLS: ${BREAKROOM_SMTP_TLS:-starttls}
-      BREAKROOM_MAIL_FROM: ${BREAKROOM_MAIL_FROM:-Breakroom <no-reply@breakroom.local>}
-      BREAKROOM_GITHUB_CLIENT_ID: ${BREAKROOM_GITHUB_CLIENT_ID:-}
+      BEEBREAK_DATABASE_URL: postgresql+psycopg://beebreak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/beebreak
+      BEEBREAK_SERVER_SECRET: ${BEEBREAK_SERVER_SECRET:?set BEEBREAK_SERVER_SECRET in .env}
+      # Email codes are off when BEEBREAK_SMTP_HOST is empty (GitHub-only); the
+      # server then needs BEEBREAK_GITHUB_CLIENT_ID and ignores the SMTP values.
+      BEEBREAK_SMTP_HOST: ${BEEBREAK_SMTP_HOST:-}
+      BEEBREAK_SMTP_PORT: ${BEEBREAK_SMTP_PORT:-587}
+      BEEBREAK_SMTP_USERNAME: ${BEEBREAK_SMTP_USERNAME:-}
+      BEEBREAK_SMTP_PASSWORD: ${BEEBREAK_SMTP_PASSWORD:-}
+      BEEBREAK_SMTP_TLS: ${BEEBREAK_SMTP_TLS:-starttls}
+      BEEBREAK_MAIL_FROM: ${BEEBREAK_MAIL_FROM:-Beebreak <no-reply@beebreak.local>}
+      BEEBREAK_GITHUB_CLIENT_ID: ${BEEBREAK_GITHUB_CLIENT_ID:-}
       # Believe X-Forwarded-For only from Caddy's fixed address (not the whole
       # subnet, which also holds the Docker gateway at .1).
-      BREAKROOM_TRUSTED_PROXIES: 172.29.7.10/32
+      BEEBREAK_TRUSTED_PROXIES: 172.29.7.10/32
       # One JSON object per line on stderr (`docker compose logs server`).
-      BREAKROOM_LOG_FORMAT: json
+      BEEBREAK_LOG_FORMAT: json
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -104,7 +104,7 @@ services:
     # caddy:2.10
     image: caddy@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
     environment:
-      BREAKROOM_PUBLIC_HOST: ${BREAKROOM_PUBLIC_HOST:?set BREAKROOM_PUBLIC_HOST in .env}
+      BEEBREAK_PUBLIC_HOST: ${BEEBREAK_PUBLIC_HOST:?set BEEBREAK_PUBLIC_HOST in .env}
     ports:
       - "80:80"
       - "443:443"

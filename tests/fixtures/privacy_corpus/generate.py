@@ -1,4 +1,4 @@
-"""Regenerates v1.json. Run: python -m tests.fixtures.privacy_corpus.generate PATH
+"""Regenerates v2.json, the current version. Run: python -m tests.fixtures.privacy_corpus.generate PATH
 
 A test regenerates the corpus and compares it byte for byte, so editing either
 the values here or the JSON alone fails; change both and bump the version.
@@ -12,7 +12,7 @@ import urllib.parse
 
 from tests.fixtures.privacy_corpus.scan import HOMOGLYPHS
 
-M = "breakroom-canary"
+M = "beebreak-canary"
 BASE = {
     "api_key": [
         f"sk-{M}-0001-9f8e7d6c5b4a39281706",
@@ -117,7 +117,7 @@ def build() -> str:
                         "value": x,
                     }
                 )
-    data = {"version": 1, "marker": M, "values": vals}
+    data = {"version": 2, "marker": M, "values": vals}
     return json.dumps(data, indent=1, ensure_ascii=False) + "\n"
 
 

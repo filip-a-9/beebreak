@@ -49,7 +49,7 @@ def _run(
     args: list[str],
     tmp_path: Path,
     bin_dir: Path | None = None,
-    project: str | None = "breakroom-test",
+    project: str | None = "beebreak-test",
     **extra: str,
 ) -> subprocess.CompletedProcess[str]:
     import base64
@@ -114,7 +114,7 @@ def test_backup_writes_a_dated_0600_file_and_reports_size_and_checksum(
     result = _run(BACKUP, ["--out-dir", str(out)], tmp_path, fake_docker)
     assert result.returncode == 0, result.stderr
     (dump,) = list(out.iterdir())
-    assert dump.name.startswith("breakroom-") and dump.suffix == ".dump"
+    assert dump.name.startswith("beebreak-") and dump.suffix == ".dump"
     assert stat.S_IMODE(dump.stat().st_mode) == 0o600
     assert dump.read_bytes() == DUMP_BYTES
     assert hashlib.sha256(DUMP_BYTES).hexdigest() in result.stdout
@@ -144,7 +144,7 @@ def test_backup_rejects_an_unknown_flag(tmp_path: Path) -> None:
 
 
 def _backup_file(tmp_path: Path) -> Path:
-    path = tmp_path / "breakroom-test.dump"
+    path = tmp_path / "beebreak-test.dump"
     path.write_bytes(DUMP_BYTES)
     return path
 
@@ -180,7 +180,7 @@ def test_restore_into_an_empty_database_restores_migrates_then_purges(
         return next(i for i, call in enumerate(calls) if needle in call)
 
     assert (
-        at(" stop ") < at("pg_restore") < at(" migrate") < at("breakroom-server purge")
+        at(" stop ") < at("pg_restore") < at(" migrate") < at("beebreak-server purge")
     )
     assert "drop schema" not in " ".join(calls)  # nothing to drop in a fresh one
     assert "purge" in result.stdout.lower()
@@ -243,7 +243,7 @@ def test_runbook_keeps_the_undecided_placeholders_and_the_appeal_time() -> None:
 def test_compose_prod_logs_json_and_checks_health() -> None:
     text = (ROOT / "compose.prod.yaml").read_text()
     server = text.split("\n  server:\n")[1].split("\n  caddy:\n")[0]
-    assert "BREAKROOM_LOG_FORMAT: json" in server
+    assert "BEEBREAK_LOG_FORMAT: json" in server
     health = server.split("healthcheck:")[1]
     assert "/v1/health" in health
 
@@ -256,13 +256,13 @@ def test_every_compose_service_rotates_its_logs() -> None:
             name: "x"
             for name in (
                 "POSTGRES_PASSWORD",
-                "BREAKROOM_SERVER_SECRET",
-                "BREAKROOM_SMTP_HOST",
-                "BREAKROOM_SMTP_PORT",
-                "BREAKROOM_SMTP_USERNAME",
-                "BREAKROOM_SMTP_PASSWORD",
-                "BREAKROOM_MAIL_FROM",
-                "BREAKROOM_PUBLIC_HOST",
+                "BEEBREAK_SERVER_SECRET",
+                "BEEBREAK_SMTP_HOST",
+                "BEEBREAK_SMTP_PORT",
+                "BEEBREAK_SMTP_USERNAME",
+                "BEEBREAK_SMTP_PASSWORD",
+                "BEEBREAK_MAIL_FROM",
+                "BEEBREAK_PUBLIC_HOST",
             )
         },
     }
