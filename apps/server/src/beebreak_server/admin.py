@@ -203,6 +203,8 @@ def _mailer_from(config: ServerConfig) -> Mailer:
         tls=config.smtp_tls,
         username=config.smtp_username,
         password=config.smtp_password,
+        timeout_s=config.smtp_timeout_s,
+        code_ttl_s=config.code_ttl_s,
     )
 
 

@@ -7,6 +7,7 @@ numbers instead of falling back, so a misconfigured server refuses to start.
 import base64
 import binascii
 import ipaddress
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -15,6 +16,7 @@ from urllib.parse import urlsplit
 from sqlalchemy.engine import make_url
 
 from beebreak_server.logging_config import LOG_FORMATS
+from beebreak_shared.api import MAX_WS_FRAME_BYTES
 
 MIN_SECRET_BYTES = 32
 MAILER_KINDS = ("smtp", "record")
@@ -127,8 +129,8 @@ def _positive_float(name: str, default: float) -> float:
         value = float(raw)
     except ValueError:
         raise ValueError(f"{name} must be a number") from None
-    if not value > 0:
-        raise ValueError(f"{name} must be positive")
+    if not 0 < value < math.inf:
+        raise ValueError(f"{name} must be positive and finite")
     return value
 
 
@@ -208,7 +210,9 @@ class ServerConfig:
     tombstone_retention_s: int = 31_536_000  # deleted disabled accounts, 365 days
     # Sign-in, refresh and queue abuse limits (M6-05).
     rate_verify_email: int = 10  # failed verifies per email per rate_window_s
-    refresh_grace_s: int = 30  # a just-rotated refresh token is accepted again
+    # A just-rotated refresh token is accepted again for this long. 90 s covers
+    # the companion's reconnect_max_s (60) + its HTTP timeout (10) + margin.
+    refresh_grace_s: int = 90
     rate_queue_action_user: int = 60  # queue DELETE, end, block per rate_window_s
     rate_queue_read_user: int = 300  # queue GET per rate_window_s
     matches_per_window_user: int = 10  # matches a user may join per rate_window_s
@@ -232,6 +236,27 @@ class ServerConfig:
     max_body_bytes: int = 16 * 1024
     # The matchmaker purge runs at most this often (injected-clock seconds).
     purge_interval_s: int = 60
+    # WebSocket and connection limits (review R1).
+    ws_max_message_bytes: int = 8192  # uvicorn's frame cap; above the 4 KiB client cap
+    # Open /v1/realtime sockets, authenticated or not, before new ones are
+    # refused. In the app, not uvicorn's limit_concurrency: that one never refuses
+    # an upgrade yet counts open sockets, so it would starve plain HTTP instead.
+    ws_max_connections: int = 500
+    # Connects to /v1/realtime per address per rate_window_s. A companion backing
+    # off after failures draws each wait from uniform(1, cap), cap doubling to
+    # 60 s, so it averages about 34 connects in 900 s.
+    rate_ws_connect_ip: int = 120
+    ws_flood_frames: int = 20  # client frames per ws_flood_window_s before 4429
+    ws_flood_window_s: float = 10.0
+    ws_outbound_max: int = 64  # frames queued per socket; overflow closes 4429
+    last_seen_interval_s: int = 60  # at most one last_seen_at write per device
+    smtp_timeout_s: float = 10
+    # Per-user reads and writes, per rate_window_s. Companion rates: /v1/me once
+    # per connection attempt (at most ~21 per window), a history page per gap
+    # fill, nickname and consent only on user action.
+    rate_messages_read_user: int = 300
+    rate_me_read_user: int = 120
+    rate_me_write_user: int = 30
 
     @property
     def email_enabled(self) -> bool:
@@ -290,6 +315,17 @@ class ServerConfig:
             "purge_interval_s",
             "github_timeout_s",
             "rate_github_poll_ip",
+            "ws_max_message_bytes",
+            "ws_max_connections",
+            "rate_ws_connect_ip",
+            "ws_flood_frames",
+            "ws_flood_window_s",
+            "ws_outbound_max",
+            "last_seen_interval_s",
+            "smtp_timeout_s",
+            "rate_messages_read_user",
+            "rate_me_read_user",
+            "rate_me_write_user",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -297,6 +333,8 @@ class ServerConfig:
             raise ValueError("report_window_s must not exceed message_retention_s")
         if self.retention_s < self.rematch_penalty_s:
             raise ValueError("retention_s must not be below rematch_penalty_s")
+        if self.ws_max_message_bytes <= MAX_WS_FRAME_BYTES:
+            raise ValueError("ws_max_message_bytes must exceed the client frame cap")
         if self.chat_max_extensions < 0:
             raise ValueError("chat_max_extensions must not be negative")
         if self.log_format not in LOG_FORMATS:
@@ -321,9 +359,10 @@ class ServerConfig:
                 "(email codes) or BEEBREAK_GITHUB_CLIENT_ID (GitHub)"
             )
         reject_weak_database_url(self.database_url)
-        for value in (self.smtp_username, self.smtp_password):
-            if value in EXAMPLE_VALUES:
-                raise ValueError("an SMTP credential is still the example value")
+        if self.email_enabled:  # a GitHub-only server never uses SMTP credentials
+            for value in (self.smtp_username, self.smtp_password):
+                if value in EXAMPLE_VALUES:
+                    raise ValueError("an SMTP credential is still the example value")
 
     @classmethod
     def from_env(cls) -> "ServerConfig":
@@ -380,7 +419,7 @@ class ServerConfig:
                 "BEEBREAK_TOMBSTONE_RETENTION_S", 31_536_000
             ),
             rate_verify_email=_positive("BEEBREAK_RATE_VERIFY_EMAIL", 10),
-            refresh_grace_s=_positive("BEEBREAK_REFRESH_GRACE_S", 30),
+            refresh_grace_s=_positive("BEEBREAK_REFRESH_GRACE_S", 90),
             rate_queue_action_user=_positive("BEEBREAK_RATE_QUEUE_ACTION_USER", 60),
             rate_queue_read_user=_positive("BEEBREAK_RATE_QUEUE_READ_USER", 300),
             matches_per_window_user=_positive("BEEBREAK_MATCHES_PER_WINDOW_USER", 10),
@@ -398,4 +437,15 @@ class ServerConfig:
             extension_attempts=_positive("BEEBREAK_EXTENSION_ATTEMPTS", 4),
             max_body_bytes=_positive("BEEBREAK_MAX_BODY_BYTES", 16 * 1024),
             purge_interval_s=_positive("BEEBREAK_PURGE_INTERVAL_S", 60),
+            ws_max_message_bytes=_positive("BEEBREAK_WS_MAX_MESSAGE_BYTES", 8192),
+            ws_max_connections=_positive("BEEBREAK_WS_MAX_CONNECTIONS", 500),
+            rate_ws_connect_ip=_positive("BEEBREAK_RATE_WS_CONNECT_IP", 120),
+            ws_flood_frames=_positive("BEEBREAK_WS_FLOOD_FRAMES", 20),
+            ws_flood_window_s=_positive_float("BEEBREAK_WS_FLOOD_WINDOW_S", 10.0),
+            ws_outbound_max=_positive("BEEBREAK_WS_OUTBOUND_MAX", 64),
+            last_seen_interval_s=_positive("BEEBREAK_LAST_SEEN_INTERVAL_S", 60),
+            smtp_timeout_s=_positive_float("BEEBREAK_SMTP_TIMEOUT_S", 10),
+            rate_messages_read_user=_positive("BEEBREAK_RATE_MESSAGES_READ_USER", 300),
+            rate_me_read_user=_positive("BEEBREAK_RATE_ME_READ_USER", 120),
+            rate_me_write_user=_positive("BEEBREAK_RATE_ME_WRITE_USER", 30),
         )

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from beebreak_server.auth import ApiError, CurrentPrincipal
+from beebreak_server.auth import ApiError, CurrentPrincipal, check_limit
 from beebreak_server.models import User, UserPreference
 from beebreak_server.nickname import NicknameError, skeleton, validate_nickname
 from beebreak_shared.api import CONSENT_VERSION, Consent, Me, NicknameUpdate
@@ -36,6 +36,7 @@ def build_me(session: Session, user_id: uuid.UUID) -> Me:
 
 @router.get("")
 def get_me(request: Request, principal: CurrentPrincipal) -> Me:
+    check_limit(request.app.state.limiters.me_read_user, str(principal.user_id))
     with request.app.state.session_factory() as session:
         return build_me(session, principal.user_id)
 
@@ -44,6 +45,7 @@ def get_me(request: Request, principal: CurrentPrincipal) -> Me:
 def set_nickname(
     request: Request, body: NicknameUpdate, principal: CurrentPrincipal
 ) -> Me:
+    check_limit(request.app.state.limiters.me_write_user, str(principal.user_id))
     try:
         nickname = validate_nickname(body.nickname)
     except NicknameError as err:
@@ -65,6 +67,7 @@ def set_nickname(
 
 @router.put("/consent")
 def set_consent(request: Request, body: Consent, principal: CurrentPrincipal) -> Me:
+    check_limit(request.app.state.limiters.me_write_user, str(principal.user_id))
     now: datetime = request.app.state.clock()
     with request.app.state.session_factory() as session:
         pref = session.get(UserPreference, principal.user_id)

@@ -454,6 +454,8 @@ def test_default_mailer_is_smtp_with_starttls_flag(
             "tls": "starttls",
             "username": None,
             "password": None,
+            "timeout_s": 10,
+            "code_ttl_s": 600,
         }
     ]
 

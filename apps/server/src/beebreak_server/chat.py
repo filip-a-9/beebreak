@@ -342,6 +342,7 @@ def get_messages(
     after_seq: Annotated[int, Query(le=MAX_SEQ)] = 0,
 ) -> MessagePage:
     state = request.app.state
+    check_limit(state.limiters.messages_read_user, str(principal.user_id))
     now: datetime = state.clock()
     with state.session_factory() as session:
         return list_messages(
