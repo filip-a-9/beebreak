@@ -40,6 +40,7 @@ class FakeGitHub:
     expires_in: int = 900
     interval: int = 5
     token: str = ACCESS_TOKEN
+    device_code: str = DEVICE_CODE  # what the device-code request hands out
     users: dict[str, int] = field(default_factory=dict)  # login (lower case) -> id
     token_user_id: int = 4242  # whom GET /user answers for `token`
     device_code_status: int = 200  # force a failure of the device-code request
@@ -125,7 +126,7 @@ class FakeGitHub:
                     self._reply(
                         200,
                         {
-                            "device_code": DEVICE_CODE,
+                            "device_code": fake.device_code,
                             "user_code": USER_CODE,
                             "verification_uri": fake.verification_uri
                             or f"{fake.url}/login/device",
@@ -136,7 +137,7 @@ class FakeGitHub:
                 elif path == "/login/oauth/access_token":
                     if (
                         form.get("client_id") != fake.client_id
-                        or form.get("device_code") != DEVICE_CODE
+                        or form.get("device_code") != fake.device_code
                         or form.get("grant_type")
                         != "urn:ietf:params:oauth:grant-type:device_code"
                     ):

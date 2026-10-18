@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from beebreak_server.config import ServerConfig
+from beebreak_server.models import AuthChallenge
 
 MAX_RESPONSE_BYTES = 64 * 1024
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
@@ -88,10 +89,17 @@ def _positive_int(value: object, limit: int) -> int:
     return value
 
 
-def _text(value: object) -> str:
-    if not isinstance(value, str) or not value or len(value) > 200:
+def _text(value: object, limit: int = 200) -> str:
+    if not isinstance(value, str) or not value or len(value) > limit:
         raise GitHubUnavailable
     return value
+
+
+def _device_code_limit() -> int:
+    """The stored column's length: a longer code could not be saved."""
+    length = AuthChallenge.__table__.c.github_device_code.type.length  # type: ignore[attr-defined]
+    assert isinstance(length, int)
+    return length
 
 
 class GitHubClient:
@@ -121,7 +129,7 @@ class GitHubClient:
         if not uri.startswith(self._oauth + "/"):
             raise GitHubUnavailable
         return DeviceCode(
-            device_code=_text(answer.get("device_code")),
+            device_code=_text(answer.get("device_code"), _device_code_limit()),
             user_code=_text(answer.get("user_code")),
             verification_uri=uri,
             expires_in=_positive_int(answer.get("expires_in"), 3600),

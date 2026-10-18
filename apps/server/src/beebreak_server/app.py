@@ -30,6 +30,7 @@ from beebreak_server.auth import (
     Limiters,
     Refreshed,
     check_limit,
+    client_key,
     logout_device,
     make_limiters,
     poll_github,
@@ -205,11 +206,12 @@ def _default_mailer(config: ServerConfig) -> Mailer:
         tls=config.smtp_tls,
         username=config.smtp_username,
         password=config.smtp_password,
+        timeout_s=config.smtp_timeout_s,
+        code_ttl_s=config.code_ttl_s,
     )
 
 
-def _client_key(request: Request) -> str:
-    return request.client.host if request.client else "-"
+_client_key = client_key
 
 
 async def _notify_hub(request: Request, device_id: uuid.UUID) -> None:

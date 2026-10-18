@@ -280,6 +280,7 @@ def test_serve_runs_uvicorn_factory_on_loopback(
                 "log_config": LOG_CONFIG,
                 "proxy_headers": False,
                 "forwarded_allow_ips": None,
+                "ws_max_size": 8192,
             },
         )
     ]

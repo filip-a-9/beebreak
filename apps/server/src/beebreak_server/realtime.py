@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
-from beebreak_server.auth import Principal, authenticate_access
+from beebreak_server.auth import Principal, authenticate_access, client_key
 from beebreak_server.config import ServerConfig
 from beebreak_server.db import SessionFactory
 from beebreak_server.models import Device, Match, MatchParticipant, User
@@ -45,11 +45,8 @@ from beebreak_shared.api import (
 
 _log = logging.getLogger(__name__)
 
-# Frame flood limit: more than 20 frames per 10 s closes with 4429.
-FLOOD_FRAMES: Final = 20
-FLOOD_WINDOW_S: Final = 10.0
+# Frame flood limit (config ws_flood_frames per ws_flood_window_s) closes 4429.
 NORMAL_CLOSE: Final = 1000
-OUTBOUND_MAX: Final = 64  # frames queued per socket; overflow closes with 4429
 
 router = APIRouter()
 
@@ -57,8 +54,9 @@ router = APIRouter()
 class Connection:
     """One live socket. `kick` and `enqueue` may be called from any thread."""
 
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, loop: asyncio.AbstractEventLoop, outbound_max: int) -> None:
         self._loop = loop
+        self._outbound_max = outbound_max
         self.signal = asyncio.Event()  # set by kick and by new outbound frames
         self.kick_code: int | None = None
         self.outbound: deque[str] = deque()
@@ -82,7 +80,7 @@ class Connection:
     def _enqueue(self, text: str) -> None:
         if self.kick_code is not None:
             return
-        if len(self.outbound) >= OUTBOUND_MAX:
+        if len(self.outbound) >= self._outbound_max:
             # The client re-syncs on reconnect.
             self.outbound.clear()
             self._kick(WS_CLOSE["rate_limited"])
@@ -158,10 +156,35 @@ class Hub:
             return len(self._connections)
 
 
+class OpenSockets:
+    """Counts open /v1/realtime sockets from accept to close, against a cap."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._open = 0
+        self._lock = threading.Lock()
+
+    def enter(self) -> bool:
+        with self._lock:
+            if self._open >= self._limit:
+                return False
+            self._open += 1
+            return True
+
+    def leave(self) -> None:
+        with self._lock:
+            self._open -= 1
+
+
 def install(app: FastAPI) -> Hub:
     """Create the Hub, include the router, clear stale `connected_at` on start."""
     hub = Hub()
     app.state.hub = hub
+    config: ServerConfig = app.state.config
+    app.state.ws_connect_limiter = RateLimiter(
+        config.rate_ws_connect_ip, float(config.rate_window_s), app.state.clock
+    )
+    app.state.open_sockets = OpenSockets(config.ws_max_connections)
     app.include_router(router)
 
     original = app.router.lifespan_context
@@ -188,10 +211,10 @@ def _clear_all_connected(factory: SessionFactory) -> None:
 
 
 def _authenticate(
-    factory: SessionFactory, token: str, now: datetime
+    factory: SessionFactory, token: str, now: datetime, last_seen_interval_s: float
 ) -> tuple[Principal, str | None] | None:
     with factory() as session:
-        principal = authenticate_access(session, token, now)
+        principal = authenticate_access(session, token, now, last_seen_interval_s)
         if principal is None:
             return None
         nickname = session.scalar(
@@ -304,15 +327,31 @@ def _parse(message: MutableMapping[str, Any]) -> Any:
 @router.websocket("/v1/realtime")
 async def realtime(websocket: WebSocket) -> None:
     state = websocket.app.state
+    # Before accept: a refused connect costs one limiter lookup, no handshake.
+    connect_limiter: RateLimiter = state.ws_connect_limiter
+    if connect_limiter.hit(client_key(websocket)) is not None:
+        await websocket.close(WS_CLOSE["rate_limited"])
+        return
+    sockets: OpenSockets = state.open_sockets
+    if not sockets.enter():
+        await websocket.close(WS_CLOSE["rate_limited"])
+        return
+    try:
+        await _session(websocket)
+    finally:
+        sockets.leave()
+
+
+async def _session(websocket: WebSocket) -> None:
+    state = websocket.app.state
     config: ServerConfig = state.config
     factory: SessionFactory = state.session_factory
     clock: Callable[[], datetime] = state.clock
     hub: Hub = state.hub
-
     await websocket.accept()
     loop = asyncio.get_running_loop()
-    conn = Connection(loop)
-    limiter = RateLimiter(FLOOD_FRAMES, FLOOD_WINDOW_S, clock)
+    conn = Connection(loop, config.ws_outbound_max)
+    limiter = RateLimiter(config.ws_flood_frames, config.ws_flood_window_s, clock)
     principal: Principal | None = None
     code = NORMAL_CLOSE
     recv: asyncio.Future[MutableMapping[str, Any]] | None = None
@@ -368,7 +407,11 @@ async def realtime(websocket: WebSocket) -> None:
 
             if isinstance(frame, WsAuth):
                 auth = await run_in_threadpool(
-                    _authenticate, factory, frame.access_token, now
+                    _authenticate,
+                    factory,
+                    frame.access_token,
+                    now,
+                    config.last_seen_interval_s,
                 )
                 if auth is None:
                     raise _Close(WS_CLOSE["unauthorized"])

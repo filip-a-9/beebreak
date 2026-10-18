@@ -16,6 +16,7 @@ from fastapi import Depends, Header, Request
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from starlette.requests import HTTPConnection
 
 from beebreak_server.config import ServerConfig
 from beebreak_server.db import SessionFactory
@@ -49,8 +50,6 @@ from beebreak_server.tokens import (
 from beebreak_shared.api import ErrorCode, TokenPair
 
 Clock = Callable[[], datetime]
-
-LAST_SEEN_INTERVAL = timedelta(minutes=1)
 
 _STATUS: dict[ErrorCode, int] = {
     "invalid_request": 400,
@@ -110,6 +109,9 @@ class Limiters:
     message_user: RateLimiter  # own window: rate_message_window_s
     report_user: RateLimiter
     extension_user: RateLimiter
+    messages_read_user: RateLimiter
+    me_read_user: RateLimiter
+    me_write_user: RateLimiter
 
 
 def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
@@ -129,7 +131,15 @@ def make_limiters(config: ServerConfig, clock: Clock) -> Limiters:
         ),
         report_user=RateLimiter(config.rate_report_user, window, clock),
         extension_user=RateLimiter(config.rate_extension_user, window, clock),
+        messages_read_user=RateLimiter(config.rate_messages_read_user, window, clock),
+        me_read_user=RateLimiter(config.rate_me_read_user, window, clock),
+        me_write_user=RateLimiter(config.rate_me_write_user, window, clock),
     )
+
+
+def client_key(connection: HTTPConnection) -> str:
+    """The limiter key of a request or WebSocket: the (proxy-resolved) peer."""
+    return connection.client.host if connection.client else "-"
 
 
 def check_limit(limiter: RateLimiter, key: str) -> None:
@@ -142,7 +152,10 @@ def check_limit(limiter: RateLimiter, key: str) -> None:
 
 
 def authenticate_access(
-    session: Session, token: str, now: datetime
+    session: Session,
+    token: str,
+    now: datetime,
+    last_seen_interval_s: float = ServerConfig.last_seen_interval_s,
 ) -> Principal | None:
     """The caller of a valid, unexpired access token on an active device/user."""
     if not token.startswith("bra_"):
@@ -157,7 +170,8 @@ def authenticate_access(
     user = session.get(User, device.user_id)
     if user is None or user.status != "active":
         return None
-    if device.last_seen_at is None or now - device.last_seen_at >= LAST_SEEN_INTERVAL:
+    last_seen_interval = timedelta(seconds=last_seen_interval_s)
+    if device.last_seen_at is None or now - device.last_seen_at >= last_seen_interval:
         device.last_seen_at = now
         session.commit()
     return Principal(user.id, device.id, device.access_expires_at)
@@ -175,7 +189,9 @@ def require_principal(
     factory: SessionFactory = app.state.session_factory
     now = app.state.clock()
     with factory() as session:
-        principal = authenticate_access(session, token.strip(), now)
+        principal = authenticate_access(
+            session, token.strip(), now, app.state.config.last_seen_interval_s
+        )
     if principal is None:
         raise unauthorized()
     request.state.user_id = principal.user_id

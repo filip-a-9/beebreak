@@ -4,12 +4,15 @@ Rule 10: no address or code ever reaches a log line or exception message.
 """
 
 import logging
+import math
 import queue
 import smtplib
 import ssl
 import threading
 from email.message import EmailMessage
 from typing import Final, Literal, Protocol
+
+from beebreak_server.config import ServerConfig
 
 _log = logging.getLogger(__name__)
 
@@ -33,12 +36,14 @@ def _grouped(code: str) -> str:
     return f"{code[:4]}-{code[4:]}" if len(code) == 8 else code
 
 
-def _body(kind: Kind, code: str) -> str:
+def _body(kind: Kind, code: str, code_ttl_s: int) -> str:
     grouped = _grouped(code)
+    minutes = math.ceil(code_ttl_s / 60)
+    unit = "minute" if minutes == 1 else "minutes"
     if kind == "code":
         return (
             f"Your Beebreak sign-in code is {grouped}\n\n"
-            "It is valid for 10 minutes.\n\n"
+            f"It is valid for {minutes} {unit}.\n\n"
             "If you did not ask for this, ignore this email.\n"
         )
     return (
@@ -47,12 +52,14 @@ def _body(kind: Kind, code: str) -> str:
     )
 
 
-def _build(kind: Kind, to: str, code: str, mail_from: str) -> EmailMessage:
+def _build(
+    kind: Kind, to: str, code: str, mail_from: str, code_ttl_s: int
+) -> EmailMessage:
     msg = EmailMessage()
     msg["From"] = mail_from
     msg["To"] = to
     msg["Subject"] = CODE_SUBJECT if kind == "code" else INVITE_SUBJECT
-    msg.set_content(_body(kind, code))
+    msg.set_content(_body(kind, code, code_ttl_s))
     return msg
 
 
@@ -65,7 +72,8 @@ class SmtpMailer:
         tls: str = "none",
         username: str | None = None,
         password: str | None = None,
-        timeout_s: float = 10,
+        timeout_s: float = ServerConfig.smtp_timeout_s,
+        code_ttl_s: int = ServerConfig.code_ttl_s,
     ) -> None:
         if tls not in ("none", "starttls", "implicit"):
             raise ValueError("tls must be none, starttls or implicit")
@@ -76,6 +84,7 @@ class SmtpMailer:
         self._username = username
         self._password = password
         self._timeout_s = timeout_s
+        self.code_ttl_s = code_ttl_s
         # Verifies the certificate chain and hostname; bare starttls() does not.
         # Used by both STARTTLS and implicit TLS.
         self._tls_context = ssl.create_default_context()
@@ -115,7 +124,7 @@ class SmtpMailer:
                     return
                 continue
             try:
-                self._deliver(_build(kind, to, code, self._mail_from))
+                self._deliver(_build(kind, to, code, self._mail_from, self.code_ttl_s))
             except Exception:
                 _log.warning("mail dropped: send failed")
 

@@ -3,9 +3,12 @@
 import argparse
 import os
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from beebreak_server.logging_config import build_log_config
+
+if TYPE_CHECKING:
+    from beebreak_server.config import ServerConfig
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -41,6 +44,14 @@ def _env_workers() -> int:
         return int(raw)
     except ValueError:
         return 0
+
+
+def serve_options(config: "ServerConfig") -> dict[str, Any]:
+    """uvicorn limits from the config; shared by `serve` and the tests."""
+    return {
+        # uvicorn's default frame cap is 16 MiB, checked before our own 4 KiB one.
+        "ws_max_size": config.ws_max_message_bytes,
+    }
 
 
 class _NoSockets:
@@ -143,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         # honoured only from the configured proxy peers; none by default.
         proxy_headers=bool(proxies),
         forwarded_allow_ips=",".join(proxies) if proxies else None,
+        **serve_options(config),
     )
     return 0
 

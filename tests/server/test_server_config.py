@@ -215,3 +215,22 @@ def test_server_limits_must_be_positive(
             secret=b"s" * 32,
             **cast("dict[str, Any]", {name: 0}),
         )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "BEEBREAK_MATCH_SWEEP_INTERVAL_S",
+        "BEEBREAK_GITHUB_TIMEOUT_S",
+        "BEEBREAK_WS_FLOOD_WINDOW_S",
+        "BEEBREAK_SMTP_TIMEOUT_S",
+    ],
+)
+@pytest.mark.parametrize("value", ["inf", "nan"])
+def test_float_settings_reject_non_finite_values(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    _env(monkeypatch)
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError):
+        ServerConfig.from_env()

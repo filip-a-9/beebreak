@@ -64,6 +64,14 @@ services:
     build:
       context: .
       dockerfile: apps/server/Dockerfile
+    # Every BEEBREAK_* tunable set in .env (limits, timeouts, retention) reaches
+    # the server; unset ones keep their code defaults. The `environment:` values
+    # below take precedence over this file, so they cannot be overridden here.
+    # Optional so `compose config` works without one; the required values
+    # still fail fast through their `:?` checks. Needs Compose 2.24+.
+    env_file:
+      - path: .env
+        required: false
     environment:
       BEEBREAK_DATABASE_URL: postgresql+psycopg://beebreak:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/beebreak
       BEEBREAK_SERVER_SECRET: ${BEEBREAK_SERVER_SECRET:?set BEEBREAK_SERVER_SECRET in .env}
