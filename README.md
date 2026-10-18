@@ -22,7 +22,10 @@ conversation; a commercial subscription system.
 
 Pre-beta, invite-only hosted network. The source is Apache-2.0 (see
 [LICENSE](LICENSE)); access to the network is a separate invite. No hosted
-server is running yet.
+server is running yet. The companion bundles the Nunito font (Copyright 2014
+The Nunito Project Authors) under the SIL Open Font License 1.1, as static
+weights cut from the upstream variable font; the licence text ships beside it
+in `apps/companion/src/beebreak_companion/assets/fonts/OFL.txt`.
 
 Supported platform: WSL2 only. Claude Code, the hooks, the MCP server and the
 companion all run inside WSL2 (the companion's window uses WSLg).
@@ -85,6 +88,10 @@ already set. It is read once at start: restart the companion after changing it.
 Start the companion by hand with `beebreak-companion`. There is no login
 autostart: WSLg has no desktop session, so nothing in WSL2 runs autostart
 entries.
+
+The companion follows the Windows light or dark app theme, read once at
+start. Set `BEEBREAK_THEME=light` or `dark` to override it (default `auto`;
+light when Windows can't be asked).
 
 Without the `beebreak-hook` command on `PATH` the hooks do nothing and stay
 silent (the `beebreak` MCP server shows as failed in `/mcp`).
