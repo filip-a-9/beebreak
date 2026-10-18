@@ -5,6 +5,7 @@ Invalid or non-positive values fall back to the default. Trigger settings are
 read once into TriggerConfig, which rejects invalid values instead.
 """
 
+import math
 import os
 from dataclasses import dataclass
 
@@ -14,6 +15,8 @@ WORKER_STOP_TIMEOUT_ENV = "BEEBREAK_WORKER_STOP_TIMEOUT_S"
 PROBE_TIMEOUT_ENV = "BEEBREAK_PROBE_TIMEOUT_S"
 GC_INTERVAL_ENV = "BEEBREAK_GC_INTERVAL_S"
 NOTIFY_INTERVAL_ENV = "BEEBREAK_NOTIFY_INTERVAL_S"
+STOP_WAIT_ENV = "BEEBREAK_STOP_WAIT_S"
+CONNECT_TIMEOUT_ENV = "BEEBREAK_CONNECT_TIMEOUT_S"
 THEME_ENV = "BEEBREAK_THEME"
 THEME_PROBE_TIMEOUT_ENV = "BEEBREAK_THEME_PROBE_TIMEOUT_S"
 THEME_SETTINGS = ("auto", "light", "dark")
@@ -27,7 +30,7 @@ def _positive_seconds(name: str, default: float) -> float:
         value = float(raw)
     except ValueError:
         return default
-    return value if value > 0 else default
+    return value if 0 < value < math.inf else default
 
 
 def ipc_read_timeout_s() -> float:
@@ -69,6 +72,16 @@ def theme_setting() -> str:
 def theme_probe_timeout_s() -> float:
     """Seconds to wait for reg.exe when reading Windows' light/dark setting."""
     return _positive_seconds(THEME_PROBE_TIMEOUT_ENV, 2.0)
+
+
+def stop_wait_s() -> float:
+    """Seconds uninstall waits for a running companion to exit."""
+    return _positive_seconds(STOP_WAIT_ENV, 5.0)
+
+
+def connect_timeout_s() -> float:
+    """Seconds uninstall waits when connecting to the companion's socket."""
+    return _positive_seconds(CONNECT_TIMEOUT_ENV, 1.0)
 
 
 def _positive(name: str, default: int) -> int:
