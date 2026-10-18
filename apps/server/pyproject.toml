@@ -13,8 +13,9 @@ dependencies = [
     "beebreak-shared",
     "alembic==1.20.0",
     "fastapi==0.141.1",
-    # The binary wheel is a dev/M3 convenience; M6 decides binary vs. system libpq
-    # for the production image.
+    # The binary wheel bundles libpq. The production image (apps/server/Dockerfile,
+    # python:3.12-slim) installs it through `uv sync --frozen` and adds no system
+    # libpq.
     "psycopg[binary]==3.3.6",
     "sqlalchemy==2.1.1",
     "uvicorn[standard]==0.54.0",
