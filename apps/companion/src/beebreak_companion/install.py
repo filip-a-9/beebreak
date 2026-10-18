@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from beebreak_companion.api_client import ApiClient, ApiError
+from beebreak_companion.config import connect_timeout_s, stop_wait_s
 from beebreak_companion.credentials import (
     CredentialStore,
     FileCredentialStore,
@@ -43,8 +44,6 @@ from beebreak_shared.paths import (
 
 INSTALL_RECORD = "install.json"
 AUTOSTART_NAME = "beebreak.desktop"
-STOP_WAIT_S = 5.0  # how long uninstall waits for a running companion to exit
-CONNECT_TIMEOUT_S = 1.0
 _RECORD_VERSION = 1
 _SO_PEERCRED_FMT = "3i"  # struct ucred: pid, uid, gid
 
@@ -144,7 +143,7 @@ def stop_companion() -> str:
         return "not_running"
     pidfd: int | None = None
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-        s.settimeout(CONNECT_TIMEOUT_S)
+        s.settimeout(connect_timeout_s())
         try:
             s.connect(str(sock))
         except (FileNotFoundError, ConnectionRefusedError):
@@ -164,7 +163,7 @@ def stop_companion() -> str:
     try:
         with contextlib.suppress(ProcessLookupError):
             signal.pidfd_send_signal(pidfd, signal.SIGTERM)
-        if _wait_exit(pidfd, STOP_WAIT_S):
+        if _wait_exit(pidfd, stop_wait_s()):
             return "stopped"
         return "still_running"
     finally:

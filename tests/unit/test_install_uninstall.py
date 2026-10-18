@@ -395,7 +395,7 @@ def test_run_without_a_record_sets_nothing(home: Path, run_recorder: Recorder) -
 def test_uninstall_aborts_untouched_when_the_companion_will_not_stop(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(install, "STOP_WAIT_S", 0.5)
+    monkeypatch.setenv("BEEBREAK_STOP_WAIT_S", "0.5")
     install.install(ORIGIN)
     plant_old_autostart_entry()
     sock = runtime_dir() / "companion.sock"
@@ -412,7 +412,10 @@ def test_uninstall_aborts_untouched_when_the_companion_will_not_stop(
     try:
         assert proc.stdout is not None
         proc.stdout.readline()
+        started = time.monotonic()
         report = install.uninstall(keep_account=False, make_store=file_store)
+        # The 0.5 s wait from env, not the 5 s default.
+        assert time.monotonic() - started < 3
         assert report.completed is False
         assert install.read_saved_server_url() == ORIGIN
         assert install.autostart_path().is_file()
@@ -483,3 +486,19 @@ def test_invalid_environment_skips_the_revoke_but_still_removes_everything(
     monkeypatch.setenv("BEEBREAK_HTTP_TIMEOUT_S", "not-a-number")
     install.uninstall(keep_account=False, make_store=file_store)
     assert mentions_beebreak(home) == []
+
+
+def test_stop_wait_env_reaches_the_wait_and_bad_values_fall_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beebreak_companion import config
+
+    assert config.stop_wait_s() == 5.0
+    assert config.connect_timeout_s() == 1.0
+    monkeypatch.setenv("BEEBREAK_STOP_WAIT_S", "0.25")
+    monkeypatch.setenv("BEEBREAK_CONNECT_TIMEOUT_S", "0.5")
+    assert (config.stop_wait_s(), config.connect_timeout_s()) == (0.25, 0.5)
+    for bad in ("0", "-3", "abc", "inf", "nan"):
+        monkeypatch.setenv("BEEBREAK_STOP_WAIT_S", bad)
+        monkeypatch.setenv("BEEBREAK_CONNECT_TIMEOUT_S", bad)
+        assert (config.stop_wait_s(), config.connect_timeout_s()) == (5.0, 1.0)

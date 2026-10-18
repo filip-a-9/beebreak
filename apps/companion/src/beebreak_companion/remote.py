@@ -62,7 +62,7 @@ from beebreak_companion.realtime_client import (
     RealtimeError,
     ServerFrame,
 )
-from beebreak_companion.remote_config import RemoteConfig
+from beebreak_companion.remote_config import DEFAULT_SERVER_URL, RemoteConfig
 from beebreak_shared.api import (
     WS_CLOSE,
     Consent,
@@ -98,18 +98,13 @@ ConnectionState = Literal[
 _log = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
-REFRESH_LEAD_S = 60.0
-# Consecutive network failures a waiting GitHub sign-in survives.
-GITHUB_POLL_RETRIES = 3
-# The server's default access lifetime; the fallback when our clock disagrees.
-NOMINAL_ACCESS_TTL_S = 900.0
-MIN_REFRESH_DELAY_S = 0.05
+_DEFAULTS = RemoteConfig(server_url=DEFAULT_SERVER_URL)  # for refresh_delay_s
 # DEFAULT_DEVICE_NAME ("WSL device") is defined in privacy_preview, which must
 # not import this network module, and re-exported here. It is shown and
 # editable at sign-in; the machine hostname is never sent.
 
 
-def refresh_delay_s(ttl_s: float) -> float:
+def refresh_delay_s(ttl_s: float, config: RemoteConfig = _DEFAULTS) -> float:
     """Seconds after receiving a token to refresh it: 60 s before expiry, or at
     half the lifetime when the lifetime is short.
 
@@ -117,9 +112,9 @@ def refresh_delay_s(ttl_s: float) -> float:
     negative or longer than any real lifetime; either would mean a refresh
     storm or a missed expiry, so it is replaced by the nominal lifetime.
     """
-    if ttl_s <= 0 or ttl_s > NOMINAL_ACCESS_TTL_S:
-        ttl_s = NOMINAL_ACCESS_TTL_S
-    return max(MIN_REFRESH_DELAY_S, ttl_s - REFRESH_LEAD_S, ttl_s / 2)
+    if ttl_s <= 0 or ttl_s > config.nominal_access_ttl_s:
+        ttl_s = config.nominal_access_ttl_s
+    return max(config.min_refresh_delay_s, ttl_s - config.refresh_lead_s, ttl_s / 2)
 
 
 class RemoteWorker(QObject):
@@ -153,7 +148,7 @@ class RemoteWorker(QObject):
         self._signed_in = False
         self._access: str | None = None
         self._refresh_token: str | None = None
-        self._refresh_after_s = MIN_REFRESH_DELAY_S
+        self._refresh_after_s = config.min_refresh_delay_s
         self._challenge_id: UUID | None = None
         self._github_task: asyncio.Task[None] | None = None
         self._break = BreakState()
@@ -819,7 +814,9 @@ class RemoteWorker(QObject):
         failures = 0
         try:
             while True:
-                await asyncio.sleep(max(1.0, interval))
+                await asyncio.sleep(
+                    max(self.config.github_min_poll_interval_s, interval)
+                )
                 if asyncio.get_running_loop().time() > deadline:
                     raise ApiError("expired")
                 try:
@@ -827,7 +824,10 @@ class RemoteWorker(QObject):
                         started.challenge_id, device_name
                     )
                 except ApiError as exc:
-                    if exc.code != "network" or failures >= GITHUB_POLL_RETRIES:
+                    if (
+                        exc.code != "network"
+                        or failures >= self.config.github_poll_retries
+                    ):
                         raise
                     failures += 1
                     continue
@@ -896,7 +896,7 @@ class RemoteWorker(QObject):
         self._access = tokens.access_token
         self._refresh_token = tokens.refresh_token
         ttl = (tokens.access_expires_at - datetime.now(UTC)).total_seconds()
-        self._refresh_after_s = refresh_delay_s(ttl)
+        self._refresh_after_s = refresh_delay_s(ttl, self.config)
 
     async def _persist(self, tokens: TokenPair) -> None:
         creds = StoredCredentials(

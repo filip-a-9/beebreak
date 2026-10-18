@@ -63,3 +63,49 @@ def test_reconnect_min_above_max_is_rejected(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(ValueError):
         RemoteConfig.from_env()
+
+
+_NEW_FLOAT_ENVS = [
+    "BEEBREAK_REFRESH_LEAD_S",
+    "BEEBREAK_NOMINAL_ACCESS_TTL_S",
+    "BEEBREAK_MIN_REFRESH_DELAY_S",
+    "BEEBREAK_GITHUB_MIN_POLL_INTERVAL_S",
+]
+
+
+def test_refresh_settings_from_env_reach_the_refresh_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from beebreak_companion.remote import refresh_delay_s
+
+    monkeypatch.setenv("BEEBREAK_REFRESH_LEAD_S", "10")
+    monkeypatch.setenv("BEEBREAK_NOMINAL_ACCESS_TTL_S", "100")
+    monkeypatch.setenv("BEEBREAK_MIN_REFRESH_DELAY_S", "0.5")
+    monkeypatch.setenv("BEEBREAK_GITHUB_POLL_RETRIES", "7")
+    monkeypatch.setenv("BEEBREAK_GITHUB_MIN_POLL_INTERVAL_S", "0.25")
+
+    config = RemoteConfig.from_env()
+
+    assert config.github_poll_retries == 7
+    assert config.github_min_poll_interval_s == 0.25
+    assert refresh_delay_s(80, config) == 70  # ttl 80 minus a 10 s lead
+    assert refresh_delay_s(5000, config) == 90  # beyond 100 s: nominal 100 - 10
+    assert refresh_delay_s(0.2, config) == 0.5  # the floor
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "abc", "nan", "inf", ""])
+@pytest.mark.parametrize("name", [*_NEW_FLOAT_ENVS, "BEEBREAK_GITHUB_POLL_RETRIES"])
+def test_invalid_refresh_setting_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: str
+) -> None:
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError):
+        RemoteConfig.from_env()
+
+
+def test_fractional_poll_retries_are_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BEEBREAK_GITHUB_POLL_RETRIES", "2.5")
+
+    with pytest.raises(ValueError):
+        RemoteConfig.from_env()
