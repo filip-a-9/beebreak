@@ -1,4 +1,4 @@
-"""M6-08: `breakroom-server purge`, the pass restore.sh runs after a restore."""
+"""M6-08: `beebreak-server purge`, the pass restore.sh runs after a restore."""
 
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -6,9 +6,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import func, select
 
-from breakroom_server.cli import main
-from breakroom_server.db import SessionFactory
-from breakroom_server.models import Match, Message
+from beebreak_server.cli import main
+from beebreak_server.db import SessionFactory
+from beebreak_server.models import Match, Message
 from tests.server.conftest import SeededUser, add_ready_user, seed_match, seed_message
 
 
@@ -56,5 +56,5 @@ def test_purge_deletes_stale_rows_and_keeps_fresh_ones(
 def test_purge_refuses_a_bad_configuration(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("BREAKROOM_DATABASE_URL", raising=False)
+    monkeypatch.delenv("BEEBREAK_DATABASE_URL", raising=False)
     assert main(["purge"]) == 2

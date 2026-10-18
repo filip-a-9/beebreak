@@ -1,4 +1,4 @@
-"""Measure wall-clock latency of the Breakroom hook command (dev tool).
+"""Measure wall-clock latency of the Beebreak hook command (dev tool).
 
 Runs the hook command N times with a fixed synthetic payload (no real data)
 on stdin and prints one JSON object. A run that exceeds the per-run timeout is
@@ -40,7 +40,7 @@ def _env_int(name: str, default: int) -> int:
 
 def default_command() -> str:
     python = ROOT / ".venv" / "bin" / "python"
-    return f"{shlex.quote(str(python))} -m breakroom_agent_bridge.hook"
+    return f"{shlex.quote(str(python))} -m beebreak_agent_bridge.hook"
 
 
 def percentile(sorted_values: list[float], fraction: float) -> float:
@@ -94,12 +94,12 @@ def measure(command: str, runs: int, timeout_s: float) -> dict[str, float | int]
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--runs", type=int, default=_env_int("BREAKROOM_LATENCY_RUNS", 50)
+        "--runs", type=int, default=_env_int("BEEBREAK_LATENCY_RUNS", 50)
     )
     parser.add_argument(
         "--timeout-s",
         type=float,
-        default=_env_float("BREAKROOM_LATENCY_TIMEOUT_S", 5.0),
+        default=_env_float("BEEBREAK_LATENCY_TIMEOUT_S", 5.0),
     )
     parser.add_argument("--command", default=default_command())
     args = parser.parse_args()

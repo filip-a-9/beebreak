@@ -2,9 +2,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from breakroom_companion.activity import ActivityTracker
-from breakroom_companion.config import TriggerConfig
-from breakroom_shared.events import EventType, NormalizedEvent
+from beebreak_companion.activity import ActivityTracker
+from beebreak_companion.config import TriggerConfig
+from beebreak_shared.events import EventType, NormalizedEvent
 
 T0 = datetime(2026, 10, 12, 12, 0, 0, tzinfo=UTC)
 CFG = TriggerConfig(

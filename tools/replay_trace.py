@@ -5,7 +5,7 @@ Usage: python tools/replay_trace.py TRACE.jsonl [--respond none|accept|decline]
 Drives the public Controller API with a virtual clock (no sleeping, no wall
 clock) and prints the timeline of changes in (invitation, activity, estimate),
 with times relative to the first event, followed by one JSON summary line.
-Configuration comes from TriggerConfig.from_env(), so the BREAKROOM_* variables
+Configuration comes from TriggerConfig.from_env(), so the BEEBREAK_* variables
 that tune the companion tune the replay too. Invalid trace lines are counted and
 skipped; their content is never printed.
 """
@@ -21,12 +21,12 @@ from typing import Literal
 
 from pydantic import ValidationError
 
-from breakroom_companion.config import TriggerConfig
-from breakroom_companion.controller import Controller
-from breakroom_companion.state_store import PersistedState
-from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import ActivityState, InvitationState
-from breakroom_shared.presence import RemainingTimeBucket
+from beebreak_companion.config import TriggerConfig
+from beebreak_companion.controller import Controller
+from beebreak_companion.state_store import PersistedState
+from beebreak_shared.events import NormalizedEvent
+from beebreak_shared.ipc import ActivityState, InvitationState
+from beebreak_shared.presence import RemainingTimeBucket
 
 Respond = Literal["none", "accept", "decline"]
 
@@ -180,7 +180,7 @@ def main(argv: Sequence[str]) -> int:
     try:
         config = TriggerConfig.from_env()
     except ValueError:
-        print("invalid BREAKROOM_* trigger setting", file=sys.stderr)
+        print("invalid BEEBREAK_* trigger setting", file=sys.stderr)
         return 2
     if not events:
         print("no valid events", file=sys.stderr)

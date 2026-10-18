@@ -4,10 +4,10 @@ requires-python = "==3.12.*"
 
 [manifest]
 members = [
-    "breakroom-agent-bridge",
-    "breakroom-companion",
-    "breakroom-server",
-    "breakroom-shared",
+    "beebreak-agent-bridge",
+    "beebreak-companion",
+    "beebreak-server",
+    "beebreak-shared",
 ]
 
 [manifest.dependency-groups]
@@ -73,26 +73,26 @@ wheels = [
 ]
 
 [[package]]
-name = "breakroom-agent-bridge"
+name = "beebreak-agent-bridge"
 version = "0.1.0"
 source = { editable = "packages/agent_bridge" }
 dependencies = [
-    { name = "breakroom-shared" },
+    { name = "beebreak-shared" },
     { name = "mcp" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "breakroom-shared", editable = "packages/shared" },
+    { name = "beebreak-shared", editable = "packages/shared" },
     { name = "mcp", specifier = "==2.3.0" },
 ]
 
 [[package]]
-name = "breakroom-companion"
+name = "beebreak-companion"
 version = "0.1.0"
 source = { editable = "apps/companion" }
 dependencies = [
-    { name = "breakroom-shared" },
+    { name = "beebreak-shared" },
     { name = "httpx" },
     { name = "keyring" },
     { name = "pyside6-essentials" },
@@ -101,7 +101,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "breakroom-shared", editable = "packages/shared" },
+    { name = "beebreak-shared", editable = "packages/shared" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "keyring", specifier = "==25.7.0" },
     { name = "pyside6-essentials", specifier = "==6.12.0" },
@@ -109,12 +109,12 @@ requires-dist = [
 ]
 
 [[package]]
-name = "breakroom-server"
+name = "beebreak-server"
 version = "0.1.0"
 source = { editable = "apps/server" }
 dependencies = [
     { name = "alembic" },
-    { name = "breakroom-shared" },
+    { name = "beebreak-shared" },
     { name = "fastapi" },
     { name = "psycopg", extra = ["binary"] },
     { name = "sqlalchemy" },
@@ -124,7 +124,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = "==1.20.0" },
-    { name = "breakroom-shared", editable = "packages/shared" },
+    { name = "beebreak-shared", editable = "packages/shared" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.6" },
     { name = "sqlalchemy", specifier = "==2.1.1" },
@@ -132,7 +132,7 @@ requires-dist = [
 ]
 
 [[package]]
-name = "breakroom-shared"
+name = "beebreak-shared"
 version = "0.1.0"
 source = { editable = "packages/shared" }
 dependencies = [

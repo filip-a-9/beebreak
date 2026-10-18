@@ -18,19 +18,19 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from breakroom_agent_bridge.ipc_client import request_status
-from breakroom_companion import cli, install
-from breakroom_companion.api_client import ApiClient, ApiError
-from breakroom_companion.credentials import (
+from beebreak_agent_bridge.ipc_client import request_status
+from beebreak_companion import cli, install
+from beebreak_companion.api_client import ApiClient, ApiError
+from beebreak_companion.credentials import (
     CredentialStore,
     FileCredentialStore,
     StoredCredentials,
 )
-from breakroom_companion.endpoint import EndpointRefused
-from breakroom_companion.remote_config import CA_FILE_ENV, SERVER_URL_ENV, RemoteConfig
-from breakroom_server.models import Device
-from breakroom_shared import paths
-from breakroom_shared.paths import credentials_path, runtime_dir, state_dir
+from beebreak_companion.endpoint import EndpointRefused
+from beebreak_companion.remote_config import CA_FILE_ENV, SERVER_URL_ENV, RemoteConfig
+from beebreak_server.models import Device
+from beebreak_shared import paths
+from beebreak_shared.paths import credentials_path, runtime_dir, state_dir
 
 if TYPE_CHECKING:
     from tests.e2e_support.server import LiveServer
@@ -56,12 +56,12 @@ def file_store(origin: str) -> CredentialStore:
     return FileCredentialStore(credentials_path(), origin)
 
 
-def mentions_breakroom(root: Path) -> list[Path]:
-    """Every path under root whose name or contents mention breakroom."""
+def mentions_beebreak(root: Path) -> list[Path]:
+    """Every path under root whose name or contents mention beebreak."""
     found = []
     for path in root.rglob("*"):
-        if "breakroom" in path.name.lower() or (
-            path.is_file() and b"breakroom" in path.read_bytes().lower()
+        if "beebreak" in path.name.lower() or (
+            path.is_file() and b"beebreak" in path.read_bytes().lower()
         ):
             found.append(path)
     return found
@@ -70,7 +70,7 @@ def mentions_breakroom(root: Path) -> list[Path]:
 def plant_old_autostart_entry() -> None:
     """An entry written by a release that still had `install --autostart`."""
     install.autostart_path().parent.mkdir(parents=True, exist_ok=True)
-    install.autostart_path().write_text("[Desktop Entry]\nName=Breakroom\n")
+    install.autostart_path().write_text("[Desktop Entry]\nName=Beebreak\n")
 
 
 def save_login(origin: str, token: str, expires_in: timedelta) -> None:
@@ -82,17 +82,17 @@ def test_install_then_uninstall_leaves_nothing(home: Path) -> None:
     plant_old_autostart_entry()
     save_login(ORIGIN, "t", timedelta(days=1))
     (runtime_dir() / "salt").write_bytes(b"x")
-    assert mentions_breakroom(home)  # install really wrote something
+    assert mentions_beebreak(home)  # install really wrote something
 
     install.uninstall(keep_account=True, make_store=file_store)
 
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_install_rejects_a_disallowed_url_and_writes_nothing(home: Path) -> None:
     with pytest.raises(EndpointRefused):
         install.install("http://example.com")
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_saved_url_round_trips(home: Path) -> None:
@@ -104,7 +104,7 @@ def test_saved_url_round_trips(home: Path) -> None:
 def test_uninstall_on_a_machine_that_never_installed(home: Path) -> None:
     install.uninstall(keep_account=False, make_store=file_store)
     install.uninstall(keep_account=True, make_store=file_store)
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 @pytest.mark.parametrize("stage", ["record", "autostart", "login", "socket_dir"])
@@ -118,14 +118,14 @@ def test_partial_install_uninstalls_cleanly(home: Path, stage: str) -> None:
     else:
         runtime_dir()
     install.uninstall(keep_account=True, make_store=file_store)
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_corrupt_install_record_is_ignored_and_removed(home: Path) -> None:
     (state_dir() / install.INSTALL_RECORD).write_text("{not json")
     assert install.read_saved_server_url() is None
     install.uninstall(keep_account=True, make_store=file_store)
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_symlinked_state_dir_is_not_followed(home: Path) -> None:
@@ -133,7 +133,7 @@ def test_symlinked_state_dir_is_not_followed(home: Path) -> None:
     victim.mkdir()
     (victim / "keep.txt").write_text("x")
     (home / "state").mkdir()
-    (home / "state" / "breakroom").symlink_to(victim)
+    (home / "state" / "beebreak").symlink_to(victim)
     install.uninstall(keep_account=True, make_store=file_store)
     assert (victim / "keep.txt").exists()
 
@@ -182,7 +182,7 @@ def test_uninstall_revokes_the_device_on_a_real_server(
     with live_server.session_factory() as session:
         devices = session.scalars(select(Device)).all()
     assert [d.revoked_at is not None for d in devices] == [True]
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_keep_account_leaves_the_device_valid(
@@ -195,7 +195,7 @@ def test_keep_account_leaves_the_device_valid(
     install.uninstall(keep_account=True, make_store=file_store)
 
     assert not refresh_fails(live_server, creds.refresh_token)
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_offline_server_still_removes_everything(home: Path) -> None:
@@ -204,7 +204,7 @@ def test_offline_server_still_removes_everything(home: Path) -> None:
     save_login(ORIGIN, "t", timedelta(days=1))
     report = install.uninstall(keep_account=False, make_store=file_store)
     assert report.lines
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_revoke_outcome_offline_vs_rejected(live_server: LiveServer) -> None:
@@ -220,7 +220,7 @@ def test_revoke_outcome_offline_vs_rejected(live_server: LiveServer) -> None:
 def test_uninstall_stops_a_running_companion(home: Path) -> None:
     env = {**os.environ, "QT_QPA_PLATFORM": "offscreen"}
     proc = subprocess.Popen(
-        [sys.executable, "-m", "breakroom_companion.app"],
+        [sys.executable, "-m", "beebreak_companion.app"],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -234,7 +234,7 @@ def test_uninstall_stops_a_running_companion(home: Path) -> None:
         install.uninstall(keep_account=True, make_store=file_store)
         proc.wait(timeout=10)
         assert proc.returncode is not None
-        assert mentions_breakroom(home) == []
+        assert mentions_beebreak(home) == []
     finally:
         if proc.poll() is None:
             proc.send_signal(signal.SIGKILL)
@@ -255,7 +255,7 @@ def test_cli_install_and_uninstall(
     plant_old_autostart_entry()
     assert "claude plugin" in capsys.readouterr().out  # the next command
     assert cli.main(["uninstall", "--keep-account"]) == 0
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_cli_install_prompts_and_reasks_on_a_bad_url(
@@ -272,12 +272,12 @@ def test_cli_install_no_longer_offers_autostart(home: Path) -> None:
     with pytest.raises(SystemExit) as exit_info:
         cli.main(["install", "--server-url", ORIGIN, "--autostart"])
     assert exit_info.value.code == cli.EXIT_USAGE
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_cli_install_refuses_a_bad_flag_url(home: Path) -> None:
     assert cli.main(["install", "--server-url", "ftp://x"]) != 0
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 # --- review fixes: CA file, env precedence, stop safety, cleanup -------------
@@ -331,7 +331,7 @@ def test_ca_file_owned_by_another_user_is_refused_at_install(
 def test_install_with_a_bad_ca_file_writes_nothing(home: Path) -> None:
     with pytest.raises(install.CaFileRefused):
         install.install(ORIGIN, ca_file=str(home / "no"))
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_cli_install_records_the_ca_file_and_refuses_a_bad_one(home: Path) -> None:
@@ -353,7 +353,7 @@ class Recorder:
 
 @pytest.fixture
 def run_recorder(monkeypatch: pytest.MonkeyPatch) -> Recorder:
-    import breakroom_companion.app as app
+    import beebreak_companion.app as app
 
     recorder = Recorder()
     monkeypatch.setattr(app, "main", recorder)
@@ -462,7 +462,7 @@ def test_clearing_does_not_depend_on_the_environment_being_valid(
 ) -> None:
     env_origin = "https://example.org"
     monkeypatch.setenv(SERVER_URL_ENV, env_origin)
-    monkeypatch.setenv("BREAKROOM_HTTP_TIMEOUT_S", "not-a-number")
+    monkeypatch.setenv("BEEBREAK_HTTP_TIMEOUT_S", "not-a-number")
     cleared: list[str] = []
 
     def recording_store(origin: str) -> CredentialStore:
@@ -472,7 +472,7 @@ def test_clearing_does_not_depend_on_the_environment_being_valid(
     report = install.uninstall(keep_account=True, make_store=recording_store)
     assert env_origin in cleared
     assert report.completed
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []
 
 
 def test_invalid_environment_skips_the_revoke_but_still_removes_everything(
@@ -480,6 +480,6 @@ def test_invalid_environment_skips_the_revoke_but_still_removes_everything(
 ) -> None:
     install.install(ORIGIN)
     save_login(ORIGIN, "t", timedelta(days=1))
-    monkeypatch.setenv("BREAKROOM_HTTP_TIMEOUT_S", "not-a-number")
+    monkeypatch.setenv("BEEBREAK_HTTP_TIMEOUT_S", "not-a-number")
     install.uninstall(keep_account=False, make_store=file_store)
-    assert mentions_breakroom(home) == []
+    assert mentions_beebreak(home) == []

@@ -1,6 +1,6 @@
 import pytest
 
-from breakroom_companion.endpoint import EndpointRefused, validate_server_url
+from beebreak_companion.endpoint import EndpointRefused, validate_server_url
 
 
 @pytest.mark.parametrize(

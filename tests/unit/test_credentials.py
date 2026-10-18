@@ -11,7 +11,7 @@ import keyring.errors
 import pytest
 from keyring.backends import fail
 
-from breakroom_companion.credentials import (
+from beebreak_companion.credentials import (
     FileCredentialStore,
     KeyringCredentialStore,
     StoredCredentials,
@@ -206,7 +206,7 @@ def test_keyring_value_is_versioned_json(
     KeyringCredentialStore(ORIGIN).save(CREDS)
 
     ((service, _), value) = next(iter(memory_keyring.items.items()))
-    assert service == "breakroom"
+    assert service == "beebreak"
     assert json.loads(value)["version"] == 1
 
 
@@ -272,7 +272,7 @@ def test_default_uses_file_store_when_fail_backend_active(state_home: Path) -> N
     assert isinstance(store, FileCredentialStore)
     assert store.encrypted is False
     assert store.save(CREDS) is True
-    assert (state_home / "breakroom" / "credentials.json").is_file()
+    assert (state_home / "beebreak" / "credentials.json").is_file()
 
 
 def test_default_uses_keyring_with_working_backend(

@@ -118,13 +118,13 @@ jobs:
         # run and is unreachable from outside the runner. Do not replace them
         # with repository secrets.
         env:
-          POSTGRES_USER: breakroom
-          POSTGRES_PASSWORD: breakroom-ci-throwaway
-          POSTGRES_DB: breakroom_test
+          POSTGRES_USER: beebreak
+          POSTGRES_PASSWORD: beebreak-ci-throwaway
+          POSTGRES_DB: beebreak_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U breakroom -d breakroom_test"
+          --health-cmd "pg_isready -U beebreak -d beebreak_test"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
@@ -155,7 +155,7 @@ jobs:
       - name: Tests
         env:
           QT_QPA_PLATFORM: offscreen
-          BREAKROOM_TEST_DATABASE_URL: postgresql+psycopg://breakroom:breakroom-ci-throwaway@localhost:5432/breakroom_test
+          BEEBREAK_TEST_DATABASE_URL: postgresql+psycopg://beebreak:beebreak-ci-throwaway@localhost:5432/beebreak_test
           PATHS: ${{ matrix.group.paths }}
         # No DISPLAY and no Secret Service on the runner: credentials take the
         # 0600 file fallback.

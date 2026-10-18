@@ -1,7 +1,7 @@
 """M4-03 races: the database, not the in-process lock, keeps matches unique.
 
 The threaded tests swap the matchmaker's private pass lock for a no-op and run
-passes at the same time (PostgreSQL; set BREAKROOM_TEST_DATABASE_URL). The
+passes at the same time (PostgreSQL; set BEEBREAK_TEST_DATABASE_URL). The
 deterministic tests replay the same interleavings by hand and run on SQLite too.
 """
 
@@ -17,14 +17,14 @@ import pytest
 from sqlalchemy import event, select, update
 from sqlalchemy.orm import ORMExecuteState, Session
 
-from breakroom_server import queue
-from breakroom_server.auth import ApiError
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.matchmaking import Matchmaker, _Candidate
-from breakroom_server.models import Match, MatchParticipant, QueueEntry
-from breakroom_shared.api import QueueJoinRequest
-from breakroom_shared.presence import OutboundPresence
+from beebreak_server import queue
+from beebreak_server.auth import ApiError
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.matchmaking import Matchmaker, _Candidate
+from beebreak_server.models import Match, MatchParticipant, QueueEntry
+from beebreak_shared.api import QueueJoinRequest
+from beebreak_shared.presence import OutboundPresence
 from tests.server.conftest import (
     START_TIME,
     FixedClock,

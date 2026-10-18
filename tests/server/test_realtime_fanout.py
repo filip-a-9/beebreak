@@ -10,12 +10,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
 
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import Device
-from breakroom_server.realtime import OUTBOUND_MAX, Hub, make_frame
-from breakroom_server.tokens import hash_token, new_token
-from breakroom_shared.api import (
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import Device
+from beebreak_server.realtime import OUTBOUND_MAX, Hub, make_frame
+from beebreak_server.tokens import hash_token, new_token
+from beebreak_shared.api import (
     WS_CLOSE,
     ServerWsFrame,
     WsMatchEnded,

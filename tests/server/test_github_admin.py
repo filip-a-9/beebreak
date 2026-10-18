@@ -1,4 +1,4 @@
-"""breakroom-admin with GitHub: invites by username, export and delete by id."""
+"""beebreak-admin with GitHub: invites by username, export and delete by id."""
 
 import json
 import uuid
@@ -7,11 +7,11 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import func, select
 
-from breakroom_server.admin import main
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import BetaInvite, DeletedAccountTombstone, User
-from breakroom_server.tokens import github_tombstone_hmac
+from beebreak_server.admin import main
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import BetaInvite, DeletedAccountTombstone, User
+from beebreak_server.tokens import github_tombstone_hmac
 from tests.server.conftest import TEST_SECRET, FixedClock
 from tests.server.github_fake import FakeGitHub, fake_github
 from tests.server.test_github_account import add_github_user
@@ -26,10 +26,10 @@ USERNAME = "octocat-lover"
 def _env(
     monkeypatch: pytest.MonkeyPatch, server_env: None, fake_github: FakeGitHub
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_GITHUB_CLIENT_ID", fake_github.client_id)
-    monkeypatch.setenv("BREAKROOM_GITHUB_OAUTH_URL", fake_github.url)
-    monkeypatch.setenv("BREAKROOM_GITHUB_API_URL", fake_github.url)
-    monkeypatch.setenv("BREAKROOM_GITHUB_TIMEOUT_S", "3")
+    monkeypatch.setenv("BEEBREAK_GITHUB_CLIENT_ID", fake_github.client_id)
+    monkeypatch.setenv("BEEBREAK_GITHUB_OAUTH_URL", fake_github.url)
+    monkeypatch.setenv("BEEBREAK_GITHUB_API_URL", fake_github.url)
+    monkeypatch.setenv("BEEBREAK_GITHUB_TIMEOUT_S", "3")
     fake_github.users[USERNAME] = GID
 
 
@@ -116,7 +116,7 @@ def test_an_invite_by_username_cannot_be_emailed(clock: FixedClock) -> None:
 def test_github_invites_need_github_sign_in_to_be_on(
     monkeypatch: pytest.MonkeyPatch, clock: FixedClock, fake_github: FakeGitHub
 ) -> None:
-    monkeypatch.delenv("BREAKROOM_GITHUB_CLIENT_ID")
+    monkeypatch.delenv("BEEBREAK_GITHUB_CLIENT_ID")
     assert run(["invite", "create", "--github", USERNAME], clock) == 1
     assert fake_github.requests == []
 
@@ -124,7 +124,7 @@ def test_github_invites_need_github_sign_in_to_be_on(
 def test_email_invites_need_email_sign_in_to_be_on(
     monkeypatch: pytest.MonkeyPatch, clock: FixedClock
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_SMTP_HOST", "")
+    monkeypatch.setenv("BEEBREAK_SMTP_HOST", "")
     assert run(["invite", "create", "ada@example.com"], clock) == 1
 
 

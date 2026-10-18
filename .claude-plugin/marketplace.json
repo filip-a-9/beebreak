@@ -1,12 +1,12 @@
 {
-  "name": "breakroom",
-  "description": "Breakroom: opt-in chat breaks while coding agents run",
+  "name": "beebreak",
+  "description": "Beebreak: opt-in chat breaks while coding agents run",
   "owner": { "name": "EDantes" },
   "plugins": [
     {
-      "name": "breakroom",
+      "name": "beebreak",
       "source": "./integrations/claude-code",
-      "description": "Local activity status and the breakroom_status tool for Claude Code"
+      "description": "Local activity status and the beebreak_status tool for Claude Code"
     }
   ]
 }

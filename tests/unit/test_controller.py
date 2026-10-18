@@ -5,11 +5,11 @@ from uuid import uuid4
 
 import pytest
 
-from breakroom_companion.config import TriggerConfig
-from breakroom_companion.controller import Controller
-from breakroom_companion.state_store import FileStateStore, PersistedState
-from breakroom_shared.events import EventType, NormalizedEvent
-from breakroom_shared.ipc import InvitationState
+from beebreak_companion.config import TriggerConfig
+from beebreak_companion.controller import Controller
+from beebreak_companion.state_store import FileStateStore, PersistedState
+from beebreak_shared.events import EventType, NormalizedEvent
+from beebreak_shared.ipc import InvitationState
 
 T0 = datetime(2026, 10, 12, 12, 0, 0, tzinfo=UTC)
 CFG = TriggerConfig(
@@ -196,12 +196,12 @@ def test_at_most_one_outstanding_suggestion_across_sessions() -> None:
 def test_default_config_and_store_come_from_env(tmp_path: Path) -> None:
     assert Controller().state == "idle"
     Controller().set_enabled(False)
-    assert (tmp_path / "state" / "breakroom" / "companion-state.json").exists()
+    assert (tmp_path / "state" / "beebreak" / "companion-state.json").exists()
     assert Controller().state == "disabled"
 
 
 def test_unsafe_state_dir_starts_disabled(tmp_path: Path) -> None:
-    d = tmp_path / "state" / "breakroom"
+    d = tmp_path / "state" / "beebreak"
     d.mkdir(parents=True, mode=0o700)
     d.chmod(0o770)
     c = Controller()
@@ -388,7 +388,7 @@ def test_closed_session_key_reused_can_be_invited_again() -> None:
 def test_unsafe_state_dir_is_reported_on_stderr(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    d = tmp_path / "state" / "breakroom"
+    d = tmp_path / "state" / "beebreak"
     d.mkdir(parents=True, mode=0o700)
     d.chmod(0o770)
     Controller()

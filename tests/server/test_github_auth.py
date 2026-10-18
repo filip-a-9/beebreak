@@ -11,11 +11,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select, text
 
-from breakroom_server.app import create_app
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import AuthChallenge, BetaInvite, Device, User
+from beebreak_server.app import create_app
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import AuthChallenge, BetaInvite, Device, User
 from tests.server.conftest import START_TIME, FixedClock, bearer, sign_in
 from tests.server.github_fake import ACCESS_TOKEN, DEVICE_CODE, FakeGitHub, fake_github
 
@@ -121,7 +121,7 @@ def test_a_github_only_server_says_so_and_refuses_email_routes(
         )
         assert verified.status_code == 404
         # No mail provider was set up: nothing is sending.
-        assert "breakroom-mailer" not in {t.name for t in threading.enumerate()}
+        assert "beebreak-mailer" not in {t.name for t in threading.enumerate()}
 
 
 def test_an_email_only_server_has_no_github_routes(

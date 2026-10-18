@@ -46,7 +46,7 @@ def test_every_hook_launches_the_installed_hook_binary() -> None:
     # The behaviour of the launcher is tested in test_plugin_launchers.
     commands = {hook["command"] for _, hook in _commands()}
     assert len(commands) == 1
-    assert "breakroom-hook" in commands.pop()
+    assert "beebreak-hook" in commands.pop()
 
 
 def test_notification_matcher_is_exactly_the_two_waiting_types() -> None:

@@ -7,14 +7,14 @@ template at the end. Report blocked platforms as pending, not as passed.
 
 Step IDs are stable; do not renumber.
 
-This checklist now runs on M2 behavior: `BREAKROOM_QUIET_GAP_S` is gone, and
-a session stays active through silence until `BREAKROOM_STALE_AFTER_S`
-(default 180 s). Other M2 variables (`BREAKROOM_STALE_AFTER_S`,
-`BREAKROOM_WAITING_MAX_S`, `BREAKROOM_OPEN_TOOL_MAX_S`,
-`BREAKROOM_FORGET_AFTER_S`) keep their defaults here; see
+This checklist now runs on M2 behavior: `BEEBREAK_QUIET_GAP_S` is gone, and
+a session stays active through silence until `BEEBREAK_STALE_AFTER_S`
+(default 180 s). Other M2 variables (`BEEBREAK_STALE_AFTER_S`,
+`BEEBREAK_WAITING_MAX_S`, `BEEBREAK_OPEN_TOOL_MAX_S`,
+`BEEBREAK_FORGET_AFTER_S`) keep their defaults here; see
 `docs/M2_CHECKLIST.md`. Restart the companion after changing any variable.
 Suggestion and cooldown state now persist in
-`~/.local/state/breakroom/companion-state.json`; remove it for a clean run.
+`~/.local/state/beebreak/companion-state.json`; remove it for a clean run.
 
 ## Setup
 
@@ -29,10 +29,10 @@ Expect: all green.
 (and only there), shorten the trigger so a demo takes seconds, not minutes:
 
 ```
-export BREAKROOM_ACTIVITY_THRESHOLD_S=15
-export BREAKROOM_MIN_TOOL_EVENTS=2
-export BREAKROOM_COOLDOWN_S=90
-export BREAKROOM_SUGGESTION_TIMEOUT_S=60
+export BEEBREAK_ACTIVITY_THRESHOLD_S=15
+export BEEBREAK_MIN_TOOL_EVENTS=2
+export BEEBREAK_COOLDOWN_S=90
+export BEEBREAK_SUGGESTION_TIMEOUT_S=60
 ```
 
 Defaults are 60 / 2 / 900 / 60. Values must be positive. Unset them (or
@@ -43,27 +43,27 @@ Expect: nothing visible yet.
 
 **M1-C04 — Plugin loads, companion down.** With no companion running:
 `claude --plugin-dir integrations/claude-code`, then `/mcp`.
-Expect: server `breakroom` is listed and connected.
+Expect: server `beebreak` is listed and connected.
 
 **M1-C05 — Status with companion down.** Ask Claude: "Call the
-breakroom_status tool and show the raw result."
+beebreak_status tool and show the raw result."
 Expect: `companion` is `not_running`, `invitation` and `last_event_at` are
 `null`, and nothing else is in the result.
 
 **M1-C06 — Companion starts.** In a second terminal (with the M1-C03 exports):
-`.venv/bin/breakroom-companion`
+`.venv/bin/beebreak-companion`
 (Run the venv script directly, not `uv run`: `uv run` keeps a parent process,
 and the freeze steps below must target the companion itself.)
-Expect: a small always-on-top window titled `Breakroom` appears under WSLg,
+Expect: a small always-on-top window titled `Beebreak` appears under WSLg,
 showing the idle text, with the "Suggest breaks" checkbox checked and no
 Accept/Decline buttons.
 
 **M1-C07 — Status with companion up.** In the Claude session, call
-`breakroom_status` again.
+`beebreak_status` again.
 Expect: `companion` is `running`, `invitation` is `idle`.
 
 **M1-C08 — Second companion refused.** In a third terminal:
-`.venv/bin/breakroom-companion; echo "exit=$?"`
+`.venv/bin/beebreak-companion; echo "exit=$?"`
 Expect: one short line on stderr, `exit=2`, the first window unaffected.
 
 ## Events reach the window
@@ -93,7 +93,7 @@ Expect: no invitation.
 
 **M1-C14 — Disable.** Uncheck "Suggest breaks" in the window, then run a long
 task (companion with the M1-C03 exports).
-Expect: window shows the disabled text, no invitation, and `breakroom_status`
+Expect: window shows the disabled text, no invitation, and `beebreak_status`
 reports `invitation` as `disabled`. Re-check the box: window returns to idle.
 
 ## Fail open
@@ -102,14 +102,14 @@ reports `invitation` as `disabled`. Re-check the box: window returns to idle.
 it quits within about a second and removes its socket file).
 In Claude, run a task with several tool calls.
 Expect: Claude behaves as normal, with no visible delay, hook error, or
-stderr/stdout noise. `breakroom_status` reports `not_running`; no leftover
+stderr/stdout noise. `beebreak_status` reports `not_running`; no leftover
 socket file prevents the next start (restart the companion: it starts).
 
 **M1-C16 — Companion frozen.** Start the companion, then freeze it:
-`PID=$(pgrep -f '[.]venv/bin/breakroom-companion'); echo $PID; kill -STOP $PID`
+`PID=$(pgrep -f '[.]venv/bin/beebreak-companion'); echo $PID; kill -STOP $PID`
 (exactly one PID must print; the brackets stop the pattern matching the shell
 running it). Run a task with several tool calls in Claude, and call
-`breakroom_status`.
+`beebreak_status`.
 Expect: Claude keeps working without visible delay or errors; the status call
 returns `not_running` within about a second rather than hanging. Afterwards
 `kill -CONT $PID` (or kill it) to clean up.
@@ -143,8 +143,8 @@ Review before committing any trace anywhere.
 ## Latency
 
 Run each with the same command; `--runs` defaults to 50 and
-`--timeout-s` to 5 (also `BREAKROOM_LATENCY_RUNS`,
-`BREAKROOM_LATENCY_TIMEOUT_S`). Output is JSON with `runs`, `p50_ms`,
+`--timeout-s` to 5 (also `BEEBREAK_LATENCY_RUNS`,
+`BEEBREAK_LATENCY_TIMEOUT_S`). Output is JSON with `runs`, `p50_ms`,
 `p95_ms`, `max_ms`, `nonzero_exits`, `stdout_bytes`.
 
 For M1-C18 to M1-C20, start the companion **without** the M1-C03 demo
@@ -162,7 +162,7 @@ Expect: `nonzero_exits` 0, `stdout_bytes` 0. Record numbers.
 **M1-C20 — Companion frozen.** Freeze it as in M1-C16 (`kill -STOP $PID`), then run the
 same command.
 Expect: `nonzero_exits` 0, `stdout_bytes` 0, and `max_ms` close to the hook's
-send timeout (`BREAKROOM_HOOK_SEND_TIMEOUT_S`, default 0.2 s = 200 ms) plus
+send timeout (`BEEBREAK_HOOK_SEND_TIMEOUT_S`, default 0.2 s = 200 ms) plus
 interpreter start-up, not seconds. Then `kill -CONT $PID`. No target numbers are
 fixed yet (spec §13): these are the first measurements, so record them and
 judge afterwards.

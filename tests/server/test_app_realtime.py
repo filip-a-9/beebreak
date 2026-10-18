@@ -5,9 +5,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_shared.api import WS_CLOSE
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_shared.api import WS_CLOSE
 from tests.server.conftest import FixedClock, bearer, sign_in
 
 

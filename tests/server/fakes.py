@@ -11,7 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from breakroom_server.matchmaking import MatchCreated
+from beebreak_server.matchmaking import MatchCreated
 
 
 class RecordingNotifier:

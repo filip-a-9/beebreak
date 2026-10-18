@@ -1,6 +1,6 @@
 """M5-01 schema: chat constraints enforced by the database.
 
-Runs on SQLite always and on PostgreSQL when BREAKROOM_TEST_DATABASE_URL is set.
+Runs on SQLite always and on PostgreSQL when BEEBREAK_TEST_DATABASE_URL is set.
 """
 
 import uuid
@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
-from breakroom_server.db import SessionFactory
-from breakroom_server.models import (
+from beebreak_server.db import SessionFactory
+from beebreak_server.models import (
     Match,
     MatchParticipant,
     Message,

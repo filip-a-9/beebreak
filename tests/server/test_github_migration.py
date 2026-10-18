@@ -1,6 +1,6 @@
 """Migration 0005: GitHub accounts, invites and challenges, up and down.
 
-SQLite always; PostgreSQL when BREAKROOM_TEST_DATABASE_URL points at it (the
+SQLite always; PostgreSQL when BEEBREAK_TEST_DATABASE_URL points at it (the
 test drops the app's tables first, like test_migrations).
 """
 
@@ -16,8 +16,8 @@ from alembic.migration import MigrationContext
 from sqlalchemy import Engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
-from breakroom_server.db import alembic_config, make_engine
-from breakroom_server.models import Base
+from beebreak_server.db import alembic_config, make_engine
+from beebreak_server.models import Base
 from tests.server.conftest import START_TIME, TEST_DATABASE_URL, requires_postgres
 
 USERS = sa.table(

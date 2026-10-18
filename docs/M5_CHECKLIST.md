@@ -21,7 +21,7 @@ M6 (TLS and hosting).
 
 **Terminals.**
 
-- T1: the Docker stack (`docker compose ...`, `breakroom-admin` commands, the
+- T1: the Docker stack (`docker compose ...`, `beebreak-admin` commands, the
   network proxy of M5-C03).
 - T2: companion A (default state and runtime directories), account `Filip`.
 - T3: companion B (separate directories and a different server address, see
@@ -30,7 +30,7 @@ M6 (TLS and hosting).
 
 **Two companions on one machine.** As in M4: companion B gets its own
 `XDG_RUNTIME_DIR` and `XDG_STATE_HOME`; never set them in T2. Run the
-companion from the venv script, not `uv run`: `.venv/bin/breakroom-companion`.
+companion from the venv script, not `uv run`: `.venv/bin/beebreak-companion`.
 
 **Companion B reaches the server through a local proxy.** M5-C07 and M5-C08
 cut B's network without stopping B. The only portable way on WSL2 that spares
@@ -46,7 +46,7 @@ unread count: `Open chat (2)`). It has no End button any more; `Break ended.`
 with `OK` appears when a chat has ended, and `Block` stays there only after
 the chat has ended.
 
-Chat window (title `Breakroom chat`, compact, separate from the main window;
+Chat window (title `Beebreak chat`, compact, separate from the main window;
 it opens by itself on a match without taking focus). It shows the peer's
 nickname, the `In common:` line, the time left (`15 min left`, `< 1 min left`),
 the transcript (own messages right-aligned, the peer's left), an input box,
@@ -81,11 +81,11 @@ reason is chosen) and `Cancel`.
 **Admin commands** (inside the server container) added in M5:
 
 ```
-docker compose exec server breakroom-admin report list
-docker compose exec server breakroom-admin report list --all
-docker compose exec server breakroom-admin report show REPORT_ID
-docker compose exec server breakroom-admin report resolve REPORT_ID dismiss
-docker compose exec server breakroom-admin report resolve REPORT_ID disable
+docker compose exec server beebreak-admin report list
+docker compose exec server beebreak-admin report list --all
+docker compose exec server beebreak-admin report show REPORT_ID
+docker compose exec server beebreak-admin report resolve REPORT_ID dismiss
+docker compose exec server beebreak-admin report resolve REPORT_ID disable
 ```
 
 `report list` prints open reports, oldest first, one tab-separated line each:
@@ -122,9 +122,9 @@ matched. After every step that blocks (M5-C12, C13, C14) remove the block
 **Postgres queries** used to read the stored rows:
 
 ```
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT m.seq, u.nickname, length(m.body) AS chars FROM messages m JOIN users u ON u.id = m.author_id WHERE m.match_id = (SELECT id FROM matches ORDER BY created_at DESC LIMIT 1) ORDER BY m.seq"
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT status, end_reason, extensions_used, last_seq FROM matches ORDER BY created_at DESC LIMIT 3"
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT r.status, r.reason, (r.note IS NOT NULL) AS has_note, (SELECT count(*) FROM report_messages rm WHERE rm.report_id = r.id) AS evidence FROM reports r ORDER BY r.created_at"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT m.seq, u.nickname, length(m.body) AS chars FROM messages m JOIN users u ON u.id = m.author_id WHERE m.match_id = (SELECT id FROM matches ORDER BY created_at DESC LIMIT 1) ORDER BY m.seq"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT status, end_reason, extensions_used, last_seq FROM matches ORDER BY created_at DESC LIMIT 3"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT r.status, r.reason, (r.note IS NOT NULL) AS has_note, (SELECT count(*) FROM report_messages rm WHERE rm.report_id = r.id) AS evidence FROM reports r ORDER BY r.created_at"
 ```
 
 (`MQ`, `XQ` and `RQ` in the steps below.) `MQ` lists the latest match's
@@ -147,8 +147,8 @@ Then the Postgres suite, as in M4-C01 (own database, needs `.env`):
 ```
 docker compose up -d postgres
 set -a; . ./.env; set +a
-docker compose exec postgres createdb -U breakroom breakroom_test
-BREAKROOM_TEST_DATABASE_URL="postgresql+psycopg://breakroom:${POSTGRES_PASSWORD}@127.0.0.1:5432/breakroom_test" uv run pytest tests/server tests/privacy tests/e2e
+docker compose exec postgres createdb -U beebreak beebreak_test
+BEEBREAK_TEST_DATABASE_URL="postgresql+psycopg://beebreak:${POSTGRES_PASSWORD}@127.0.0.1:5432/beebreak_test" uv run pytest tests/server tests/privacy tests/e2e
 ```
 
 Expect: both runs green. `tests/privacy/test_chat_privacy.py`,
@@ -165,15 +165,15 @@ cp -n .env.example .env     # first time only; fill the two secrets as in M3-C02
 docker compose up -d --build
 docker compose ps
 curl -s http://127.0.0.1:8000/v1/health
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT version_num FROM alembic_version"
-docker compose exec -T postgres psql -U breakroom breakroom -c "\dt"
-docker compose exec server breakroom-admin report list
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT version_num FROM alembic_version"
+docker compose exec -T postgres psql -U beebreak beebreak -c "\dt"
+docker compose exec server beebreak-admin report list
 ```
 
 Expect: `postgres`, `mailpit` and `server` running; health prints
 `{"status":"ok"}`; the migration query prints `0003`; the table list now also
 contains `messages`, `reports` and `report_messages`; `report list` prints
-nothing and exits 0 (the server container runs `breakroom-server migrate` on
+nothing and exits 0 (the server container runs `beebreak-server migrate` on
 every start).
 
 **M5-C03 — Companions signed in, B behind the proxy, one match.** `socat` is
@@ -185,14 +185,14 @@ socat TCP-LISTEN:8001,fork,reuseaddr,bind=127.0.0.1 TCP:127.0.0.1:8000 &
 curl -s http://127.0.0.1:8001/v1/health
 ```
 
-Expect `{"status":"ok"}`. Start A in T2 (`.venv/bin/breakroom-companion`;
+Expect `{"status":"ok"}`. Start A in T2 (`.venv/bin/beebreak-companion`;
 no demo variables are needed). Start B in T3 with its own directories and the
 proxy address; reuse `$B_ROOT` from M4 or make a new one:
 
 ```
 export B_ROOT="${B_ROOT:-$(mktemp -d)}"
 mkdir -p -m 700 "$B_ROOT/run" "$B_ROOT/state"
-BREAKROOM_SERVER_URL=http://127.0.0.1:8001 XDG_RUNTIME_DIR="$B_ROOT/run" XDG_STATE_HOME="$B_ROOT/state" .venv/bin/breakroom-companion
+BEEBREAK_SERVER_URL=http://127.0.0.1:8001 XDG_RUNTIME_DIR="$B_ROOT/run" XDG_STATE_HOME="$B_ROOT/state" .venv/bin/beebreak-companion
 ```
 
 Always start B with this exact command from here on. B is a new server
@@ -205,11 +205,11 @@ Wait for `Connected as Filip` and `Connected as Bea`. Then click **Find a break
 partner** in A and in B.
 
 ```
-docker compose exec server breakroom-admin matches
+docker compose exec server beebreak-admin matches
 ```
 
 Expect: both main windows show `Chatting with Bea` / `Chatting with Filip`
-and the `Open chat` button; a second window titled `Breakroom chat` opened
+and the `Open chat` button; a second window titled `Beebreak chat` opened
 by itself on each side without stealing the keyboard focus (the terminal you
 were typing in keeps it); it shows the peer's nickname, `In common: Python`,
 `15 min left` and the footer. `matches` prints exactly one line naming `Bea`
@@ -225,7 +225,7 @@ another line, press Enter (one message, two lines). Try Send with an empty
 box and with only spaces.
 
 ```
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT m.seq, u.nickname, length(m.body) AS chars FROM messages m JOIN users u ON u.id = m.author_id WHERE m.match_id = (SELECT id FROM matches ORDER BY created_at DESC LIMIT 1) ORDER BY m.seq"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT m.seq, u.nickname, length(m.body) AS chars FROM messages m JOIN users u ON u.id = m.author_id WHERE m.match_id = (SELECT id FROM matches ORDER BY created_at DESC LIMIT 1) ORDER BY m.seq"
 ```
 
 Expect: each message appears on both sides within a second, in the same
@@ -266,7 +266,7 @@ active window) and have B send `ping CANARY-M5-7f3a`. Expect: the main
 window's button becomes `Open chat (1)` (or the count above plus one), and
 A's taskbar icon flashes. WSLg has no system tray (Qt runs on Wayland, where
 none is available; checked 2026-10-18), so no text is shown anywhere outside
-the window. If a tray does exist, expect a notification titled `Breakroom`
+the window. If a tray does exist, expect a notification titled `Beebreak`
 reading exactly `New message from Bea` and never the text `ping` or `CANARY`;
 record which of the two you saw. A second message from B
 within 10 s raises no second notification. Click **Open chat** to read them.
@@ -305,7 +305,7 @@ if the previous one is not live (Find in both, End first if needed). Then:
 ```
 pkill -f 'socat TCP-LISTEN:8001'
 sleep 75
-docker compose exec server breakroom-admin matches
+docker compose exec server beebreak-admin matches
 socat TCP-LISTEN:8001,fork,reuseaddr,bind=127.0.0.1 TCP:127.0.0.1:8000 &
 ```
 
@@ -331,9 +331,9 @@ cat > reports/compose.m5-short.yaml <<'EOF'
 services:
   server:
     environment:
-      BREAKROOM_MATCH_TTL_S: "240"
-      BREAKROOM_CHAT_GRACE_S: "120"
-      BREAKROOM_CHAT_EXTENSION_S: "120"
+      BEEBREAK_MATCH_TTL_S: "240"
+      BEEBREAK_CHAT_GRACE_S: "120"
+      BEEBREAK_CHAT_EXTENSION_S: "120"
 EOF
 docker compose logs server >> reports/m5-server-logs.txt 2>&1
 docker compose -f compose.yaml -f reports/compose.m5-short.yaml up -d server
@@ -393,7 +393,7 @@ with B ending it.
 `Block this person?` with **Yes**.
 
 ```
-docker compose exec server breakroom-admin block list Bea
+docker compose exec server beebreak-admin block list Bea
 ```
 
 Expect: both chat windows show `The chat ended.` (A gets no hint that it was
@@ -404,7 +404,7 @@ both and wait
 about 95 s: no match is made. Then remove the block and match again:
 
 ```
-docker compose exec server breakroom-admin block remove Bea Filip
+docker compose exec server beebreak-admin block remove Bea Filip
 ```
 
 Click OK in both, Find in both: they match. End that chat (End in A).
@@ -417,10 +417,10 @@ disabled; choose `Harassment or abuse`, type the note `CANARY-NOTE-M5-7f3a`,
 tick only `Bea: harassing line CANARY-M5-7f3a`, click **Report and block**.
 
 ```
-docker compose exec server breakroom-admin report list
-docker compose exec server breakroom-admin report show REPORT_ID
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT r.status, r.reason, (r.note IS NOT NULL) AS has_note, (SELECT count(*) FROM report_messages rm WHERE rm.report_id = r.id) AS evidence FROM reports r ORDER BY r.created_at"
-docker compose exec server breakroom-admin block list Filip
+docker compose exec server beebreak-admin report list
+docker compose exec server beebreak-admin report show REPORT_ID
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT r.status, r.reason, (r.note IS NOT NULL) AS has_note, (SELECT count(*) FROM report_messages rm WHERE rm.report_id = r.id) AS evidence FROM reports r ORDER BY r.created_at"
+docker compose exec server beebreak-admin block list Filip
 ```
 
 (Take `REPORT_ID` from the first column of `report list`.) Expect: A's chat
@@ -436,7 +436,7 @@ others). `RQ` shows `open`, `harassment`, `has_note` `t`, `evidence` `1`, and `X
 shows the match `ended` with the stored reason `reported` (neither window shows
 it).
 `block list Filip` prints `Bea`. Remove the block before going on:
-`docker compose exec server breakroom-admin block remove Filip Bea`. Click
+`docker compose exec server beebreak-admin block remove Filip Bea`. Click
 `Close` and OK in both windows.
 
 **M5-C14 — Late report from the ended chat window.** Find in both and send a
@@ -447,8 +447,8 @@ there. In A click **Report**, choose `Spam or advertising`, tick `Bea: late
 two`, no note, **Report and block**.
 
 ```
-docker compose exec server breakroom-admin report list
-docker compose exec server breakroom-admin block remove Filip Bea
+docker compose exec server beebreak-admin report list
+docker compose exec server beebreak-admin block remove Filip Bea
 ```
 
 Expect: the report is accepted (no error line such as `The report window has
@@ -469,12 +469,12 @@ window's `Open chat` disappears) and OK in both windows.
 from `report list`.
 
 ```
-docker compose exec server breakroom-admin report resolve ID_OF_SPAM dismiss
-docker compose exec server breakroom-admin report resolve ID_OF_HARASSMENT disable
-docker compose exec server breakroom-admin report list
-docker compose exec server breakroom-admin report list --all
-docker compose exec server breakroom-admin report resolve ID_OF_HARASSMENT disable; echo "exit $?"
-docker compose exec server breakroom-admin devices
+docker compose exec server beebreak-admin report resolve ID_OF_SPAM dismiss
+docker compose exec server beebreak-admin report resolve ID_OF_HARASSMENT disable
+docker compose exec server beebreak-admin report list
+docker compose exec server beebreak-admin report list --all
+docker compose exec server beebreak-admin report resolve ID_OF_HARASSMENT disable; echo "exit $?"
+docker compose exec server beebreak-admin devices
 ```
 
 Expect: both `resolve` commands print nothing and exit 0; `report list`
@@ -485,7 +485,7 @@ drops to `Offline – retrying` or `Not signed in` (its account is disabled).
 Then re-enable and sign B in again (code from Mailpit):
 
 ```
-docker compose exec server breakroom-admin user enable Bea
+docker compose exec server beebreak-admin user enable Bea
 ```
 
 and expect `Connected as Bea` after the sign-in.
@@ -502,8 +502,8 @@ cat > reports/compose.m5-retention.yaml <<'EOF'
 services:
   server:
     environment:
-      BREAKROOM_MESSAGE_RETENTION_S: "60"
-      BREAKROOM_REPORT_WINDOW_S: "60"
+      BEEBREAK_MESSAGE_RETENTION_S: "60"
+      BEEBREAK_REPORT_WINDOW_S: "60"
 EOF
 docker compose logs server >> reports/m5-server-logs.txt 2>&1
 docker compose -f compose.yaml -f reports/compose.m5-retention.yaml up -d server
@@ -514,9 +514,9 @@ CANARY-M5-7f3a` from A, then End. Run `MQ` at once: it lists the messages.
 Wait about 2 minutes and run:
 
 ```
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT count(*) FROM messages"
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT count(*) FROM report_messages"
-docker compose exec -T postgres psql -U breakroom breakroom -c "SELECT status, end_reason FROM matches ORDER BY created_at DESC LIMIT 3"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT count(*) FROM messages"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT count(*) FROM report_messages"
+docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT status, end_reason FROM matches ORDER BY created_at DESC LIMIT 3"
 ```
 
 Expect: `messages` count `0` (the earlier chats' bodies are gone too, all of
@@ -539,16 +539,16 @@ claude --plugin-dir <path to this repo>/integrations/claude-code
 ```
 
 Find in both (A and B connected) so a chat is live. Ask: `Call the
-breakroom_status tool and show the raw result`. Expect the keys `companion`,
+beebreak_status tool and show the raw result`. Expect the keys `companion`,
 `invitation`, `last_event_at`, `activity`, `estimate` and `queue` (nothing
 new), `queue` is `chatting`, and the result contains no `Bea`, no deadline, no
-message text and no count. Ask `Call the breakroom_leave_queue tool and show
+message text and no count. Ask `Call the beebreak_leave_queue tool and show
 the raw result`: expect `{"result": "not_searching"}` and the chat is still
 live in both windows. Ask Claude `What did Bea say in my chat?`: it has no way
-to know, and `/mcp` lists `breakroom_status` and `breakroom_leave_queue` only
+to know, and `/mcp` lists `beebreak_status` and `beebreak_leave_queue` only
 (no send, read, extend or end tool). Send a message `claude must not see this
-CANARY-M5-7f3a` in the chat and ask for `breakroom_status` again: unchanged.
-End the chat in A afterwards; `breakroom_status` shows `queue` `none` again.
+CANARY-M5-7f3a` in the chat and ask for `beebreak_status` again: unchanged.
+End the chat in A afterwards; `beebreak_status` shows `queue` `none` again.
 
 **M5-C18 — Privacy grep of the server logs.** The automated suite
 (`tests/privacy/`) does this against a fake corpus; this step searches the
@@ -557,9 +557,9 @@ real logs of this run. The earlier containers' logs were saved to
 
 ```
 { cat reports/m5-server-logs.txt; docker compose logs server 2>&1; } > reports/m5-server-all.txt
-echo "access lines (must be > 0): $(grep -c breakroom_server.access reports/m5-server-all.txt)"
-echo "message requests logged (must be > 0): $(grep breakroom_server.access reports/m5-server-all.txt | grep -c '/messages')"
-echo "report requests logged (must be > 0): $(grep breakroom_server.access reports/m5-server-all.txt | grep -c '/v1/reports')"
+echo "access lines (must be > 0): $(grep -c beebreak_server.access reports/m5-server-all.txt)"
+echo "message requests logged (must be > 0): $(grep beebreak_server.access reports/m5-server-all.txt | grep -c '/messages')"
+echo "report requests logged (must be > 0): $(grep beebreak_server.access reports/m5-server-all.txt | grep -c '/v1/reports')"
 echo "canary hits: $(grep -c 'CANARY' reports/m5-server-all.txt)"
 echo "server logs: $(grep -cE 'CANARY|harassing line|late two|hello from|Filip|Bea|filip@|bea@|bra_|brr_|<b>bold' reports/m5-server-all.txt)"
 ```
@@ -637,7 +637,7 @@ database).
     "report_disable_revoked_devices": true,
     "messages_after_retention": 0,
     "report_messages_after_retention": 2,
-    "breakroom_status_queue_while_chatting": "chatting",
+    "beebreak_status_queue_while_chatting": "chatting",
     "postgres_suite_passed": true,
     "privacy_grep_hits": {"server_logs": 0, "canary": 0}
   },

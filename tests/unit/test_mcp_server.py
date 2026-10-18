@@ -1,4 +1,4 @@
-"""M1-01: the breakroom_status MCP tool (THREAT_MODEL T9, T10)."""
+"""M1-01: the beebreak_status MCP tool (THREAT_MODEL T9, T10)."""
 
 import ast
 import asyncio
@@ -17,11 +17,11 @@ from typing import Any
 import pytest
 from mcp import Client
 
-from breakroom_agent_bridge import ipc_client, mcp_server
-from breakroom_agent_bridge.config import McpSettings
-from breakroom_agent_bridge.ipc_client import LegacyStatusReply
-from breakroom_agent_bridge.mcp_server import build_server, query_companion
-from breakroom_shared.ipc import LeaveResult, StatusReply
+from beebreak_agent_bridge import ipc_client, mcp_server
+from beebreak_agent_bridge.config import McpSettings
+from beebreak_agent_bridge.ipc_client import LegacyStatusReply
+from beebreak_agent_bridge.mcp_server import build_server, query_companion
+from beebreak_shared.ipc import LeaveResult, StatusReply
 
 STATUS_KEYS = {
     "companion",
@@ -31,13 +31,13 @@ STATUS_KEYS = {
     "estimate",
     "queue",
 }
-TOOLS = ["breakroom_status", "breakroom_leave_queue"]
+TOOLS = ["beebreak_status", "beebreak_leave_queue"]
 
 
 def _call(reply: StatusReply | LegacyStatusReply | None) -> dict[str, Any]:
     async def run() -> dict[str, Any]:
         async with Client(build_server(lambda: reply)) as client:
-            result = await client.call_tool("breakroom_status", {})
+            result = await client.call_tool("beebreak_status", {})
             assert not result.is_error
             assert result.structured_content is not None
             return dict(result.structured_content)
@@ -113,7 +113,7 @@ def test_description_mentions_activity() -> None:
         async with Client(build_server(lambda: None)) as client:
             tools = (await client.list_tools()).tools
             return (
-                next(t for t in tools if t.name == "breakroom_status").description or ""
+                next(t for t in tools if t.name == "beebreak_status").description or ""
             )
 
     assert "activity" in asyncio.run(run()).lower()
@@ -138,10 +138,10 @@ def test_subprocess_speaks_mcp_over_stdio() -> None:
         _rpc(1, "initialize", init)
         + _rpc(None, "notifications/initialized")
         + _rpc(2, "tools/list", {})
-        + _rpc(3, "tools/call", {"name": "breakroom_status", "arguments": {}})
+        + _rpc(3, "tools/call", {"name": "beebreak_status", "arguments": {}})
     )
     proc = subprocess.Popen(
-        [sys.executable, "-m", "breakroom_agent_bridge.mcp_server"],
+        [sys.executable, "-m", "beebreak_agent_bridge.mcp_server"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
@@ -172,8 +172,8 @@ def test_subprocess_speaks_mcp_over_stdio() -> None:
 
 def _unsafe_xdg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     xdg = tmp_path / "x"
-    (xdg / "breakroom").mkdir(parents=True, mode=0o700)
-    (xdg / "breakroom").chmod(0o770)
+    (xdg / "beebreak").mkdir(parents=True, mode=0o700)
+    (xdg / "beebreak").chmod(0o770)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(xdg))
 
 
@@ -188,10 +188,10 @@ def test_status_timeout_setting_defaults_and_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert McpSettings.from_env().status_timeout_s == 0.5
-    monkeypatch.setenv("BREAKROOM_MCP_STATUS_TIMEOUT_S", "0.1")
+    monkeypatch.setenv("BEEBREAK_MCP_STATUS_TIMEOUT_S", "0.1")
     assert McpSettings.from_env().status_timeout_s == 0.1
     for bad in ("0", "-2", "x"):
-        monkeypatch.setenv("BREAKROOM_MCP_STATUS_TIMEOUT_S", bad)
+        monkeypatch.setenv("BEEBREAK_MCP_STATUS_TIMEOUT_S", bad)
         assert McpSettings.from_env().status_timeout_s == 0.5
 
 
@@ -199,7 +199,7 @@ def test_status_provider_honours_the_timeout_it_is_given(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(dir="/tmp") as d:
-        sock = Path(d) / "breakroom" / "companion.sock"
+        sock = Path(d) / "beebreak" / "companion.sock"
         sock.parent.mkdir(mode=0o700)
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(sock))
@@ -213,7 +213,7 @@ def test_status_provider_honours_the_timeout_it_is_given(
             server.close()
 
 
-# --- M4-07: queue status and breakroom_leave_queue ---------------------------------
+# --- M4-07: queue status and beebreak_leave_queue ---------------------------------
 
 
 @pytest.mark.parametrize("queue", ["none", "searching", "chatting"])
@@ -242,7 +242,7 @@ def _leave(provider: Callable[[], LeaveResult | None] | None) -> dict[str, Any]:
             else build_server(lambda: None, provider)
         )
         async with Client(server) as client:
-            result = await client.call_tool("breakroom_leave_queue", {})
+            result = await client.call_tool("beebreak_leave_queue", {})
             assert not result.is_error
             assert result.structured_content is not None
             return dict(result.structured_content)
@@ -277,7 +277,7 @@ def test_leave_queue_description_says_cancel_only() -> None:
     async def run() -> str:
         async with Client(build_server(lambda: None)) as client:
             tools = (await client.list_tools()).tools
-            tool = next(t for t in tools if t.name == "breakroom_leave_queue")
+            tool = next(t for t in tools if t.name == "beebreak_leave_queue")
             return tool.description or ""
 
     text = asyncio.run(run()).lower()
@@ -289,10 +289,10 @@ def test_leave_queue_end_to_end_against_a_real_ipc_server(
 ) -> None:
     import asyncio as aio
 
-    from breakroom_companion.ipc_server import IpcServer
+    from beebreak_companion.ipc_server import IpcServer
 
     with tempfile.TemporaryDirectory(dir="/tmp") as d:
-        sock = Path(d) / "breakroom" / "companion.sock"
+        sock = Path(d) / "beebreak" / "companion.sock"
         sock.parent.mkdir(mode=0o700)
         monkeypatch.setenv("XDG_RUNTIME_DIR", d)
         status = StatusReply(
@@ -330,7 +330,7 @@ def test_leave_queue_companion_honours_the_timeout_it_is_given(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with tempfile.TemporaryDirectory(dir="/tmp") as d:
-        sock = Path(d) / "breakroom" / "companion.sock"
+        sock = Path(d) / "beebreak" / "companion.sock"
         sock.parent.mkdir(mode=0o700)
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(sock))
@@ -385,7 +385,7 @@ def test_descriptions_say_claude_cannot_see_or_join_the_chat() -> None:
     texts = asyncio.run(run())
     for name in TOOLS:
         assert "cannot see or take part in the chat" in texts[name], name
-    assert "chatting" in texts["breakroom_status"]
+    assert "chatting" in texts["beebreak_status"]
 
 
 def test_leave_queue_while_chatting_is_not_searching_and_never_leaves(
@@ -393,8 +393,8 @@ def test_leave_queue_while_chatting_is_not_searching_and_never_leaves(
 ) -> None:
     import asyncio as aio
 
-    from breakroom_companion.app import BreakTracker
-    from breakroom_companion.ipc_server import IpcServer
+    from beebreak_companion.app import BreakTracker
+    from beebreak_companion.ipc_server import IpcServer
 
     class FakeRemote:
         def __init__(self) -> None:
@@ -411,7 +411,7 @@ def test_leave_queue_while_chatting_is_not_searching_and_never_leaves(
     assert tracker.queue_state() == "chatting"
 
     with tempfile.TemporaryDirectory(dir="/tmp") as d:
-        sock = Path(d) / "breakroom" / "companion.sock"
+        sock = Path(d) / "beebreak" / "companion.sock"
         sock.parent.mkdir(mode=0o700)
         monkeypatch.setenv("XDG_RUNTIME_DIR", d)
 

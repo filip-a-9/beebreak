@@ -2,14 +2,14 @@ from collections.abc import Callable
 
 import pytest
 
-from breakroom_companion import config
+from beebreak_companion import config
 
 CASES: list[tuple[Callable[[], float], str, float]] = [
-    (config.ipc_read_timeout_s, "BREAKROOM_IPC_READ_TIMEOUT_S", 1.0),
-    (config.worker_start_timeout_s, "BREAKROOM_WORKER_START_TIMEOUT_S", 5.0),
-    (config.worker_stop_timeout_s, "BREAKROOM_WORKER_STOP_TIMEOUT_S", 5.0),
-    (config.probe_timeout_s, "BREAKROOM_PROBE_TIMEOUT_S", 1.0),
-    (config.notify_interval_s, "BREAKROOM_NOTIFY_INTERVAL_S", 10.0),
+    (config.ipc_read_timeout_s, "BEEBREAK_IPC_READ_TIMEOUT_S", 1.0),
+    (config.worker_start_timeout_s, "BEEBREAK_WORKER_START_TIMEOUT_S", 5.0),
+    (config.worker_stop_timeout_s, "BEEBREAK_WORKER_STOP_TIMEOUT_S", 5.0),
+    (config.probe_timeout_s, "BEEBREAK_PROBE_TIMEOUT_S", 1.0),
+    (config.notify_interval_s, "BEEBREAK_NOTIFY_INTERVAL_S", 10.0),
 ]
 
 
@@ -50,22 +50,22 @@ def test_trigger_config_lives_in_the_config_module() -> None:
 
 def test_trigger_config_has_no_quiet_gap(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not hasattr(config.TriggerConfig(), "quiet_gap_s")
-    monkeypatch.setenv("BREAKROOM_QUIET_GAP_S", "0")  # ignored now
+    monkeypatch.setenv("BEEBREAK_QUIET_GAP_S", "0")  # ignored now
     assert config.TriggerConfig.from_env().cooldown_s == 900
 
 
 def test_trigger_config_env_and_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BREAKROOM_COOLDOWN_S", "5")
+    monkeypatch.setenv("BEEBREAK_COOLDOWN_S", "5")
     assert config.TriggerConfig.from_env().cooldown_s == 5
     for bad in ("0", "-3", "abc"):
-        monkeypatch.setenv("BREAKROOM_COOLDOWN_S", bad)
+        monkeypatch.setenv("BEEBREAK_COOLDOWN_S", bad)
         with pytest.raises(ValueError):
             config.TriggerConfig.from_env()
 
 
 def test_task_evidence_wait_default_and_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.TriggerConfig().task_evidence_wait_s == 300
-    monkeypatch.setenv("BREAKROOM_TASK_EVIDENCE_WAIT_S", "40")
+    monkeypatch.setenv("BEEBREAK_TASK_EVIDENCE_WAIT_S", "40")
     assert config.TriggerConfig.from_env().task_evidence_wait_s == 40
     with pytest.raises(ValueError):
         config.TriggerConfig(task_evidence_wait_s=0)

@@ -12,18 +12,18 @@ from typing import Any
 import pytest
 from sqlalchemy import ColumnElement, func, select
 
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.matchmaking import Matchmaker
-from breakroom_server.models import (
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.matchmaking import Matchmaker
+from beebreak_server.models import (
     Match,
     MatchParticipant,
     Message,
     Report,
     ReportMessage,
 )
-from breakroom_server.queue import end_match
-from breakroom_shared.api import WsChatStatus, WsMatchEnded
+from beebreak_server.queue import end_match
+from beebreak_shared.api import WsChatStatus, WsMatchEnded
 from tests.server.conftest import (
     FixedClock,
     SeededUser,

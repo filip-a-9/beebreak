@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
-from breakroom_companion.chat_state import ChatEnd, ChatState, PendingMessage
-from breakroom_shared.api import ChatStatus, ExtensionState, MessageView
+from beebreak_companion.chat_state import ChatEnd, ChatState, PendingMessage
+from beebreak_shared.api import ChatStatus, ExtensionState, MessageView
 
 T0 = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
 

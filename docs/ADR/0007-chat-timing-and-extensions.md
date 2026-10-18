@@ -28,4 +28,4 @@ adjudicated by conditional updates, so races extend once or not at all.
 two-companion e2e tests; checklist M5-C07 to C10.
 
 ## Rollback
-All values are server configuration (`BREAKROOM_CHAT_*`, `BREAKROOM_MATCH_TTL_S`).
+All values are server configuration (`BEEBREAK_CHAT_*`, `BEEBREAK_MATCH_TTL_S`).

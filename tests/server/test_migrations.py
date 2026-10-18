@@ -1,7 +1,7 @@
 """Migration checks.
 
 The SQLite tests always run. The PostgreSQL test needs
-BREAKROOM_TEST_DATABASE_URL pointing at a throwaway database; it drops the
+BEEBREAK_TEST_DATABASE_URL pointing at a throwaway database; it drops the
 app's tables first.
 """
 
@@ -16,10 +16,10 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
-from breakroom_server.cli import LOG_CONFIG
-from breakroom_server.cli import main as cli_main
-from breakroom_server.db import alembic_config, make_engine, upgrade_head
-from breakroom_server.models import Base
+from beebreak_server.cli import LOG_CONFIG
+from beebreak_server.cli import main as cli_main
+from beebreak_server.db import alembic_config, make_engine, upgrade_head
+from beebreak_server.models import Base
 from tests.server.conftest import (
     START_TIME,
     TEST_DATABASE_URL,
@@ -233,7 +233,7 @@ def test_cli_migrate_uses_database_url_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     url = f"sqlite:///{tmp_path / 'cli.db'}"
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", url)
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", url)
     assert cli_main(["migrate"]) == 0
     engine = make_engine(url)
     assert set(inspect(engine).get_table_names()) >= TABLES
@@ -244,7 +244,7 @@ def test_cli_migrate_uses_database_url_env(
 def test_cli_migrate_without_url_exits_2(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.delenv("BREAKROOM_DATABASE_URL", raising=False)
+    monkeypatch.delenv("BEEBREAK_DATABASE_URL", raising=False)
     assert cli_main(["migrate"]) == 2
     assert capsys.readouterr().out == ""
 
@@ -255,7 +255,7 @@ def test_cli_migrate_failure_does_not_print_the_url(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     url = f"sqlite:///{tmp_path / 'missing-dir' / 'x.db'}"
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", url)
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", url)
     assert cli_main(["migrate"]) == 1
     captured = capsys.readouterr()
     assert "missing-dir" not in captured.out + captured.err
@@ -271,7 +271,7 @@ def test_serve_runs_uvicorn_factory_on_loopback(
     assert cli_main(["serve"]) == 0
     assert calls == [
         (
-            ("breakroom_server.app:app_from_env",),
+            ("beebreak_server.app:app_from_env",),
             {
                 "factory": True,
                 "host": "127.0.0.1",
@@ -292,7 +292,7 @@ def test_serve_honours_forwarded_headers_only_from_configured_proxies(
     import uvicorn
 
     monkeypatch.setattr(uvicorn, "run", lambda *a, **k: calls.append(k))
-    monkeypatch.setenv("BREAKROOM_TRUSTED_PROXIES", "172.29.7.0/24,10.0.0.2")
+    monkeypatch.setenv("BEEBREAK_TRUSTED_PROXIES", "172.29.7.0/24,10.0.0.2")
     assert cli_main(["serve"]) == 0
     assert calls[0]["proxy_headers"] is True
     assert calls[0]["forwarded_allow_ips"] == "172.29.7.0/24,10.0.0.2"

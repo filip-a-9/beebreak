@@ -1,13 +1,13 @@
 {
-  "name": "breakroom",
+  "name": "beebreak",
   "version": "0.1.0",
   "description": "Opt-in chat break while coding agents run: local status for Claude Code.",
   "mcpServers": {
-    "breakroom": {
+    "beebreak": {
       "command": "sh",
       "args": [
         "-c",
-        "PATH=\"${CLAUDE_PLUGIN_ROOT}/../../.venv/bin:$HOME/.local/bin:$PATH\"; exec breakroom-mcp"
+        "PATH=\"${CLAUDE_PLUGIN_ROOT}/../../.venv/bin:$HOME/.local/bin:$PATH\"; exec beebreak-mcp"
       ]
     }
   }

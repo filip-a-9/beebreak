@@ -9,10 +9,10 @@ credential hash. Each needs a stated retention period.
 
 ## Decision
 `auth_challenges` are deleted 24 h after use or expiry
-(`BREAKROOM_CHALLENGE_RETENTION_S`). `refresh_tokens` are deleted 7 days
-after they expire, used or not (`BREAKROOM_REFRESH_TOKEN_RETENTION_S`). Expired, redeemed
+(`BEEBREAK_CHALLENGE_RETENTION_S`). `refresh_tokens` are deleted 7 days
+after they expire, used or not (`BEEBREAK_REFRESH_TOKEN_RETENTION_S`). Expired, redeemed
 or revoked `beta_invites` are deleted after 30 days
-(`BREAKROOM_INVITE_RETENTION_S`). An unexpired token is never deleted.
+(`BEEBREAK_INVITE_RETENTION_S`). An unexpired token is never deleted.
 The purge runs in the matchmaker's existing purge pass.
 
 ## Alternatives

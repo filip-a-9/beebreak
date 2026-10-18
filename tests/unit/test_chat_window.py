@@ -11,10 +11,10 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 
-from breakroom_companion.chat_state import ChatEnd, ChatState, PendingMessage
-from breakroom_companion.chat_window import ChatWindow, _BodyLabel
-from breakroom_companion.report_dialog import ReportDialog
-from breakroom_companion.window import CompanionWindow
+from beebreak_companion.chat_state import ChatEnd, ChatState, PendingMessage
+from beebreak_companion.chat_window import ChatWindow, _BodyLabel
+from beebreak_companion.report_dialog import ReportDialog
+from beebreak_companion.window import CompanionWindow
 from tests.fakes.chat import T0, chat_state, chat_status, message_view
 
 FOOTER = "Not end-to-end encrypted. Messages are deleted 24 h after the chat ends."

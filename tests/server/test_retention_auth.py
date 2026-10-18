@@ -8,10 +8,10 @@ from datetime import datetime, timedelta
 import pytest
 from sqlalchemy import select
 
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.matchmaking import Matchmaker
-from breakroom_server.models import AuthChallenge, BetaInvite, RefreshToken
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.matchmaking import Matchmaker
+from beebreak_server.models import AuthChallenge, BetaInvite, RefreshToken
 from tests.server.conftest import START_TIME, FixedClock, SeededUser, add_ready_user
 from tests.server.fakes import RecordingNotifier
 

@@ -1,6 +1,6 @@
 import pytest
 
-from breakroom_shared.chat import MAX_MESSAGE_CHARS, MAX_NOTE_CHARS, normalize_text
+from beebreak_shared.chat import MAX_MESSAGE_CHARS, MAX_NOTE_CHARS, normalize_text
 
 # Written with chr(): invisible characters must not hide in the source.
 RLO = chr(0x202E)  # right-to-left override

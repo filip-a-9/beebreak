@@ -11,14 +11,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from breakroom_server.app import create_app
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.matchmaking import MatchCreated, Matchmaker, _Candidate
-from breakroom_server.models import Block, Match, MatchParticipant, QueueEntry, User
-from breakroom_shared.api import WsMatchCreated, WsMatchEnded, WsQueueEnded
-from breakroom_shared.presence import RemainingTimeBucket, StackTag
+from beebreak_server.app import create_app
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.matchmaking import MatchCreated, Matchmaker, _Candidate
+from beebreak_server.models import Block, Match, MatchParticipant, QueueEntry, User
+from beebreak_shared.api import WsMatchCreated, WsMatchEnded, WsQueueEnded
+from beebreak_shared.presence import RemainingTimeBucket, StackTag
 from tests.server.conftest import (
     START_TIME,
     FixedClock,

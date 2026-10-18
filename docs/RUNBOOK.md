@@ -1,6 +1,6 @@
 # Runbook
 
-How to run the Breakroom server from `compose.prod.yaml`. Every command runs on
+How to run the Beebreak server from `compose.prod.yaml`. Every command runs on
 the host, from the repository root. `dc` below means:
 
 ```sh
@@ -22,10 +22,10 @@ dc down                 # remove containers and networks, KEEP volumes
 Never run `dc down -v` unless you mean to destroy the database and Caddy's
 certificates: `-v` deletes the `postgres-data` and `caddy-data` volumes.
 
-`migrate` runs `breakroom-server migrate` once before `server` starts, so a
+`migrate` runs `beebreak-server migrate` once before `server` starts, so a
 new release needs only `dc up -d --build`.
 
-Check the server from outside: `curl https://<BREAKROOM_PUBLIC_HOST>/v1/health`
+Check the server from outside: `curl https://<BEEBREAK_PUBLIC_HOST>/v1/health`
 answers `{"status":"ok"}`. The `server` container has the same check as its
 Docker healthcheck, and Caddy starts only once it passes.
 
@@ -40,14 +40,14 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 - `POSTGRES_PASSWORD`: the server refuses to start while it is still
   `change-me`. Use `token_urlsafe` output (it is placed inside a database URL).
-- `BREAKROOM_SERVER_SECRET`: URL-safe base64, at least 32 bytes decoded.
-- `BREAKROOM_SMTP_*` and `BREAKROOM_MAIL_FROM`: the mail account that sends
-  sign-in codes. `BREAKROOM_SMTP_USERNAME` and `BREAKROOM_SMTP_PASSWORD` must
+- `BEEBREAK_SERVER_SECRET`: URL-safe base64, at least 32 bytes decoded.
+- `BEEBREAK_SMTP_*` and `BEEBREAK_MAIL_FROM`: the mail account that sends
+  sign-in codes. `BEEBREAK_SMTP_USERNAME` and `BEEBREAK_SMTP_PASSWORD` must
   not stay at their `change-me-*` examples.
-- `BREAKROOM_PUBLIC_HOST`: the DNS name Caddy gets its certificate for.
-- Sign-in methods: at least one of email codes (`BREAKROOM_SMTP_HOST` and the
-  other SMTP values) and GitHub (`BREAKROOM_GITHUB_CLIENT_ID`, next section).
-  An empty `BREAKROOM_SMTP_HOST` turns email codes off; an empty client id turns
+- `BEEBREAK_PUBLIC_HOST`: the DNS name Caddy gets its certificate for.
+- Sign-in methods: at least one of email codes (`BEEBREAK_SMTP_HOST` and the
+  other SMTP values) and GitHub (`BEEBREAK_GITHUB_CLIENT_ID`, next section).
+  An empty `BEEBREAK_SMTP_HOST` turns email codes off; an empty client id turns
   GitHub off; with neither the server refuses to start.
 
 ## GitHub sign-in (optional)
@@ -62,18 +62,18 @@ Needs no email provider and no client secret.
    GitHub's "Authorizing OAuth apps" page says the flow must be enabled in the
    app's settings; the exact label is not verified here, check the page).
 3. Copy the **Client ID** (not a secret) into `.env` as
-   `BREAKROOM_GITHUB_CLIENT_ID`. Do not generate or store a client secret.
+   `BEEBREAK_GITHUB_CLIENT_ID`. Do not generate or store a client secret.
 4. `dc up -d`. `GET /v1/auth/methods` now reports `"github": true`.
 
-Optional: `BREAKROOM_GITHUB_TIMEOUT_S` (default 10), `BREAKROOM_RATE_GITHUB_POLL_IP`
-(default 1200 polls per address per rate window), `BREAKROOM_GITHUB_OAUTH_URL` and
-`BREAKROOM_GITHUB_API_URL` (only for tests; defaults are GitHub's).
+Optional: `BEEBREAK_GITHUB_TIMEOUT_S` (default 10), `BEEBREAK_RATE_GITHUB_POLL_IP`
+(default 1200 polls per address per rate window), `BEEBREAK_GITHUB_OAUTH_URL` and
+`BEEBREAK_GITHUB_API_URL` (only for tests; defaults are GitHub's).
 
 Invite a person by GitHub username (the numeric id is looked up once and is all
 that is stored; there is no code to pass on, they just sign in with GitHub):
 
 ```sh
-dc exec server breakroom-admin invite create --github octocat
+dc exec server beebreak-admin invite create --github octocat
 ```
 
 Export or delete a GitHub account with `account export --github-id <id>` and
@@ -93,7 +93,7 @@ Sign-in is by invitation. Moderation is the admin CLI inside the server
 container; there is no web UI.
 
 ```sh
-dc exec server breakroom-admin invite create you@example.com --send
+dc exec server beebreak-admin invite create you@example.com --send
 ```
 
 (Needs email sign-in on; on a GitHub-only server use `--github` below.)
@@ -108,12 +108,12 @@ companion. `invite list` shows state, `invite revoke <id>` ends an invite.
 **Both scripts need `COMPOSE_PROJECT_NAME` set to a non-empty value.** Without
 it they exit with status 2 before any container is touched: the directory-derived
 default is the development stack's project, and `restore.sh --force` drops the
-database it finds. Production examples below use `breakroom`; use whatever
+database it finds. Production examples below use `beebreak`; use whatever
 name your production stack was started with (`dc ps` shows it as the prefix of the
-container names). The drill uses its own name, `breakroom-m6drill`.
+container names). The drill uses its own name, `beebreak-m6drill`.
 
 `scripts/backup.sh` writes `pg_dump --format=custom` of the `postgres` service
-to `backups/breakroom-<UTC time>.dump` (mode 0600) and prints size and SHA-256.
+to `backups/beebreak-<UTC time>.dump` (mode 0600) and prints size and SHA-256.
 Add `--age-recipient <key>` or `--gpg-recipient <id>` to encrypt (the dump is
 piped into the encryptor, so no plaintext copy reaches the disk).
 
@@ -125,7 +125,7 @@ Cron example (daily at 03:15, encrypted, keeping 14 days; the 14 is an example,
 not a decided policy):
 
 ```cron
-15 3 * * * cd /srv/breakroom && COMPOSE_PROJECT_NAME=breakroom scripts/backup.sh --age-recipient age1... >>/var/log/breakroom-backup.log 2>&1 && find backups -name 'breakroom-*' -mtime +14 -delete
+15 3 * * * cd /srv/beebreak && COMPOSE_PROJECT_NAME=beebreak scripts/backup.sh --age-recipient age1... >>/var/log/beebreak-backup.log 2>&1 && find backups -name 'beebreak-*' -mtime +14 -delete
 ```
 
 Check the log now and then: a backup that silently stops is found on the day
@@ -141,17 +141,17 @@ Decide the backup lifetime on purpose, and after any restore see
 ## Restore
 
 ```sh
-export COMPOSE_PROJECT_NAME=breakroom   # required; see "Backup schedule"
-scripts/restore.sh backups/breakroom-<time>.dump            # into a fresh database
-scripts/restore.sh backups/breakroom-<time>.dump.age --age-identity key.txt
-scripts/restore.sh backups/breakroom-<time>.dump --force    # replace a database in use
+export COMPOSE_PROJECT_NAME=beebreak   # required; see "Backup schedule"
+scripts/restore.sh backups/beebreak-<time>.dump            # into a fresh database
+scripts/restore.sh backups/beebreak-<time>.dump.age --age-identity key.txt
+scripts/restore.sh backups/beebreak-<time>.dump --force    # replace a database in use
 ```
 
 The script starts `postgres`, **refuses** when the database already has tables
 (unless `--force`, which drops them first), stops `server` and `caddy`,
-restores, runs `breakroom-server migrate`, and then runs **one purge pass**
-(`breakroom-server purge`, which you can also run by hand:
-`dc run --rm --no-deps server breakroom-server purge`) with the current
+restores, runs `beebreak-server migrate`, and then runs **one purge pass**
+(`beebreak-server purge`, which you can also run by hand:
+`dc run --rm --no-deps server beebreak-server purge`) with the current
 retention settings. If the restore itself fails, the script says so and how to
 retry: the restore is one transaction, so the database is left empty (after a
 `--force` drop) or untouched, and `server` and `caddy` stay stopped. It does not start the stack: run `dc up -d`
@@ -171,15 +171,15 @@ erasure request (`account delete`) since then, run the deletion again.
 Done once, and repeated after any change to the scripts, the database layout
 or the hosting. Run it under its own project name, never the development or
 production one (`down -v` destroys that project's database volume). Every
-command below runs with `COMPOSE_PROJECT_NAME=breakroom-m6drill` and
+command below runs with `COMPOSE_PROJECT_NAME=beebreak-m6drill` and
 `dc` pointed at the drill's compose file; `docs/M6_CHECKLIST.md` M6-C13 has the
 guarded `dcd` and `drill` shell functions that do both:
 
 1. Start the stack and sign in once; note a refresh token.
-2. `COMPOSE_PROJECT_NAME=breakroom-m6drill scripts/backup.sh`.
-3. `COMPOSE_PROJECT_NAME=breakroom-m6drill dc down -v` (destroys the drill's
+2. `COMPOSE_PROJECT_NAME=beebreak-m6drill scripts/backup.sh`.
+3. `COMPOSE_PROJECT_NAME=beebreak-m6drill dc down -v` (destroys the drill's
    database volume).
-4. `COMPOSE_PROJECT_NAME=breakroom-m6drill scripts/restore.sh backups/<file>`.
+4. `COMPOSE_PROJECT_NAME=beebreak-m6drill scripts/restore.sh backups/<file>`.
 5. `dc up -d`; `curl .../v1/health` returns 200.
 6. Sign in again with the same email, and refresh the token noted in step 1.
    Both must work.
@@ -205,14 +205,14 @@ exercised. All run through `scripts/backup.sh` and `scripts/restore.sh`:
 | refresh the token noted before the backup | 200 (the restored data is the live data) |
 | gpg round trip: `backup.sh --gpg-recipient`, `restore.sh *.dump.gpg --force` | restored, `/v1/health` 200 |
 
-The drill ran before the purge pass became the `breakroom-server purge`
+The drill ran before the purge pass became the `beebreak-server purge`
 command; that command and the failure message are covered by tests
 (`test_purge_cli.py`, `test_ops_scripts.py`) but were not part of the
 drill, so repeat it on the real host. `age` was not installed on the drill machine, so the `--age-recipient` and
 `--age-identity` paths were not run. All drill containers, volumes, the image
 and the backups were removed afterwards.
 
-## Rotate `BREAKROOM_SERVER_SECRET`
+## Rotate `BEEBREAK_SERVER_SECRET`
 
 What the secret is used for:
 
@@ -223,7 +223,7 @@ What the secret is used for:
   database never stores the raw token, so a backup plus the secret still does
   not yield a live token. Tokens issued at sign-in are random and stored only
   as SHA-256 hashes.
-- A refresh retried within the grace window (`BREAKROOM_REFRESH_GRACE_S`, 30 s)
+- A refresh retried within the grace window (`BEEBREAK_REFRESH_GRACE_S`, 30 s)
   gets the same pair back; that is why the pair has to be derivable.
 
 Changing it therefore:
@@ -263,10 +263,10 @@ dc logs -f server              # follow
 dc logs --since 1h server | jq # pretty-print (compose.prod.yaml sets JSON)
 ```
 
-With `BREAKROOM_LOG_FORMAT=json` (set in `compose.prod.yaml`; the local default
+With `BEEBREAK_LOG_FORMAT=json` (set in `compose.prod.yaml`; the local default
 is text) each line is one object with `timestamp`, `level`, `logger` and
 `message`, plus a `request_id` (a random id per HTTP request, shared by every line that request writes). An unhandled error logs a fixed message plus `exc_type` (the exception class) and `frames` (`file:line:function`), never the exception text or variables, so a 500 can be traced to a code location without exposing request content. Request lines come from the
-`breakroom_server.access` logger: method, route **template** (not the real
+`beebreak_server.access` logger: method, route **template** (not the real
 path), status, duration, and opaque `user=` and `device=` ids. They carry no
 query string, header, body, email, nickname, device name, token or client
 address, and neither does any other line: logs hold counts and ids only. To
@@ -279,8 +279,8 @@ Older lines are discarded; ship them elsewhere if you need a longer history.
 ## Disable a user
 
 ```sh
-dc exec server breakroom-admin user disable <nickname>
-dc exec server breakroom-admin user enable <nickname>
+dc exec server beebreak-admin user disable <nickname>
+dc exec server beebreak-admin user enable <nickname>
 ```
 
 Disabling revokes every device of the account, cancels its queue entry and ends
@@ -302,17 +302,17 @@ CLI.
   to the account's own email address only.
 
   ```sh
-  (umask 077; dc exec -T server breakroom-admin account export user@example.com > export.json)
+  (umask 077; dc exec -T server beebreak-admin account export user@example.com > export.json)
   ```
 
   Use the shell redirect: `--out` would write inside the container. The file
   contains user content; delete it after sending.
 - **Erasure request:**
-  `dc exec server breakroom-admin account delete user@example.com --yes`
+  `dc exec server beebreak-admin account delete user@example.com --yes`
   prints table names and row counts. It is refused while the user is queued, in
   a live match or on either side of an open report (resolve first). A disabled
   account needs `--disabled-ok`, and its deletion leaves one tombstone (a keyed
-  hash of the email, kept 1 year, `BREAKROOM_TOMBSTONE_RETENTION_S`; the output
+  hash of the email, kept 1 year, `BEEBREAK_TOMBSTONE_RETENTION_S`; the output
   shows `tombstones=1`). `invite create` for that address is then refused with
   exit 1 unless the operator passes `--override-tombstone`, which creates the
   invite and deletes the tombstone. Backups taken earlier still contain the
@@ -329,12 +329,12 @@ server see reports only when they run `report list`.
 ## Single-worker rule
 
 The server runs as exactly **one worker in one container**; never scale it,
-never set `--workers` or `WEB_CONCURRENCY` above 1. `breakroom-server serve`
+never set `--workers` or `WEB_CONCURRENCY` above 1. `beebreak-server serve`
 refuses any other count and exits with status 2.
 
 Why (restated from `compose.prod.yaml` header comment, `docs/ARCHITECTURE.md`
 section on the M6 deployment, and the refusal text in
-`apps/server/src/breakroom_server/cli.py`): the realtime hub, presence, rate
+`apps/server/src/beebreak_server/cli.py`): the realtime hub, presence, rate
 limiters and the matchmaker lock live in the server process. A second replica
 or worker would split connected users between processes, so waiting users
 could not be matched with each other, and rate-limit counters would be per

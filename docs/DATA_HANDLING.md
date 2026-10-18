@@ -1,8 +1,8 @@
 # Data handling
 
-What Breakroom stores, where, who can read it, how long it is kept and how it
+What Beebreak stores, where, who can read it, how long it is kept and how it
 is deleted. Server retention values are the defaults in `ServerConfig`
-(`apps/server/src/breakroom_server/config.py`); each can be changed with the
+(`apps/server/src/beebreak_server/config.py`); each can be changed with the
 environment variable named in the table.
 
 ## The operator can read chats
@@ -26,48 +26,48 @@ tags, time bucket) and only after you press Find or accept an invitation.
 
 ## On your machine
 
-Paths follow `breakroom_shared.paths`. `$XDG_RUNTIME_DIR` falls back to
-`/tmp/breakroom-<uid>` and `$XDG_STATE_HOME` to `~/.local/state`.
+Paths follow `beebreak_shared.paths`. `$XDG_RUNTIME_DIR` falls back to
+`/tmp/beebreak-<uid>` and `$XDG_STATE_HOME` to `~/.local/state`.
 
 | What | Where stored | Who can read | Retention | Deletion |
 |---|---|---|---|---|
-| IPC socket `companion.sock` | `$XDG_RUNTIME_DIR/breakroom/` (dir `0700`, socket `0600`) | Your user account only | Exists while the companion runs; a stale file is removed on the next start | Stop the companion; remove the file |
-| Session-key salt `salt` | `$XDG_RUNTIME_DIR/breakroom/` (`0600`) | Your user account only | Kept in the runtime directory until it is removed | Remove the file |
-| State file `companion-state.json` (suggestions on/off, cooldown deadline, chosen stack tags) | `$XDG_STATE_HOME/breakroom/` (dir `0700`, file `0600`) | Your user account only | Until you remove it | Remove the file |
+| IPC socket `companion.sock` | `$XDG_RUNTIME_DIR/beebreak/` (dir `0700`, socket `0600`) | Your user account only | Exists while the companion runs; a stale file is removed on the next start | Stop the companion; remove the file |
+| Session-key salt `salt` | `$XDG_RUNTIME_DIR/beebreak/` (`0600`) | Your user account only | Kept in the runtime directory until it is removed | Remove the file |
+| State file `companion-state.json` (suggestions on/off, cooldown deadline, chosen stack tags) | `$XDG_STATE_HOME/beebreak/` (dir `0700`, file `0600`) | Your user account only | Until you remove it | Remove the file |
 | Refresh token (30 days, rotated) | OS keyring when a real backend exists; otherwise `credentials.json` in the state directory (`0600`, **unencrypted**, and the app tells you) | Your user account (keyring: also anything that can unlock it) | Until sign-out or removal | Sign out in the app; or remove the file or keyring entry |
 | Access token (15 min) | Companion memory only | The companion process | Process lifetime | Quit the companion |
 | Chat messages and peer nickname | Companion memory and window only | You | Until the window closes | Close the window |
 
-`breakroom-companion install` writes `install.json` in the state directory
+`beebreak-companion install` writes `install.json` in the state directory
 (`0600`; the server URL chosen at install, no secrets).
-`breakroom-companion uninstall` deletes the state directory, socket directory
+`beebreak-companion uninstall` deletes the state directory, socket directory
 (socket, salt), keyring entry, credentials file and any
-`~/.config/autostart/breakroom.desktop` an older release wrote, and
+`~/.config/autostart/beebreak.desktop` an older release wrote, and
 revokes the device on the server unless `--keep-account` is given or the
 server is unreachable (it says which).
 
 ## On the server
 
-All tables are in `apps/server/src/breakroom_server/models.py`. Unless a row
+All tables are in `apps/server/src/beebreak_server/models.py`. Unless a row
 says otherwise, only the operator (anyone with database or admin CLI access)
 can read a table; no API route returns an account ID or an email to another
 user.
 
 | What | Where stored | Who can read | Retention | Deletion |
 |---|---|---|---|---|
-| Account: canonical email (email accounts) or numeric GitHub user id (GitHub accounts; never both), nickname, nickname skeleton, status, created time | `users` | Operator. Other users see only the nickname (while matched) | Until the account is deleted | `breakroom-admin account delete` |
+| Account: canonical email (email accounts) or numeric GitHub user id (GitHub accounts; never both), nickname, nickname skeleton, status, created time | `users` | Operator. Other users see only the nickname (while matched) | Until the account is deleted | `beebreak-admin account delete` |
 | Consent: version, time, three flags (category, stack tags, time bucket) | `user_preferences` | Operator | Until the account is deleted | `account delete` |
 | Devices: name, hashed access token, token expiry, revoked, created, last seen and connected times | `devices` | Operator | Until the account is deleted. Name is a generic default (`WSL device`) the user can edit before sign-in; the machine hostname is never sent | `account delete`; sign-out revokes the device but keeps the row |
-| Refresh tokens: SHA-256 hash, device, expiry, used time | `refresh_tokens` | Operator | Deleted 7 days after the token expires, used or not (`BREAKROOM_REFRESH_TOKEN_RETENTION_S`); an unexpired token is kept | Automatic purge |
-| Sign-in challenges: email, HMAC of the emailed code, attempts, expiry, consumed time; for GitHub sign-in no identity at all, only the GitHub device code (a secret valid for about 15 minutes, cleared when the challenge is used or refused; a never-polled one stays until the purge), the poll interval and next poll time. The GitHub access token is never stored | `auth_challenges` | Operator | Deleted 24 h after use or expiry (`BREAKROOM_CHALLENGE_RETENTION_S`). A code is valid for 10 minutes (`BREAKROOM_CODE_TTL_S`) | Automatic purge |
-| Beta invites: email and HMAC of the invite code, or a GitHub numeric id (no code, no username), expiry, redeemed and revoked times, who redeemed | `beta_invites` | Operator | An invite is valid for 7 days (`BREAKROOM_INVITE_TTL_S`); expired, redeemed or revoked rows are deleted after 30 days (`BREAKROOM_INVITE_RETENTION_S`) | Automatic purge; `invite revoke` ends validity |
-| Account tombstone: keyed hash (HMAC under a subkey of the server secret) of the email, or of `github:<id>`, of an account that was disabled for abuse and then deleted, created time. No email, no user id | `deleted_account_tombstones` | Operator (the hash cannot be reversed to an email without the secret and a guess) | 1 year (`BREAKROOM_TOMBSTONE_RETENTION_S`). Purpose: abuse prevention, so a banned person cannot return as a new user unnoticed. Lawful basis: legitimate interest, PROPOSED for the lawyer review | Automatic purge; `invite create --override-tombstone` removes it when the operator decides to invite that address |
-| Queue entries: presence id, task category, stack tags, time bucket (only while queued), status, times, device, match | `queue_entries` | Operator | The four presence columns are cleared the moment the entry ends. The row is deleted 30 days after it ends (`BREAKROOM_RETENTION_S`). A search lasts 90 s (`BREAKROOM_QUEUE_TTL_S`) | Automatic purge; `account delete` |
-| Matches (also the chat): times, end reason, shared tags and category, extension count and requester, last message number | `matches` | Operator. Both participants see the shared tags and category | Deleted 30 days after the chat ends (`BREAKROOM_RETENTION_S`) | Automatic purge |
+| Refresh tokens: SHA-256 hash, device, expiry, used time | `refresh_tokens` | Operator | Deleted 7 days after the token expires, used or not (`BEEBREAK_REFRESH_TOKEN_RETENTION_S`); an unexpired token is kept | Automatic purge |
+| Sign-in challenges: email, HMAC of the emailed code, attempts, expiry, consumed time; for GitHub sign-in no identity at all, only the GitHub device code (a secret valid for about 15 minutes, cleared when the challenge is used or refused; a never-polled one stays until the purge), the poll interval and next poll time. The GitHub access token is never stored | `auth_challenges` | Operator | Deleted 24 h after use or expiry (`BEEBREAK_CHALLENGE_RETENTION_S`). A code is valid for 10 minutes (`BEEBREAK_CODE_TTL_S`) | Automatic purge |
+| Beta invites: email and HMAC of the invite code, or a GitHub numeric id (no code, no username), expiry, redeemed and revoked times, who redeemed | `beta_invites` | Operator | An invite is valid for 7 days (`BEEBREAK_INVITE_TTL_S`); expired, redeemed or revoked rows are deleted after 30 days (`BEEBREAK_INVITE_RETENTION_S`) | Automatic purge; `invite revoke` ends validity |
+| Account tombstone: keyed hash (HMAC under a subkey of the server secret) of the email, or of `github:<id>`, of an account that was disabled for abuse and then deleted, created time. No email, no user id | `deleted_account_tombstones` | Operator (the hash cannot be reversed to an email without the secret and a guess) | 1 year (`BEEBREAK_TOMBSTONE_RETENTION_S`). Purpose: abuse prevention, so a banned person cannot return as a new user unnoticed. Lawful basis: legitimate interest, PROPOSED for the lawyer review | Automatic purge; `invite create --override-tombstone` removes it when the operator decides to invite that address |
+| Queue entries: presence id, task category, stack tags, time bucket (only while queued), status, times, device, match | `queue_entries` | Operator | The four presence columns are cleared the moment the entry ends. The row is deleted 30 days after it ends (`BEEBREAK_RETENTION_S`). A search lasts 90 s (`BEEBREAK_QUEUE_TTL_S`) | Automatic purge; `account delete` |
+| Matches (also the chat): times, end reason, shared tags and category, extension count and requester, last message number | `matches` | Operator. Both participants see the shared tags and category | Deleted 30 days after the chat ends (`BEEBREAK_RETENTION_S`) | Automatic purge |
 | Match participants: who took part, active flag, offline-since time, count of messages sent | `match_participants` | Operator | Deleted with the match, 30 days after it ends | Automatic purge; `account delete` |
-| Messages: author, per-chat sequence number, client message id, body, time | `messages` | The two participants (through the app, until deleted) and the operator | Bodies deleted 24 h after the chat ends (`BREAKROOM_MESSAGE_RETENTION_S`) | Automatic purge; `account delete` |
+| Messages: author, per-chat sequence number, client message id, body, time | `messages` | The two participants (through the app, until deleted) and the operator | Bodies deleted 24 h after the chat ends (`BEEBREAK_MESSAGE_RETENTION_S`) | Automatic purge; `account delete` |
 | Blocks: blocker, blocked, time | `blocks` | Operator (a block is never shown to the blocked person) | Until the account is deleted | `account delete`; the admin CLI can remove a block |
-| Reports: reporter, reported, match id, reason, optional note (500 chars), status, times | `reports` | Operator. The reported person is not told | Open reports are kept until resolved; resolved reports are deleted 90 days after resolution (`BREAKROOM_REPORT_RETENTION_S`) | Automatic purge. `account delete` is refused while the user is on either side of an open report |
+| Reports: reporter, reported, match id, reason, optional note (500 chars), status, times | `reports` | Operator. The reported person is not told | Open reports are kept until resolved; resolved reports are deleted 90 days after resolution (`BEEBREAK_REPORT_RETENTION_S`) | Automatic purge. `account delete` is refused while the user is on either side of an open report |
 | Report evidence: copies of the messages the reporter ticked (author role, body, time) | `report_messages` | Operator | Same as the report | Deleted with the report |
 | Backups: database dumps (every table above) | `backups/` on the host, mode 0600, optionally age or gpg encrypted | Operator | Not decided yet; the runbook's 14-day cron prune is an example | Delete the file. An older backup still holds accounts deleted since it was taken |
 
@@ -87,12 +87,12 @@ come only from the environment and are never logged. The provider for the hosted
 Email `<contact address>`. The operator exports or deletes an account with the
 admin CLI and answers within 14 days.
 
-- Export (`breakroom-admin account export <email>` or `--github-id <id>`): your own rows as JSON, including
+- Export (`beebreak-admin account export <email>` or `--github-id <id>`): your own rows as JSON, including
   your own message bodies while they exist and your own messages copied into
   reports you filed. Reports filed against you appear
   only as a date, status and resolution date, with no reporter, note or
   evidence. Hashes and other people's messages are never included.
-- Delete (`breakroom-admin account delete`): a hard delete of every row that
+- Delete (`beebreak-admin account delete`): a hard delete of every row that
   refers to you, and of the invites and challenges for your email. It is
   refused while you are queued, in a live chat, or on either side of an open
   report. A disabled account is deleted only after the operator reviews it;

@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from breakroom_server.config import ServerConfig
-from breakroom_server.github import (
+from beebreak_server.config import ServerConfig
+from beebreak_server.github import (
     Authorized,
     Denied,
     Expired,

@@ -33,7 +33,7 @@ def hook_command() -> str:
 
 def mcp_launcher() -> list[str]:
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
-    server = manifest["mcpServers"]["breakroom"]
+    server = manifest["mcpServers"]["beebreak"]
     return [server["command"], *server["args"]]
 
 
@@ -76,7 +76,7 @@ def test_hook_runs_the_binary_from_local_bin_with_stdin(
 ) -> None:
     home, root = sandbox
     out = home / "seen"
-    fake_binary(home / ".local" / "bin", "breakroom-hook", f"cat > {out}")
+    fake_binary(home / ".local" / "bin", "beebreak-hook", f"cat > {out}")
     done = run(["sh", "-c", hook_command()], home, root, "payload")
     assert done.returncode == 0
     assert out.read_text() == "payload"
@@ -90,8 +90,8 @@ def test_hook_prefers_the_repo_checkout_venv(sandbox: tuple[Path, Path]) -> None
     venv_bin = repo_plugin.parents[1] / ".venv" / "bin"
     venv_bin.mkdir(parents=True)
     out = home / "seen"
-    fake_binary(venv_bin, "breakroom-hook", f"echo venv > {out}")
-    fake_binary(home / ".local" / "bin", "breakroom-hook", f"echo tool > {out}")
+    fake_binary(venv_bin, "beebreak-hook", f"echo venv > {out}")
+    fake_binary(home / ".local" / "bin", "beebreak-hook", f"echo tool > {out}")
     run(["sh", "-c", hook_command()], home, repo_plugin, "")
     assert out.read_text().strip() == "venv"
 
@@ -100,14 +100,14 @@ def test_hook_exit_code_of_a_present_binary_is_not_masked(
     sandbox: tuple[Path, Path],
 ) -> None:
     home, root = sandbox
-    fake_binary(home / ".local" / "bin", "breakroom-hook", "exit 7")
+    fake_binary(home / ".local" / "bin", "beebreak-hook", "exit 7")
     assert run(["sh", "-c", hook_command()], home, root, "").returncode == 7
 
 
 def test_mcp_launcher_runs_the_installed_binary(sandbox: tuple[Path, Path]) -> None:
     home, root = sandbox
     out = home / "seen"
-    fake_binary(home / ".local" / "bin", "breakroom-mcp", f"cat > {out}")
+    fake_binary(home / ".local" / "bin", "beebreak-mcp", f"cat > {out}")
     done = run(mcp_launcher(), home, root, "rpc")
     assert done.returncode == 0
     assert out.read_text() == "rpc"
@@ -134,5 +134,5 @@ def test_release_wheels_expose_the_three_entry_points() -> None:
         ROOT / "apps" / "companion" / "pyproject.toml",
     ):
         declared |= set(tomllib.loads(pyproject.read_text())["project"]["scripts"])
-    assert declared == {"breakroom-companion", "breakroom-hook", "breakroom-mcp"}
+    assert declared == {"beebreak-companion", "beebreak-hook", "beebreak-mcp"}
     assert os.access(ROOT / "scripts" / "build_release.sh", os.X_OK)

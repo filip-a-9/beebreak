@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from breakroom_shared.api import (
+from beebreak_shared.api import (
     AuthMethods,
     GitHubPollRequest,
     GitHubPollResponse,

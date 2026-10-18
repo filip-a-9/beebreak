@@ -3,15 +3,15 @@
 #   *.whl              wheels for shared, agent_bridge and companion
 #   SHA256SUMS         checksums of the wheels
 #   marketplace/       Claude Code marketplace holding the plugin
-#   breakroom-release.tar.gz   all of the above, for handing to testers
+#   beebreak-release.tar.gz   all of the above, for handing to testers
 # Testers unpack the tarball and follow the README Install section.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-out="${BREAKROOM_DIST_DIR:-dist}"
+out="${BEEBREAK_DIST_DIR:-dist}"
 
 rm -rf "$out"
-for pkg in breakroom-shared breakroom-agent-bridge breakroom-companion; do
+for pkg in beebreak-shared beebreak-agent-bridge beebreak-companion; do
   uv build --wheel --out-dir "$out" --package "$pkg"
 done
 (cd "$out" && sha256sum -- *.whl > SHA256SUMS)
@@ -21,8 +21,8 @@ cp .claude-plugin/marketplace.json "$out/marketplace/.claude-plugin/"
 cp -r integrations/claude-code "$out/marketplace/integrations/"
 
 tmp="$(mktemp -d)"
-tar -C "$out" -czf "$tmp/breakroom-release.tar.gz" .
-mv "$tmp/breakroom-release.tar.gz" "$out/"
+tar -C "$out" -czf "$tmp/beebreak-release.tar.gz" .
+mv "$tmp/beebreak-release.tar.gz" "$out/"
 rmdir "$tmp"
 
 echo "built:"

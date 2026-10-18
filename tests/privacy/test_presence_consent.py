@@ -17,15 +17,15 @@ import pytest
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
-from breakroom_companion.app import BreakTracker, wire_break
-from breakroom_companion.config import TriggerConfig
-from breakroom_companion.controller import Controller
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.state_store import FileStateStore
-from breakroom_companion.window import CompanionWindow
-from breakroom_server.models import QueueEntry, User, split_tags
-from breakroom_shared.api import Consent
-from breakroom_shared.presence import StackTag, build_presence
+from beebreak_companion.app import BreakTracker, wire_break
+from beebreak_companion.config import TriggerConfig
+from beebreak_companion.controller import Controller
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.state_store import FileStateStore
+from beebreak_companion.window import CompanionWindow
+from beebreak_server.models import QueueEntry, User, split_tags
+from beebreak_shared.api import Consent
+from beebreak_shared.presence import StackTag, build_presence
 from tests.e2e_support.server import LiveServer
 from tests.privacy.test_outbound_leaks import (
     ALL_CONSENT,

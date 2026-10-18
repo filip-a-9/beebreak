@@ -1,9 +1,12 @@
-# Breakroom
+# Beebreak
+
+(Formerly Breakroom; renamed for a trademark conflict, see
+[ADR 0019](docs/ADR/0019-rename-to-beebreak.md).)
 
 A voluntary, spontaneous one-to-one chat break while AI coding agents work.
 
 Developers with coding agents often have short intervals when the agent runs
-on its own. Breakroom detects a likely interval, offers an optional social
+on its own. Beebreak detects a likely interval, offers an optional social
 break, and matches two consenting developers for a short one-to-one
 conversation. It should feel like a coffee break at work, not a meeting
 planner, social network or agent-to-agent discussion tool. Entry is always
@@ -49,55 +52,55 @@ The companion supports Python 3.12 only, so the install below passes
 one otherwise; without the flag it could pick a newer Python that does not work.
 
 The repository is private, so testers install from a release bundle
-(`breakroom-release.tar.gz`, built by `scripts/build_release.sh`). Compare the
+(`beebreak-release.tar.gz`, built by `scripts/build_release.sh`). Compare the
 tarball's SHA-256 with the one on the release page. The `SHA256SUMS` file inside
 it only checks that the unpacked wheels were not corrupted; it is not tamper
 protection.
 
 ```bash
-mkdir -p ~/breakroom-release && tar xzf breakroom-release.tar.gz -C ~/breakroom-release
-(cd ~/breakroom-release && sha256sum -c SHA256SUMS)
+mkdir -p ~/beebreak-release && tar xzf beebreak-release.tar.gz -C ~/beebreak-release
+(cd ~/beebreak-release && sha256sum -c SHA256SUMS)
 
 # The three wheels are named explicitly, so uv cannot substitute a package of
-# the same name from PyPI. This also installs the breakroom-hook and
-# breakroom-mcp commands the plugin calls.
-R=~/breakroom-release
-uv tool install --python 3.12 $R/breakroom_companion-*.whl \
-  --with $R/breakroom_shared-*.whl \
-  --with $R/breakroom_agent_bridge-*.whl \
-  --with-executables-from breakroom-agent-bridge
+# the same name from PyPI. This also installs the beebreak-hook and
+# beebreak-mcp commands the plugin calls.
+R=~/beebreak-release
+uv tool install --python 3.12 $R/beebreak_companion-*.whl \
+  --with $R/beebreak_shared-*.whl \
+  --with $R/beebreak_agent_bridge-*.whl \
+  --with-executables-from beebreak-agent-bridge
 
-breakroom-companion install        # asks for the server URL
-claude plugin marketplace add ~/breakroom-release/marketplace
-claude plugin install breakroom@breakroom
-breakroom-companion                # start it (it reads the URL saved above)
+beebreak-companion install        # asks for the server URL
+claude plugin marketplace add ~/beebreak-release/marketplace
+claude plugin install beebreak@beebreak
+beebreak-companion                # start it (it reads the URL saved above)
 ```
 
 A server with a private CA: add `--ca-file /path/to/ca.pem` to
-`breakroom-companion install`. The file must be a PEM owned by you (or root)
+`beebreak-companion install`. The file must be a PEM owned by you (or root)
 that only its owner can write. It is recorded next to the server URL and
-applied on every start unless `BREAKROOM_CA_FILE` is
+applied on every start unless `BEEBREAK_CA_FILE` is
 already set. It is read once at start: restart the companion after changing it.
 
-Start the companion by hand with `breakroom-companion`. There is no login
+Start the companion by hand with `beebreak-companion`. There is no login
 autostart: WSLg has no desktop session, so nothing in WSL2 runs autostart
 entries.
 
-Without the `breakroom-hook` command on `PATH` the hooks do nothing and stay
-silent (the `breakroom` MCP server shows as failed in `/mcp`).
+Without the `beebreak-hook` command on `PATH` the hooks do nothing and stay
+silent (the `beebreak` MCP server shows as failed in `/mcp`).
 
 Once the repository is public, the wheels step becomes
-`uv tool install --python 3.12 --with-executables-from breakroom-agent-bridge "git+https://github.com/<owner>/<repo>#subdirectory=apps/companion"`
+`uv tool install --python 3.12 --with-executables-from beebreak-agent-bridge "git+https://github.com/<owner>/<repo>#subdirectory=apps/companion"`
 (untested until then) and the marketplace is `claude plugin marketplace add <owner>/<repo>`.
 
 ## Uninstall
 
 ```bash
-breakroom-companion uninstall                # add --keep-account to keep the server login valid
-claude plugin uninstall breakroom@breakroom
-claude plugin marketplace remove breakroom
-uv tool uninstall breakroom-companion
-rm -rf ~/breakroom-release
+beebreak-companion uninstall                # add --keep-account to keep the server login valid
+claude plugin uninstall beebreak@beebreak
+claude plugin marketplace remove beebreak
+uv tool uninstall beebreak-companion
+rm -rf ~/beebreak-release
 ```
 
 `uninstall` stops a running companion, revokes this device on the server
@@ -115,7 +118,7 @@ Requires Python 3.12+, [uv](https://docs.astral.sh/uv/) and Docker.
 uv sync
 cp .env.example .env     # then fill in the two secrets, see the file
 docker compose up --build
-docker compose exec server breakroom-admin invite create you@example.com
+docker compose exec server beebreak-admin invite create you@example.com
 ```
 
 [compose.yaml](compose.yaml) starts Postgres, Mailpit (catches the sign-in
@@ -129,7 +132,7 @@ Run the checks:
 uv run ruff format --check . && uv run ruff check . && uv run mypy packages apps tests tools && uv run pytest
 ```
 
-Postgres race and migration tests are skipped unless `BREAKROOM_TEST_DATABASE_URL`
+Postgres race and migration tests are skipped unless `BEEBREAK_TEST_DATABASE_URL`
 is set.
 
 To try the Claude Code plugin from a checkout, see

@@ -3,7 +3,7 @@ from typing import Any, cast
 
 import pytest
 
-from breakroom_server.config import ServerConfig, decode_secret
+from beebreak_server.config import ServerConfig, decode_secret
 
 SECRET = base64.urlsafe_b64encode(b"s" * 48).decode().rstrip("=")
 
@@ -13,10 +13,10 @@ def test_from_env_requires_database_url_and_secret(
 ) -> None:
     with pytest.raises(ValueError):
         ServerConfig.from_env()
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", "sqlite://")
     with pytest.raises(ValueError):
         ServerConfig.from_env()
-    monkeypatch.setenv("BREAKROOM_SERVER_SECRET", SECRET)
+    monkeypatch.setenv("BEEBREAK_SERVER_SECRET", SECRET)
     config = ServerConfig.from_env()
     assert config.secret == b"s" * 48
     assert config.access_ttl_s == 900
@@ -37,9 +37,9 @@ def test_secret_error_does_not_echo_value() -> None:
 def test_non_positive_or_bad_numbers_rejected(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("BREAKROOM_SERVER_SECRET", SECRET)
-    monkeypatch.setenv("BREAKROOM_ACCESS_TTL_S", value)
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("BEEBREAK_SERVER_SECRET", SECRET)
+    monkeypatch.setenv("BEEBREAK_ACCESS_TTL_S", value)
     with pytest.raises(ValueError):
         ServerConfig.from_env()
 
@@ -60,8 +60,8 @@ CHAT_DEFAULTS = {
 
 
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("BREAKROOM_SERVER_SECRET", SECRET)
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("BEEBREAK_SERVER_SECRET", SECRET)
 
 
 def test_chat_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -75,8 +75,8 @@ def test_chat_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_chat_values_read_from_env(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     _env(monkeypatch)
     # Keeps message_retention_s = 7 clear of the report-window coupling.
-    monkeypatch.setenv("BREAKROOM_REPORT_WINDOW_S", "1")
-    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", "7")
+    monkeypatch.setenv("BEEBREAK_REPORT_WINDOW_S", "1")
+    monkeypatch.setenv(f"BEEBREAK_{name.upper()}", "7")
     assert getattr(ServerConfig.from_env(), name) == 7
 
 
@@ -85,7 +85,7 @@ def test_chat_values_must_be_positive(
     monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     _env(monkeypatch)
-    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", "0")
+    monkeypatch.setenv(f"BEEBREAK_{name.upper()}", "0")
     with pytest.raises(ValueError):
         ServerConfig.from_env()
 
@@ -94,10 +94,10 @@ def test_zero_extensions_allowed_negative_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _env(monkeypatch)
-    monkeypatch.setenv("BREAKROOM_CHAT_MAX_EXTENSIONS", "0")
+    monkeypatch.setenv("BEEBREAK_CHAT_MAX_EXTENSIONS", "0")
     assert ServerConfig.from_env().chat_max_extensions == 0
     for bad in ("-1", "x"):
-        monkeypatch.setenv("BREAKROOM_CHAT_MAX_EXTENSIONS", bad)
+        monkeypatch.setenv("BEEBREAK_CHAT_MAX_EXTENSIONS", bad)
         with pytest.raises(ValueError):
             ServerConfig.from_env()
     with pytest.raises(ValueError):
@@ -151,7 +151,7 @@ def test_auth_retention_read_from_env(
     monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     _env(monkeypatch)
-    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", "7")
+    monkeypatch.setenv(f"BEEBREAK_{name.upper()}", "7")
     assert getattr(ServerConfig.from_env(), name) == 7
 
 
@@ -161,7 +161,7 @@ def test_auth_retention_must_be_positive(
     monkeypatch: pytest.MonkeyPatch, name: str, value: str
 ) -> None:
     _env(monkeypatch)
-    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", value)
+    monkeypatch.setenv(f"BEEBREAK_{name.upper()}", value)
     with pytest.raises(ValueError):
         ServerConfig.from_env()
 
@@ -196,7 +196,7 @@ def test_server_limits_read_from_env(
     monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     _env(monkeypatch)
-    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", "7")
+    monkeypatch.setenv(f"BEEBREAK_{name.upper()}", "7")
     assert getattr(ServerConfig.from_env(), name) == 7
 
 
@@ -206,7 +206,7 @@ def test_server_limits_must_be_positive(
     monkeypatch: pytest.MonkeyPatch, name: str, value: str
 ) -> None:
     _env(monkeypatch)
-    monkeypatch.setenv(f"BREAKROOM_{name.upper()}", value)
+    monkeypatch.setenv(f"BEEBREAK_{name.upper()}", value)
     with pytest.raises(ValueError):
         ServerConfig.from_env()
     with pytest.raises(ValueError):

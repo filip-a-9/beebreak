@@ -44,32 +44,32 @@ from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 from websockets.asyncio.client import ClientConnection
 
-from breakroom_agent_bridge.ipc_client import send_event
-from breakroom_agent_bridge.reducer import reduce
-from breakroom_agent_bridge.session_key import derive_key
-from breakroom_companion import cli
-from breakroom_companion.api_client import ApiClient
-from breakroom_companion.break_state import BreakState
-from breakroom_companion.controller import Controller
-from breakroom_companion.credentials import (
+from beebreak_agent_bridge.ipc_client import send_event
+from beebreak_agent_bridge.reducer import reduce
+from beebreak_agent_bridge.session_key import derive_key
+from beebreak_companion import cli
+from beebreak_companion.api_client import ApiClient
+from beebreak_companion.break_state import BreakState
+from beebreak_companion.controller import Controller
+from beebreak_companion.credentials import (
     FileCredentialStore,
     StoredCredentials,
     default_credential_store,
 )
-from breakroom_companion.privacy_preview import DEFAULT_DEVICE_NAME
-from breakroom_companion.realtime_client import RealtimeClient, RealtimeError
-from breakroom_companion.remote import RemoteWorker
-from breakroom_companion.remote_config import RemoteConfig
-from breakroom_companion.state_store import FileStateStore
-from breakroom_companion.worker import IpcWorker
-from breakroom_server.account_data import export_account
-from breakroom_server.admin import main as admin_main
-from breakroom_server.models import Base, Device, User
-from breakroom_shared.api import Consent
-from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import StatusReply
-from breakroom_shared.paths import credentials_path, state_path
-from breakroom_shared.presence import build_presence
+from beebreak_companion.privacy_preview import DEFAULT_DEVICE_NAME
+from beebreak_companion.realtime_client import RealtimeClient, RealtimeError
+from beebreak_companion.remote import RemoteWorker
+from beebreak_companion.remote_config import RemoteConfig
+from beebreak_companion.state_store import FileStateStore
+from beebreak_companion.worker import IpcWorker
+from beebreak_server.account_data import export_account
+from beebreak_server.admin import main as admin_main
+from beebreak_server.models import Base, Device, User
+from beebreak_shared.api import Consent
+from beebreak_shared.events import NormalizedEvent
+from beebreak_shared.ipc import StatusReply
+from beebreak_shared.paths import credentials_path, state_path
+from beebreak_shared.presence import build_presence
 from tests.e2e_support.server import LiveServer
 from tests.fixtures.hook_payloads import PAYLOADS, RAW_SESSION_ID
 from tests.fixtures.privacy_corpus import load_corpus, scan
@@ -490,7 +490,7 @@ def test_scanner_sees_a_canary_in_each_outbound_and_server_channel(
             await rt.close()
 
     asyncio.run(leak())
-    logging.getLogger("breakroom_server.test").warning("leaked %s", canary)
+    logging.getLogger("beebreak_server.test").warning("leaked %s", canary)
     with live_server.session_factory() as session:
         session.add(
             User(
@@ -959,9 +959,9 @@ def collect_exports(
     emails: list[str],
 ) -> list[bytes]:
     """Account export (M6-04) both ways: `export_account` and the admin CLI."""
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", server.config.database_url)
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", server.config.database_url)
     monkeypatch.setenv(
-        "BREAKROOM_SERVER_SECRET", base64.urlsafe_b64encode(TEST_SECRET).decode()
+        "BEEBREAK_SERVER_SECRET", base64.urlsafe_b64encode(TEST_SECRET).decode()
     )
     blobs: list[bytes] = []
     for n, email in enumerate(emails):
@@ -990,8 +990,8 @@ def isolate_home(root: Path, mp: pytest.MonkeyPatch) -> None:
     mp.setenv("XDG_CONFIG_HOME", str(root / "config"))
     mp.setenv("XDG_STATE_HOME", str(root / "state"))
     mp.setenv("XDG_RUNTIME_DIR", str(root / "run"))
-    mp.delenv("BREAKROOM_SERVER_URL", raising=False)
-    mp.delenv("BREAKROOM_CA_FILE", raising=False)
+    mp.delenv("BEEBREAK_SERVER_URL", raising=False)
+    mp.delenv("BEEBREAK_CA_FILE", raising=False)
     # Never the developer's real keyring: env for a fresh import, and the
     # already-resolved backend replaced for a process that cached one.
     mp.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.fail.Keyring")
@@ -1004,11 +1004,11 @@ def isolate_home(root: Path, mp: pytest.MonkeyPatch) -> None:
 
 
 def drive_uninstall(root: Path) -> list[Path]:
-    """Run the real `breakroom-companion uninstall` (in the environment
+    """Run the real `beebreak-companion uninstall` (in the environment
     `isolate_home` set up); returns the paths that must be gone afterwards."""
     gone = [
-        root / "state" / "breakroom",
-        root / "run" / "breakroom",
+        root / "state" / "beebreak",
+        root / "run" / "beebreak",
     ]
     assert cli.main(["uninstall"]) == 0
     return gone
@@ -1137,7 +1137,7 @@ def test_corpus_never_leaves_through_any_channel(
         )
     finally:
         proxy.close()
-    assert CORPUS.version == 1  # the corpus version this run used
+    assert CORPUS.version == 2  # the corpus version this run used
 
     # Sanity: the scan looked at real traffic, state and exports.
     channels = all_channels(scenario, capture, caplog, capfd)
@@ -1223,7 +1223,7 @@ def test_scanner_sees_a_corpus_value_in_companion_files_and_logs(
     state.write_text(json.dumps({"version": 1, "note": value.value}))
     # Companion log and console output.
     caplog.set_level(logging.DEBUG)
-    logging.getLogger("breakroom_companion.remote").warning("leaked %s", value.value)
+    logging.getLogger("beebreak_companion.remote").warning("leaked %s", value.value)
     print(value.value)
     channels = companion_file_blobs(tmp_path) | log_blobs(caplog, capfd)
     hits = set(scan.find_corpus_leaks(channels, [value]))
@@ -1264,7 +1264,7 @@ def test_scanner_sees_a_corpus_value_in_the_uninstall_channel(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     """The real uninstall, with a corpus value as the stored login and a stray
-    file beside Breakroom's own: the revoke request carries the first, and the
+    file beside Beebreak's own: the revoke request carries the first, and the
     scan of the tree afterwards finds the second."""
     value = CORPUS.bases[0]
     root = Path(tempfile.mkdtemp(dir="/tmp"))

@@ -10,13 +10,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, event, select
 
-from breakroom_server import chat
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import Match, MatchParticipant, Message
-from breakroom_server.ratelimit import RateLimiter
-from breakroom_shared.api import (
+from beebreak_server import chat
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import Match, MatchParticipant, Message
+from beebreak_server.ratelimit import RateLimiter
+from beebreak_shared.api import (
     MAX_SERVER_FRAME_BYTES,
     SendMessageRequest,
     WsChatMessage,

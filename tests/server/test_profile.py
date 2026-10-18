@@ -5,9 +5,9 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import Device, User, UserPreference
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import Device, User, UserPreference
 from tests.server.conftest import START_TIME, FixedClock, bearer, sign_in
 
 CONSENT = {
@@ -72,7 +72,7 @@ def test_invalid_nickname_is_400(
     )
 
 
-@pytest.mark.parametrize("nickname", ["admin", "Adm1n", "r00t", "Breakroom_Team"])
+@pytest.mark.parametrize("nickname", ["admin", "Adm1n", "r00t", "Beebreak_Team"])
 def test_reserved_nickname_is_409(
     nickname: str,
     client: TestClient,

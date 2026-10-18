@@ -9,19 +9,19 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, select
 
-from breakroom_server.app import app_from_env, create_app
-from breakroom_server.auth import ApiError, verify_challenge
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import (
+from beebreak_server.app import app_from_env, create_app
+from beebreak_server.auth import ApiError, verify_challenge
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import (
     AuthChallenge,
     BetaInvite,
     Device,
     User,
 )
-from breakroom_server.ratelimit import RateLimiter
-from breakroom_server.tokens import hmac_code, normalize_code
+from beebreak_server.ratelimit import RateLimiter
+from beebreak_server.tokens import hmac_code, normalize_code
 from tests.server.conftest import (
     START_TIME,
     TEST_SECRET,
@@ -430,7 +430,7 @@ def test_app_state_exposes_what_realtime_needs(app: FastAPI, clock: FixedClock) 
 def test_mailer_selection_from_env(
     server_env: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_MAILER", "record")
+    monkeypatch.setenv("BEEBREAK_MAILER", "record")
     assert isinstance(app_from_env().state.mailer, RecordingMailer)
 
 
@@ -444,7 +444,7 @@ def test_default_mailer_is_smtp_with_starttls_flag(
             super().__init__()
             created.append({"host": host, "port": port, **kw})
 
-    monkeypatch.setattr("breakroom_server.app.SmtpMailer", FakeSmtp)
+    monkeypatch.setattr("beebreak_server.app.SmtpMailer", FakeSmtp)
     config = dataclasses.replace(server_config, smtp_tls="starttls", smtp_port=2525)
     create_app(config)
     assert created == [
@@ -467,18 +467,18 @@ def test_config_rate_limit_fields_default_and_are_strict(
     assert config.rate_window_s == 900 and config.mailer == "smtp"
     assert config.smtp_tls == "none"
 
-    monkeypatch.setenv("BREAKROOM_RATE_START_EMAIL", "7")
-    monkeypatch.setenv("BREAKROOM_SMTP_STARTTLS", "1")
+    monkeypatch.setenv("BEEBREAK_RATE_START_EMAIL", "7")
+    monkeypatch.setenv("BEEBREAK_SMTP_STARTTLS", "1")
     config = ServerConfig.from_env()
     assert config.rate_start_email == 7 and config.smtp_tls == "starttls"
 
     for name, bad in [
-        ("BREAKROOM_RATE_START_IP", "0"),
-        ("BREAKROOM_RATE_VERIFY_IP", "-1"),
-        ("BREAKROOM_RATE_REFRESH_DEVICE", "x"),
-        ("BREAKROOM_RATE_WINDOW_S", "0"),
-        ("BREAKROOM_SMTP_STARTTLS", "yes"),
-        ("BREAKROOM_MAILER", "carrier-pigeon"),
+        ("BEEBREAK_RATE_START_IP", "0"),
+        ("BEEBREAK_RATE_VERIFY_IP", "-1"),
+        ("BEEBREAK_RATE_REFRESH_DEVICE", "x"),
+        ("BEEBREAK_RATE_WINDOW_S", "0"),
+        ("BEEBREAK_SMTP_STARTTLS", "yes"),
+        ("BEEBREAK_MAILER", "carrier-pigeon"),
     ]:
         with monkeypatch.context() as m:
             m.setenv(name, bad)

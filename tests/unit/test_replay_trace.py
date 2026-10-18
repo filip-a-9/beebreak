@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from breakroom_companion.config import TriggerConfig
+from beebreak_companion.config import TriggerConfig
 from tests.fixtures.traces import synthetic as syn
 from tools.replay_trace import load_events, replay
 
@@ -19,7 +19,7 @@ def _write(path: Path, bad: list[str]) -> None:
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("BREAKROOM_")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("BEEBREAK_")}
     return subprocess.run(
         [sys.executable, str(TOOL), *args],
         capture_output=True,
@@ -68,8 +68,8 @@ def test_cli_missing_file_fails_cleanly(tmp_path: Path) -> None:
 def test_cli_honours_env_threshold(tmp_path: Path) -> None:
     trace = tmp_path / "t.jsonl"
     _write(trace, [])
-    env = {k: v for k, v in os.environ.items() if not k.startswith("BREAKROOM_")}
-    env["BREAKROOM_ACTIVITY_THRESHOLD_S"] = "20"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("BEEBREAK_")}
+    env["BEEBREAK_ACTIVITY_THRESHOLD_S"] = "20"
     result = subprocess.run(
         [sys.executable, str(TOOL), str(trace)],
         capture_output=True,

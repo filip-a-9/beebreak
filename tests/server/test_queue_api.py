@@ -11,22 +11,22 @@ from fastapi.testclient import TestClient
 from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
-from breakroom_server import queue
-from breakroom_server.auth import ApiError
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.matchmaking import Matchmaker
-from breakroom_server.models import Block, Match, MatchParticipant, QueueEntry
-from breakroom_server.queue import current_state
-from breakroom_shared.api import (
+from beebreak_server import queue
+from beebreak_server.auth import ApiError
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.matchmaking import Matchmaker
+from beebreak_server.models import Block, Match, MatchParticipant, QueueEntry
+from beebreak_server.queue import current_state
+from beebreak_shared.api import (
     Consent,
     QueueJoinRequest,
     WsMatchEnded,
     WsQueueEnded,
     WsQueueJoined,
 )
-from breakroom_shared.presence import OutboundPresence
+from beebreak_shared.presence import OutboundPresence
 from tests.server.conftest import (
     ALL_CONSENT,
     START_TIME,

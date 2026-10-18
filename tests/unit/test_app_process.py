@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from breakroom_agent_bridge.ipc_client import request_status
+from beebreak_agent_bridge.ipc_client import request_status
 
 START_WAIT_S = 10.0
 
@@ -33,7 +33,7 @@ def _spawn(
         **(extra_env or {}),
     }
     return subprocess.Popen(
-        [sys.executable, "-m", "breakroom_companion.app"],
+        [sys.executable, "-m", "beebreak_companion.app"],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -54,7 +54,7 @@ def test_signal_quits_cleanly_and_removes_socket(
     runtime: Path, signum: signal.Signals
 ) -> None:
     proc = _spawn(runtime)
-    sock = runtime / "breakroom" / "companion.sock"
+    sock = runtime / "beebreak" / "companion.sock"
     try:
         _wait_running(sock)
         proc.send_signal(signum)
@@ -68,7 +68,7 @@ def test_signal_quits_cleanly_and_removes_socket(
 def test_second_instance_exits_already_running(runtime: Path) -> None:
     first = _spawn(runtime)
     try:
-        _wait_running(runtime / "breakroom" / "companion.sock")
+        _wait_running(runtime / "beebreak" / "companion.sock")
         second = _spawn(runtime)
         second.communicate(timeout=START_WAIT_S)
         assert second.returncode == 2
@@ -82,8 +82,8 @@ def test_unusable_socket_path_is_not_reported_as_already_running(
 ) -> None:
     # A directory where the socket should be: binding fails for a reason other
     # than a live companion, so the exit code must differ from "already running".
-    (runtime / "breakroom").mkdir(mode=0o700)
-    (runtime / "breakroom" / "companion.sock").mkdir()
+    (runtime / "beebreak").mkdir(mode=0o700)
+    (runtime / "beebreak" / "companion.sock").mkdir()
     proc = _spawn(runtime)
     proc.communicate(timeout=START_WAIT_S)
     assert proc.returncode not in (0, 2)
@@ -92,7 +92,7 @@ def test_unusable_socket_path_is_not_reported_as_already_running(
 def test_unsafe_runtime_dir_exits_1_with_one_fixed_stderr_line(
     runtime: Path,
 ) -> None:
-    sub = runtime / "breakroom"
+    sub = runtime / "beebreak"
     sub.mkdir(mode=0o700)
     sub.chmod(0o770)
     proc = _spawn(runtime)
@@ -103,7 +103,7 @@ def test_unsafe_runtime_dir_exits_1_with_one_fixed_stderr_line(
 
 
 def test_invalid_config_exits_1_with_one_fixed_stderr_line(runtime: Path) -> None:
-    proc = _spawn(runtime, {"BREAKROOM_COOLDOWN_S": "-5"})
+    proc = _spawn(runtime, {"BEEBREAK_COOLDOWN_S": "-5"})
     _, err = proc.communicate(timeout=START_WAIT_S)
     assert proc.returncode == 1
     assert len(err.decode().strip().splitlines()) == 1
@@ -113,12 +113,12 @@ def test_invalid_config_exits_1_with_one_fixed_stderr_line(runtime: Path) -> Non
 def test_unsafe_state_dir_still_starts_with_the_account_row_disabled(
     runtime: Path,
 ) -> None:
-    state = runtime / "state" / "breakroom"
+    state = runtime / "state" / "beebreak"
     state.mkdir(mode=0o700, parents=True)
     state.chmod(0o755)
     proc = _spawn(runtime)
     try:
-        _wait_running(runtime / "breakroom" / "companion.sock")
+        _wait_running(runtime / "beebreak" / "companion.sock")
         assert proc.poll() is None
     finally:
         proc.kill()

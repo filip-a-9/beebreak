@@ -14,14 +14,14 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.logging_config import (
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.logging_config import (
     JsonFormatter,
     build_log_config,
     request_id_var,
 )
-from breakroom_server.mailer import RecordingMailer
+from beebreak_server.mailer import RecordingMailer
 from tests.fixtures.privacy_corpus import load_corpus
 from tests.fixtures.privacy_corpus.scan import find_corpus_leaks
 from tests.server.conftest import (
@@ -56,7 +56,7 @@ def captured() -> Iterator[io.StringIO]:
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     handler.setFormatter(JsonFormatter())
-    logger = logging.getLogger("breakroom_server")
+    logger = logging.getLogger("beebreak_server")
     old_level = logger.level
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
@@ -135,12 +135,12 @@ def test_unknown_format_is_rejected() -> None:
 def test_log_format_defaults_to_text_and_reads_the_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("BREAKROOM_SERVER_SECRET", ENV_SECRET)
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("BEEBREAK_SERVER_SECRET", ENV_SECRET)
     assert ServerConfig.from_env().log_format == "text"
-    monkeypatch.setenv("BREAKROOM_LOG_FORMAT", "json")
+    monkeypatch.setenv("BEEBREAK_LOG_FORMAT", "json")
     assert ServerConfig.from_env().log_format == "json"
-    monkeypatch.setenv("BREAKROOM_LOG_FORMAT", "yaml")
+    monkeypatch.setenv("BEEBREAK_LOG_FORMAT", "yaml")
     with pytest.raises(ValueError):
         ServerConfig.from_env()
 
@@ -153,7 +153,7 @@ def test_an_access_line_carries_a_fresh_request_id_per_request(
     ids = [
         line["request_id"]
         for line in _lines(captured)
-        if line["logger"] == "breakroom_server.access"
+        if line["logger"] == "beebreak_server.access"
     ]
     assert len(ids) == 2 and ids[0] != ids[1]
     assert all(len(i) == 32 and int(i, 16) >= 0 for i in ids)
@@ -163,7 +163,7 @@ def test_the_scanner_sees_a_corpus_value_in_captured_json(
     captured: io.StringIO,
 ) -> None:
     value = load_corpus().bases[0]
-    logging.getLogger("breakroom_server.probe").info("leak %s", value.value)
+    logging.getLogger("beebreak_server.probe").info("leak %s", value.value)
     hits = find_corpus_leaks({"log": [captured.getvalue().encode()]}, [value])
     assert hits
 
@@ -188,7 +188,7 @@ def test_no_corpus_value_reaches_the_log_through_real_requests(
     assert 200 in reached
 
     lines = _lines(captured)
-    assert any(line["logger"] == "breakroom_server.access" for line in lines)
+    assert any(line["logger"] == "beebreak_server.access" for line in lines)
     leaks = find_corpus_leaks({"log": [captured.getvalue().encode()]}, corpus.values)
     assert leaks == []
 
@@ -237,7 +237,7 @@ def _send_everywhere(
 
 @pytest.fixture
 def served_json(tmp_path: Path) -> Iterator[Served]:
-    yield from _start(_env(tmp_path, {"BREAKROOM_LOG_FORMAT": "json"}))
+    yield from _start(_env(tmp_path, {"BEEBREAK_LOG_FORMAT": "json"}))
 
 
 def test_serve_writes_json_lines_without_the_query_string(
@@ -246,7 +246,7 @@ def test_serve_writes_json_lines_without_the_query_string(
     assert _request(f"{served_json.http}/v1/me?access_token=bra_SECRETx") == 401
     stderr = served_json.stop()
     lines = [json.loads(line) for line in stderr.splitlines() if line]
-    access = [line for line in lines if line["logger"] == "breakroom_server.access"]
+    access = [line for line in lines if line["logger"] == "beebreak_server.access"]
     assert access, stderr
     assert {"timestamp", "level", "logger", "message"} <= set(access[0])
     assert "SECRETx" not in stderr and "access_token" not in stderr

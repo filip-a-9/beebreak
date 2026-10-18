@@ -2,7 +2,7 @@
 
 `v<N>.json` holds the values; any change to it bumps the version (a new file,
 the old one kept so a run can name exactly what it used). Every base value
-contains the marker `breakroom-canary`, so no secrets scanner flags it and no
+contains the marker `beebreak-canary`, so no secrets scanner flags it and no
 one mistakes it for a real credential. Variants (URL-encoded, JSON-escaped,
 base64, upper case, homoglyphs) are stored with the file, each pointing at the
 base value it came from.
@@ -19,8 +19,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-CURRENT_VERSION = 1
-SHA256 = {1: "e1ddc63199f3e8c7b0e115c7d5e158cad4766e7cd68aa241e233814dabc6007b"}
+CURRENT_VERSION = 2
+SHA256 = {
+    1: "e1ddc63199f3e8c7b0e115c7d5e158cad4766e7cd68aa241e233814dabc6007b",
+    2: "80e696cf1efc8ad7ac68f4b87d0271a6b6d0be46c465289166082bc25e76b55c",
+}
 _DIR = Path(__file__).parent
 
 

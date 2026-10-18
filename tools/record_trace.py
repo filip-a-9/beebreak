@@ -4,7 +4,7 @@ Usage: python tools/record_trace.py TRACE.jsonl
 
 Binds the companion socket, appends every received NormalizedEvent as one JSON
 line, and answers status requests with "idle". Uses only the public protocol in
-breakroom_shared. Refuses to start if a companion is already listening.
+beebreak_shared. Refuses to start if a companion is already listening.
 Stop with Ctrl-C.
 """
 
@@ -17,13 +17,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from breakroom_shared.ipc import (
+from beebreak_shared.ipc import (
     MAX_FRAME_BYTES,
     ClientFrame,
     EventFrame,
     StatusReply,
 )
-from breakroom_shared.paths import socket_path
+from beebreak_shared.paths import socket_path
 
 
 def _already_running(path: Path) -> bool:

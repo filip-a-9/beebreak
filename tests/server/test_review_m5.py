@@ -8,13 +8,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from breakroom_server import chat
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.matchmaking import Matchmaker
-from breakroom_server.models import Match
-from breakroom_shared.api import WsMatchEnded
+from beebreak_server import chat
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.matchmaking import Matchmaker
+from beebreak_server.models import Match
+from beebreak_shared.api import WsMatchEnded
 from tests.server.conftest import (
     TEST_SECRET,
     ApiUser,

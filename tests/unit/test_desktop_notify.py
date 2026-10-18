@@ -5,7 +5,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication, QWidget
 from pytestqt.qtbot import QtBot
 
-from breakroom_companion.desktop_notify import DesktopNotifier
+from beebreak_companion.desktop_notify import DesktopNotifier
 
 
 class FakeTray:
@@ -43,9 +43,9 @@ def test_a_tray_shows_the_title_and_text_given(
         window, tray_available=lambda: True, tray_factory=factory
     )
     assert made == []  # created on first use only
-    notifier.notify("Breakroom", "New message from bob")
-    notifier.notify("Breakroom", "New message from bob")
-    assert tray.messages == [("Breakroom", "New message from bob")] * 2
+    notifier.notify("Beebreak", "New message from bob")
+    notifier.notify("Beebreak", "New message from bob")
+    assert tray.messages == [("Beebreak", "New message from bob")] * 2
     assert tray.shown == 1 and len(made) == 1
     assert alerts == []
 
@@ -62,7 +62,7 @@ def test_without_a_tray_the_window_is_alerted_and_no_icon_is_made(
     notifier = DesktopNotifier(
         window, tray_available=lambda: False, tray_factory=factory
     )
-    notifier.notify("Breakroom", "New message from bob")
+    notifier.notify("Beebreak", "New message from bob")
     assert alerts == [window]
 
 
@@ -97,6 +97,6 @@ def test_clicking_the_tray_message_calls_the_click_handler(
         tray_factory=lambda: tray,
         on_click=lambda: clicks.append(1),
     )
-    notifier.notify("Breakroom", "New message from bob")
+    notifier.notify("Beebreak", "New message from bob")
     tray.messageClicked.emit()
     assert clicks == [1]

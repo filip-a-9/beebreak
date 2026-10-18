@@ -3,8 +3,8 @@
 from alembic import context
 from sqlalchemy import Connection
 
-from breakroom_server.db import make_engine
-from breakroom_server.models import Base
+from beebreak_server.db import make_engine
+from beebreak_server.models import Base
 
 config = context.config
 target_metadata = Base.metadata

@@ -1,7 +1,7 @@
 [project]
-name = "breakroom-server"
+name = "beebreak-server"
 version = "0.1.0"
-description = "Breakroom hosted service: accounts, sign-in and realtime connection"
+description = "Beebreak hosted service: accounts, sign-in and realtime connection"
 authors = [
     { name = "EDantes", email = "253079570+edmonddantes99@users.noreply.github.com" }
 ]
@@ -10,7 +10,7 @@ license = "Apache-2.0"
 # with CI.
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "breakroom-shared",
+    "beebreak-shared",
     "alembic==1.20.0",
     "fastapi==0.141.1",
     # The binary wheel is a dev/M3 convenience; M6 decides binary vs. system libpq
@@ -21,11 +21,11 @@ dependencies = [
 ]
 
 [project.scripts]
-breakroom-server = "breakroom_server.cli:main"
-breakroom-admin = "breakroom_server.admin:main"
+beebreak-server = "beebreak_server.cli:main"
+beebreak-admin = "beebreak_server.admin:main"
 
 [tool.uv.sources]
-breakroom-shared = { workspace = true }
+beebreak-shared = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.12.17,<0.13.0"]

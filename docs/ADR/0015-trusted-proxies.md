@@ -9,7 +9,7 @@ limits depend on it.
 
 ## Decision
 Forwarded headers are honoured only from the Caddy container's network, set by
-`BREAKROOM_TRUSTED_PROXIES` (a CIDR list). Empty means trust none, which is the
+`BEEBREAK_TRUSTED_PROXIES` (a CIDR list). Empty means trust none, which is the
 default.
 
 ## Alternatives

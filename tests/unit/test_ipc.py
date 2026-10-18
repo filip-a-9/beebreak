@@ -14,15 +14,15 @@ from pathlib import Path
 
 import pytest
 
-from breakroom_agent_bridge.ipc_client import (
+from beebreak_agent_bridge.ipc_client import (
     LegacyStatusReply,
     request_leave_queue,
     request_status,
     send_event,
 )
-from breakroom_companion.ipc_server import IpcServer
-from breakroom_shared.events import NormalizedEvent
-from breakroom_shared.ipc import MAX_FRAME_BYTES, LeaveResult, StatusReply
+from beebreak_companion.ipc_server import IpcServer
+from beebreak_shared.events import NormalizedEvent
+from beebreak_shared.ipc import MAX_FRAME_BYTES, LeaveResult, StatusReply
 
 
 def make_event() -> NormalizedEvent:
@@ -216,7 +216,7 @@ def test_bad_frames_are_dropped_and_server_keeps_serving(
 def test_silent_connection_times_out_and_server_keeps_serving(
     sock_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_IPC_READ_TIMEOUT_S", "0.2")
+    monkeypatch.setenv("BEEBREAK_IPC_READ_TIMEOUT_S", "0.2")
 
     async def scenario() -> StatusReply | LegacyStatusReply | None:
         server = make_server(sock_path, [])
@@ -326,7 +326,7 @@ def test_leave_queue_callback_that_raises_is_unavailable_and_server_survives(
 def test_hanging_leave_callback_answers_unavailable_within_the_timeout(
     sock_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_IPC_READ_TIMEOUT_S", "0.2")
+    monkeypatch.setenv("BEEBREAK_IPC_READ_TIMEOUT_S", "0.2")
     release = threading.Event()
 
     def hang() -> LeaveResult:
@@ -345,7 +345,7 @@ def test_hanging_leave_callback_answers_unavailable_within_the_timeout(
 def test_hanging_leave_callback_does_not_block_other_requests(
     sock_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("BREAKROOM_IPC_READ_TIMEOUT_S", "0.5")
+    monkeypatch.setenv("BEEBREAK_IPC_READ_TIMEOUT_S", "0.5")
     release = threading.Event()
 
     def hang() -> LeaveResult:

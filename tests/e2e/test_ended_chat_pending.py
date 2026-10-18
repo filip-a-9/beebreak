@@ -19,7 +19,7 @@ import pytest
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
-from breakroom_server.models import Message
+from beebreak_server.models import Message
 from tests.e2e import test_two_companions_chat as base
 from tests.e2e.test_two_companions_chat import (
     LONG_TTL,

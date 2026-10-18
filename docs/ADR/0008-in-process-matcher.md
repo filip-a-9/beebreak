@@ -26,7 +26,7 @@ pair is skipped.
 ## How it is tested
 `test_matchmaking_races.py`, `test_models_matchmaking.py` and
 `tests/e2e/test_two_companions.py`. Postgres race tests run when
-`BREAKROOM_TEST_DATABASE_URL` is set.
+`BEEBREAK_TEST_DATABASE_URL` is set.
 
 ## Rollback
 Not recorded.

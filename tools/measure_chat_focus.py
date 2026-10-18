@@ -22,8 +22,8 @@ import sys
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
-from breakroom_companion.chat_window import ChatWindow
-from breakroom_companion.gc_policy import collect_on_gui_thread
+from beebreak_companion.chat_window import ChatWindow
+from beebreak_companion.gc_policy import collect_on_gui_thread
 
 CANDIDATES = ("baseline", "no-raise", "nofocus-flag", "minimized", "tool", "on-bottom")
 
@@ -76,7 +76,7 @@ def main() -> int:
     }
 
     holder = QLabel("focus holder")
-    holder.setWindowTitle("Breakroom focus holder")
+    holder.setWindowTitle("Beebreak focus holder")
     holder.resize(200, 100)
     chat = ChatWindow()
     holder_watch = _Watch("holder", log)

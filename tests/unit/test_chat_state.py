@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from breakroom_companion.chat_state import (
+from beebreak_companion.chat_state import (
     ChatEvent,
     ChatFrame,
     ChatState,
@@ -25,7 +25,7 @@ from breakroom_companion.chat_state import (
     StatusEvent,
     reduce,
 )
-from breakroom_shared.api import MatchView, MessagePage, MessageView, WsChatMessage
+from beebreak_shared.api import MatchView, MessagePage, MessageView, WsChatMessage
 from tests.fakes.chat import T0, chat_state, chat_status, message_view
 
 MATCH_ID = UUID(int=1)

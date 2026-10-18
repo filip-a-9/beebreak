@@ -8,7 +8,7 @@ Users can ask for their data or its erasure. Reports about a user contain data
 about the reporter, which is third-party data.
 
 ## Decision
-`breakroom-admin account export <email>` writes the user's own rows as JSON.
+`beebreak-admin account export <email>` writes the user's own rows as JSON.
 Reports filed against the user appear only as dates and outcome, with no
 reporter identity, note or evidence. The export never includes code, token or
 access hashes, or a peer's message body. `account delete <email> --yes` is a

@@ -1,4 +1,4 @@
-"""A real Breakroom server on a loopback port, for end-to-end tests (rule 11).
+"""A real Beebreak server on a loopback port, for end-to-end tests (rule 11).
 
 `create_app` on a temp SQLite file, RecordingMailer, real clock (or a `JumpClock`), run
 by uvicorn in a thread on 127.0.0.1:0. `LiveServer.restart()` brings the same app back
@@ -25,12 +25,12 @@ from fastapi import FastAPI
 from sqlalchemy.orm import sessionmaker
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from breakroom_server.app import create_app
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory, make_engine
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import Base
-from breakroom_server.tokens import new_code
+from beebreak_server.app import create_app
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory, make_engine
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import Base
+from beebreak_server.tokens import new_code
 from tests.server.conftest import TEST_SECRET, add_invite
 
 START_TIMEOUT_S = 10.0

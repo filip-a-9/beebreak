@@ -27,7 +27,7 @@ credentials. Companion B gets its own `XDG_RUNTIME_DIR` and `XDG_STATE_HOME`.
 Never set these variables in T2.
 
 **Run the companion from the venv script**, not `uv run`:
-`.venv/bin/breakroom-companion`.
+`.venv/bin/beebreak-companion`.
 
 **Window texts** (M3-05b): `Not signed in`, `Signing in…`, `Connecting…`,
 `Connected as <nickname>`, `Offline – retrying`, `Finish setup` (signed in but
@@ -38,10 +38,10 @@ the 0600 file instead of the keyring.
 **Admin commands** run inside the server container:
 
 ```
-docker compose exec server breakroom-admin invite create EMAIL
-docker compose exec server breakroom-admin invite list
-docker compose exec server breakroom-admin devices
-docker compose exec server breakroom-admin user disable NICKNAME
+docker compose exec server beebreak-admin invite create EMAIL
+docker compose exec server beebreak-admin invite list
+docker compose exec server beebreak-admin devices
+docker compose exec server beebreak-admin user disable NICKNAME
 ```
 
 `invite create` prints the invite code once (`XXXX-XXXX`). `devices` prints
@@ -70,8 +70,8 @@ M3-C02, step 1):
 ```
 docker compose up -d postgres
 set -a; . ./.env; set +a
-docker compose exec postgres createdb -U breakroom breakroom_test
-BREAKROOM_TEST_DATABASE_URL="postgresql+psycopg://breakroom:${POSTGRES_PASSWORD}@127.0.0.1:5432/breakroom_test" uv run pytest
+docker compose exec postgres createdb -U beebreak beebreak_test
+BEEBREAK_TEST_DATABASE_URL="postgresql+psycopg://beebreak:${POSTGRES_PASSWORD}@127.0.0.1:5432/beebreak_test" uv run pytest
 ```
 
 Expect: both runs green; the second also runs the migration tests, which are
@@ -84,7 +84,7 @@ cp .env.example .env
 python3 - <<'EOF'
 import re, secrets
 text = open(".env").read()
-for name in ("POSTGRES_PASSWORD", "BREAKROOM_SERVER_SECRET"):
+for name in ("POSTGRES_PASSWORD", "BEEBREAK_SERVER_SECRET"):
     text = re.sub(rf"^{name}=.*$", f"{name}={secrets.token_urlsafe(48)}", text, flags=re.M)
 open(".env", "w").write(text)
 EOF
@@ -103,9 +103,9 @@ untracked (`git status` does not list it).
 **M3-C03 — Two invites.**
 
 ```
-docker compose exec server breakroom-admin invite create filip@example.com
-docker compose exec server breakroom-admin invite create bea@example.com
-docker compose exec server breakroom-admin invite list
+docker compose exec server beebreak-admin invite create filip@example.com
+docker compose exec server beebreak-admin invite create bea@example.com
+docker compose exec server beebreak-admin invite list
 ```
 
 Expect: two codes printed (write them down as INVITE1 and INVITE2); the list
@@ -116,14 +116,14 @@ shows two `open` invites and shows only `*@example.com`, never a full address.
 **M3-C04 — Companion A: onboarding.** In T2:
 
 ```
-.venv/bin/breakroom-companion
+.venv/bin/beebreak-companion
 ```
 
 Expect: the window shows `Not signed in` and a Sign in button. Before you
 sign in, nothing has reached the server:
-`docker compose logs server | grep breakroom_server.access | grep -vc "/v1/health"`
+`docker compose logs server | grep beebreak_server.access | grep -vc "/v1/health"`
 prints 0, so only health checks are logged (the line count does not grow while
-the window sits idle). The server writes one `breakroom_server.access` line per
+the window sits idle). The server writes one `beebreak_server.access` line per
 request (method, route, status, timing, opaque ids), so a non-zero count here
 is a real request.
 
@@ -150,7 +150,7 @@ instead, the nickname or privacy page was skipped.
 Now the server log shows the sign-in as access lines, and nothing else:
 
 ```
-docker compose logs server | grep breakroom_server.access | grep -E "POST /v1/auth/(start|verify)|PATCH /v1/me|PUT /v1/me/consent"
+docker compose logs server | grep beebreak_server.access | grep -E "POST /v1/auth/(start|verify)|PATCH /v1/me|PUT /v1/me/consent"
 docker compose logs server | grep -cE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|\?|bra_|brr_|filip@"
 ```
 
@@ -163,7 +163,7 @@ in any server log line; WebSocket connections are not logged).
 ```
 export B_ROOT="$(mktemp -d)"
 mkdir -m 700 "$B_ROOT/run" "$B_ROOT/state"
-XDG_RUNTIME_DIR="$B_ROOT/run" XDG_STATE_HOME="$B_ROOT/state" .venv/bin/breakroom-companion
+XDG_RUNTIME_DIR="$B_ROOT/run" XDG_STATE_HOME="$B_ROOT/state" .venv/bin/beebreak-companion
 ```
 
 Expect: a second window opens (no "already running" message). Sign in with
@@ -183,7 +183,7 @@ Expect: `Connected as Bea`.
 **M3-C06 — Gate: both accounts connected.**
 
 ```
-docker compose exec server breakroom-admin devices
+docker compose exec server beebreak-admin devices
 ```
 
 Expect: both windows say `Connected as Filip` and `Connected as Bea`; the
@@ -194,8 +194,8 @@ Close companion A (Ctrl+C in T2, or close the window) and start it again the
 same way.
 
 ```
-ls -l ~/.local/state/breakroom/credentials.json
-ls -ld ~/.local/state/breakroom
+ls -l ~/.local/state/beebreak/credentials.json
+ls -ld ~/.local/state/beebreak
 uv run python -c "import keyring; print(keyring.get_keyring())"
 ```
 
@@ -225,7 +225,7 @@ curl -s http://127.0.0.1:8000/v1/health
 ```
 
 Expect: within about a minute (reconnect back-off tops out at 60 s) both
-windows are `Connected as ...` again without any sign-in, and `breakroom-admin
+windows are `Connected as ...` again without any sign-in, and `beebreak-admin
 devices` lists both as `connected=yes`.
 
 ## Negative cases
@@ -272,8 +272,8 @@ to try here. Companion B still says `Connected as Bea`.
 **M3-C10 — Sign out.** In companion B click Sign out.
 
 ```
-docker compose exec server breakroom-admin devices
-ls -l "$B_ROOT/state/breakroom/credentials.json" 2>&1
+docker compose exec server beebreak-admin devices
+ls -l "$B_ROOT/state/beebreak/credentials.json" 2>&1
 ```
 
 Expect: B's window says `Not signed in`; `devices` no longer lists `Bea`
@@ -283,12 +283,12 @@ B used a keyring, signing in again asks for a fresh code instead of resuming).
 **M3-C11 — Admin disables an account.**
 
 ```
-docker compose exec server breakroom-admin user disable Filip
+docker compose exec server beebreak-admin user disable Filip
 ```
 
 Expect: within about 30 s companion A drops to `Not signed in` (the server
 closes the session on the next frame; the companion's own keep-alive is 25 s)
-and its stored credential is removed; `breakroom-admin devices` no longer
+and its stored credential is removed; `beebreak-admin devices` no longer
 lists Filip. Starting a new sign-in as Filip (`POST /v1/auth/start` with
 `filip@example.com`) still returns `202`, but no email arrives in Mailpit.
 
@@ -299,10 +299,10 @@ test (`tests/privacy/test_outbound_leaks.py`) does this against a fake corpus;
 this step does it with a real Claude Code session.
 
 Prepare: re-enable and re-sign-in so a companion is connected, and use a
-project directory with a unique name outside the Breakroom checkout:
+project directory with a unique name outside the Beebreak checkout:
 
 ```
-docker compose exec server breakroom-admin user enable Filip
+docker compose exec server beebreak-admin user enable Filip
 mkdir -p ~/m3-canary-project && cd ~/m3-canary-project
 ```
 
@@ -316,18 +316,18 @@ two prompts:
 2. `My key is sk-test-DO-NOT-LEAK-12345. Run the Bash command "echo sk-test-DO-NOT-LEAK-12345" and tell me what it printed.`
 
 Let both turns finish while companion A stays connected. Then, from the
-Breakroom checkout:
+Beebreak checkout:
 
 ```
 PATTERN="ZEBRA-7731|sk-test-DO-NOT-LEAK|m3-canary-project|$HOME"
-echo "access lines (must be > 0): $(docker compose logs server 2>&1 | grep -c breakroom_server.access)"
+echo "access lines (must be > 0): $(docker compose logs server 2>&1 | grep -c beebreak_server.access)"
 echo "server logs: $(docker compose logs server 2>&1 | grep -ciE "$PATTERN")"
 echo "addresses/queries/tokens: $(docker compose logs server 2>&1 | grep -cE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|\?|bra_|brr_")"
-echo "pg_dump:     $(docker compose exec -T postgres pg_dump -U breakroom breakroom | grep -ciE "$PATTERN")"
+echo "pg_dump:     $(docker compose exec -T postgres pg_dump -U beebreak beebreak | grep -ciE "$PATTERN")"
 echo "mailpit:     $(for id in $(curl -s http://127.0.0.1:8025/api/v1/messages | python3 -c "import json,sys; print(' '.join(m['ID'] for m in json.load(sys.stdin)['messages']))"); do curl -s http://127.0.0.1:8025/api/v1/message/$id; done | grep -ciE "$PATTERN")"
 ```
 
-(The repo name `breakroom` is deliberately not a pattern: it occurs in logger
+(The repo name `beebreak` is deliberately not a pattern: it occurs in logger
 names, the database name and the role. The unique project directory name stands
 in for it.)
 

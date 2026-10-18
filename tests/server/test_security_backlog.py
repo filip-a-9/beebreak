@@ -13,13 +13,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from starlette.testclient import WebSocketTestSession
 
-from breakroom_server.config import ServerConfig
-from breakroom_server.db import SessionFactory
-from breakroom_server.mailer import RecordingMailer
-from breakroom_server.models import Device, RefreshToken, User
-from breakroom_server.notify import make_frame
-from breakroom_server.tokens import derive_successor, hash_token
-from breakroom_shared.api import WS_CLOSE, WsMatchEnded
+from beebreak_server.config import ServerConfig
+from beebreak_server.db import SessionFactory
+from beebreak_server.mailer import RecordingMailer
+from beebreak_server.models import Device, RefreshToken, User
+from beebreak_server.notify import make_frame
+from beebreak_server.tokens import derive_successor, hash_token
+from beebreak_shared.api import WS_CLOSE, WsMatchEnded
 from tests.server.conftest import (
     TEST_SECRET,
     FixedClock,

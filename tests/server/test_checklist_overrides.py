@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from breakroom_server.config import ServerConfig
+from beebreak_server.config import ServerConfig
 
 DOCS = Path(__file__).parents[2] / "docs"
 SECRET = base64.urlsafe_b64encode(b"s" * 48).decode().rstrip("=")
@@ -20,7 +20,7 @@ SECRET = base64.urlsafe_b64encode(b"s" * 48).decode().rstrip("=")
 HEREDOC = re.compile(
     r"cat > (reports/compose\.[\w.-]+\.yaml) <<'EOF'\n(.*?)\nEOF\n", re.S
 )
-ENV_LINE = re.compile(r'^\s+(BREAKROOM_\w+):\s*"([^"]*)"\s*$', re.M)
+ENV_LINE = re.compile(r'^\s+(BEEBREAK_\w+):\s*"([^"]*)"\s*$', re.M)
 
 
 def overrides() -> list[tuple[str, str]]:
@@ -44,11 +44,11 @@ def test_each_checklist_override_passes_server_config_validation(
     monkeypatch: pytest.MonkeyPatch, body: str
 ) -> None:
     env = dict(ENV_LINE.findall(body))
-    assert env, "no BREAKROOM_* variables found"
-    for name in [n for n in os.environ if n.startswith("BREAKROOM_")]:
+    assert env, "no BEEBREAK_* variables found"
+    for name in [n for n in os.environ if n.startswith("BEEBREAK_")]:
         monkeypatch.delenv(name)
-    monkeypatch.setenv("BREAKROOM_DATABASE_URL", "sqlite://")
-    monkeypatch.setenv("BREAKROOM_SERVER_SECRET", SECRET)
+    monkeypatch.setenv("BEEBREAK_DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("BEEBREAK_SERVER_SECRET", SECRET)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
 

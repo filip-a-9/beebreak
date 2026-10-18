@@ -1,6 +1,6 @@
 """M4-01 schema: constraints that make matching safe, enforced by the database.
 
-Runs on SQLite always and on PostgreSQL when BREAKROOM_TEST_DATABASE_URL is set.
+Runs on SQLite always and on PostgreSQL when BEEBREAK_TEST_DATABASE_URL is set.
 """
 
 import uuid
@@ -9,8 +9,8 @@ from datetime import datetime, timedelta
 import pytest
 from sqlalchemy.exc import IntegrityError, StatementError
 
-from breakroom_server.db import SessionFactory
-from breakroom_server.models import (
+from beebreak_server.db import SessionFactory
+from beebreak_server.models import (
     Block,
     Match,
     MatchParticipant,
