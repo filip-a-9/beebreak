@@ -53,7 +53,7 @@ def default_device_name(distro: str = "") -> str:
     return f"{DEFAULT_DEVICE_NAME} {cleaned}"[:_DEVICE_NAME_MAX].rstrip()
 
 
-SIGN_IN_HEADING = "Sent when you sign in"
+SIGN_IN_HEADING = "Sent when you sign in or change it in Settings"
 NEVER_SHARED_HEADING = "Never shared"
 # ARCHITECTURE §4 "Protected local content".
 NEVER_SHARED: tuple[str, ...] = (
@@ -83,7 +83,7 @@ def example_json(consent: Consent, tags: Sequence[StackTag] = ()) -> str:
     ).model_dump_json(indent=2)
 
 
-ALREADY_SENT_ITEM = "Device name: the name you chose at sign-in"
+ALREADY_SENT_ITEM = "Device name: the name you chose at sign-in or in Settings"
 
 
 def sign_in_items(

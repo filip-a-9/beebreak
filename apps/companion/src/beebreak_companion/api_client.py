@@ -20,6 +20,7 @@ from beebreak_shared.api import (
     AuthVerifyRequest,
     ChatStatus,
     Consent,
+    DeviceNameUpdate,
     ErrorResponse,
     ExtensionAction,
     ExtensionRequest,
@@ -206,6 +207,19 @@ class ApiClient:
         )
         assert reply is not None
         return reply
+
+    async def set_device_name(self, access_token: str, device_name: str) -> None:
+        try:
+            request = DeviceNameUpdate(device_name=device_name)
+        except ValidationError:
+            raise ApiError("invalid_request") from None
+        await self._call(
+            "PATCH",
+            "/v1/me/device",
+            model=None,
+            body=request,
+            access_token=access_token,
+        )
 
     async def set_consent(self, access_token: str, consent: Consent) -> Me:
         reply = await self._call(

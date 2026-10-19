@@ -493,13 +493,13 @@ XDG_RUNTIME_DIR="$B_ROOT/run" XDG_STATE_HOME="$B_ROOT/state" .venv/bin/beebreak-
 ```
 
 (Always start B with this command.) B starts `Not signed in`; if A's default
-directories still hold an old login, click **Sign out** in A first (the device
-name is chosen only at sign-in). In A: sign in as `ada-m6@example.com`; on
+directories still hold an old login, click **Sign out** in A first (this
+step checks the name chosen at sign-in; Settings can change it later). In A: sign in as `ada-m6@example.com`; on
 the code page **replace** the device name with `AdaM6 test laptop` and click **Show what is sent**. Expect the
-preview `What this app shares` to list under `Sent when you sign in`
+preview `What this app shares` to list under `Sent when you sign in or change it in Settings`
 `Email`, `Nickname`, and `Device name: AdaM6 test laptop`; type another name
 and watch the line follow. Finish the sign-in; after it the preview line reads
-`Device name: the name you chose at sign-in`. In B: sign in as
+`Device name: the name you chose at sign-in or in Settings`. In B: sign in as
 `bea-m6@example.com` and leave the name `WSL device` (open **Show what is sent**:
 `Device name: WSL device`). Check the validation once in B's dialog before you finish it: type a valid
 code first and see **Next** enabled, then change the device name to `bad/name`
@@ -724,7 +724,7 @@ account is gone after M6-C12):
 1. **Preview against the notice.** In A open `Settings`, privacy page, **Show
    what is shared**; and (in a sign-in dialog) **Show what is sent**. The
    preview must show an `Example` presence JSON that holds only the fields you
-   ticked, `Sent when you sign in` with `Email`, `Nickname` and `Device name:
+   ticked, `Sent when you sign in or change it in Settings` with `Email`, `Nickname` and `Device name:
    ...`, and `Never shared` with these 11 items: Your prompts; Source code;
    Command arguments; Tool results; Plans; Stack traces; Secrets and
    environment values; File and folder paths; Workspace and repository names;

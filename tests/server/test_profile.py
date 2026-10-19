@@ -28,7 +28,12 @@ def test_me_is_empty_after_first_sign_in(
     session = sign_in(client, session_factory, mailer)
     response = client.get("/v1/me", headers=bearer(session))
     assert response.status_code == 200
-    assert response.json() == {"nickname": None, "consent": None, "consented_at": None}
+    assert response.json() == {
+        "nickname": None,
+        "consent": None,
+        "consented_at": None,
+        "device_name": "laptop",
+    }
 
 
 def test_set_nickname(

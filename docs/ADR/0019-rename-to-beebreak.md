@@ -1,7 +1,7 @@
 # ADR 0019: Rename Breakroom to Beebreak
 
 Status: Accepted (the maintainer, 2026-10-18).
-Source: `.claude/specs/rename-beebreak.md`.
+Source: PR #15.
 
 ## Context
 "BREAKROOM CHAT" is a pending US trademark application for downloadable
