@@ -24,6 +24,10 @@ THEME_ENV = "BEEBREAK_THEME"
 # Set by WSL to the user-chosen distro name; used to tell devices apart.
 WSL_DISTRO_ENV = "WSL_DISTRO_NAME"
 THEME_PROBE_TIMEOUT_ENV = "BEEBREAK_THEME_PROBE_TIMEOUT_S"
+POWERSHELL_ENV = "BEEBREAK_POWERSHELL"
+WINDOWS_TOAST_ENV = "BEEBREAK_WINDOWS_TOAST"
+DEFAULT_POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+TOAST_TIMEOUT_ENV = "BEEBREAK_TOAST_TIMEOUT_S"
 THEME_SETTINGS = ("auto", "light", "dark")
 
 
@@ -94,6 +98,23 @@ def theme_setting() -> str:
 def theme_probe_timeout_s() -> float:
     """Seconds to wait for reg.exe when reading Windows' light/dark setting."""
     return _positive_seconds(THEME_PROBE_TIMEOUT_ENV, 2.0)
+
+
+def powershell_path() -> str:
+    """Windows PowerShell 5.1 as seen from WSL; empty or blank means default."""
+    return os.environ.get(POWERSHELL_ENV, "").strip() or DEFAULT_POWERSHELL
+
+
+def windows_toast_enabled() -> bool:
+    """Whether the Windows toast may be used (default on). Only `0`, `false`,
+    `no` and `off` turn it off; anything else keeps the default."""
+    value = os.environ.get(WINDOWS_TOAST_ENV, "").strip().lower()
+    return value not in ("0", "false", "no", "off")
+
+
+def toast_timeout_s() -> float:
+    """Seconds a toast PowerShell may run before it is killed."""
+    return _positive_seconds(TOAST_TIMEOUT_ENV, 15.0)
 
 
 def stop_wait_s() -> float:

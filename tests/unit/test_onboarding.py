@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, get_args
 
 import pytest
 from PySide6.QtCore import QObject, Qt, Slot
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QDialog, QLabel
 from pytestqt.qtbot import QtBot
 from sqlalchemy import update
 
@@ -482,7 +482,7 @@ def test_settings_reopens_privacy_with_current_consent(qtbot: QtBot, rig: Rig) -
     settings.stack_box.setChecked(False)
     settings.category_box.setChecked(True)
     settings.next_button.click()
-    wait_page(qtbot, settings, PAGE_DONE)
+    qtbot.waitUntil(lambda: settings.result() == QDialog.DialogCode.Accepted)
 
     assert rig.rec.last is not None
     assert rig.rec.last.consent == Consent(

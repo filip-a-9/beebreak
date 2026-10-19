@@ -168,7 +168,8 @@ def test_settings_round_trip_changes_consent_on_the_server(
     settings.category_box.setChecked(True)
     settings.time_box.setChecked(True)
     settings.next_button.click()
-    app.wait_page(PAGE_DONE)
+    # Settings closes itself once saved (no onboarding done page).
+    app.qtbot.waitUntil(lambda: not app.open_dialogs(), timeout=WAIT_MS)
 
     assert stored_consent(env) == (True, False, True)
 

@@ -412,7 +412,8 @@ def test_no_chat_means_no_unread(rig: Rig) -> None:
 def test_a_peer_message_notifies_with_the_nickname_only(rig: Rig) -> None:
     match_id = uuid4()
     rig.remote.push_chat(chat_state(match_id=match_id, peer_nickname="bob_b"))
-    assert rig.sent() == []
+    assert rig.sent() == [("Beebreak", "Matched with bob_b")]  # the match notice
+    rig.now[0] += 11  # past the throttle
     rig.remote.push_chat(
         chat_state(
             match_id=match_id,
@@ -420,7 +421,8 @@ def test_a_peer_message_notifies_with_the_nickname_only(rig: Rig) -> None:
             messages=(_peer(1, CANARY),),
         )
     )
-    assert rig.sent() == [("Beebreak", "New message from bob_b")]
+    assert rig.sent()[-1] == ("Beebreak", "New message from bob_b")
+    assert len(rig.sent()) == 2
 
 
 def test_own_and_pending_messages_never_notify(rig: Rig) -> None:
@@ -432,7 +434,9 @@ def test_own_and_pending_messages_never_notify(rig: Rig) -> None:
             pending=(PendingMessage(uuid4(), CANARY, "sending"),),
         )
     )
-    assert rig.sent() == []
+    # Only the match notice: no message notice, and no body anywhere.
+    assert all(text.startswith("Matched with") for _, text in rig.sent())
+    assert CANARY not in repr(rig.sent())
 
 
 def test_no_notification_while_the_window_is_active(rig: Rig) -> None:
