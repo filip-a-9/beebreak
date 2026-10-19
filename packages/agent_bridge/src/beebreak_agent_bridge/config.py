@@ -3,7 +3,11 @@
 import os
 from dataclasses import dataclass
 
-DEFAULT_MAX_STDIN_BYTES = 1024 * 1024
+# 16 MiB: Claude Code already truncates large tool output, so a payload above
+# this is practically unreachable. The hook is short-lived and async, so reading
+# that much is affordable; the cap stays as a bound on memory. A cut-off payload
+# is invalid JSON, so oversize input is dropped, not trimmed.
+DEFAULT_MAX_STDIN_BYTES = 16 * 1024 * 1024
 DEFAULT_SEND_TIMEOUT_S = 0.2
 DEFAULT_MCP_STATUS_TIMEOUT_S = 0.5
 

@@ -288,7 +288,7 @@ An engine can be `heuristic` or `local_model`, but both return the same validate
 | `beebreak_status` | none | Local activity/break status, no private chat content | none |
 | `beebreak_leave_queue` | none | `cancelled` / `not_searching` / `unavailable` / `companion_not_running` | cancels an existing search; never ends a match (M4) |
 
-M4: `beebreak_status` gains a fixed `queue` field (`none`/`searching`/`matched`); no peer nickname or tag reaches Claude's context. M5: `StatusReply` version 4 renames `matched` to `chatting`; the client still accepts version 3 (mapping `matched` to `chatting`) and version 2 (`queue` unknown). Claude cannot see, send to or end a chat.
+M4: `beebreak_status` gains a fixed `queue` field (`none`/`searching`/`matched`); no peer nickname or tag reaches Claude's context. M5: `StatusReply` version 4 renames `matched` to `chatting`; the client still accepts version 3 (mapping `matched` to `chatting`) and version 2 (`queue` unknown). Claude cannot see, send to or end a chat. U10 (2026-10-19): `StatusReply` gains optional `ready` (bool) and `not_ready_reason` (`signed_out`/`connecting`/`offline`/`no_nickname`/`no_consent`), both null from an older companion; no version bump. From U10 the bridge ignores unknown reply fields, so later additive fields are safe; a bridge from before U10 sees a U10 companion as `not_running`.
 
 Agent-facing tools should not be able to silently enroll a user into remote matchmaking: queue entry requires a **direct user acceptance in the companion UI**, independent of what the LLM requests. Tool responses must be bounded and not leak messages or peer profile details into Claude's context. Additional tools require separate acceptance criteria.
 

@@ -120,6 +120,8 @@ class IpcServer:
         except ValueError:  # line longer than the stream limit
             log.warning("dropped frame: oversize")
             return
+        if not line:
+            return  # connect-and-close, e.g. a single-instance or stop probe
         if not line.endswith(b"\n") or len(line) > MAX_FRAME_BYTES + 1:
             log.warning("dropped frame: truncated or oversize")
             return

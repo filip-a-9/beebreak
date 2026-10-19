@@ -104,6 +104,14 @@ The companion follows the Windows light or dark app theme, read once at
 start. Set `BEEBREAK_THEME=light` or `dark` to override it (default `auto`;
 light when Windows can't be asked).
 
+To check it works, start a Claude Code session, ask it to do anything, then
+ask it to call the `beebreak_status` tool. `running` with a non-null
+`last_event_at` means the hooks reach the companion; `not_running` means the
+companion is not up; `last_event_at: null` means the hooks are not connected.
+`ready: false` with a `not_ready_reason` (`signed_out`, `connecting`,
+`offline`, `no_nickname` or `no_consent`) means no break is offered yet; the
+companion window shows the same reason.
+
 Without the `beebreak-hook` command on `PATH` the hooks do nothing and stay
 silent (the `beebreak` MCP server shows as failed in `/mcp`).
 

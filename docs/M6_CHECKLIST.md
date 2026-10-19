@@ -402,8 +402,10 @@ claude
 
 (no `--plugin-dir`: the plugin comes from the marketplace install). Send:
 `Call the beebreak_status tool and show the raw result`. Expect the keys
-`companion`, `invitation`, `last_event_at`, `activity`, `estimate` and
-`queue`; `companion` is `running` (not `not_running`), `last_event_at` is a
+`companion`, `invitation`, `last_event_at`, `activity`, `estimate`,
+`queue`, `ready` and `not_ready_reason`; `companion` is `running` (not
+`not_running`), `ready` is `true` and `not_ready_reason` is `null` (signed in
+and set up), `last_event_at` is a
 timestamp, not `null` (the hooks of this very session reached the companion),
 and `queue` is `none`. `/mcp` lists the server as connected (it shows as `plugin:beebreak:beebreak`). To show the
 hooks again after the tool call, ask for the same tool a second time and

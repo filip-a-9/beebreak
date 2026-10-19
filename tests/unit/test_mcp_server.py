@@ -30,6 +30,8 @@ STATUS_KEYS = {
     "activity",
     "estimate",
     "queue",
+    "ready",
+    "not_ready_reason",
 }
 TOOLS = ["beebreak_status", "beebreak_leave_queue"]
 
@@ -65,6 +67,8 @@ def test_no_reply_reports_not_running_with_nulls() -> None:
         "activity": None,
         "estimate": None,
         "queue": None,
+        "ready": None,
+        "not_ready_reason": None,
     }
 
 

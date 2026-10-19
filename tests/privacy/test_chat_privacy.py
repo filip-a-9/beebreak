@@ -232,6 +232,8 @@ def test_a_full_chat_leaks_no_content(
         "activity",
         "estimate",
         "queue",
+        "ready",
+        "not_ready_reason",
     }
 
     # A reports B, ticking only B2, with a canary note, through the dialog.
