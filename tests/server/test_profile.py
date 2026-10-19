@@ -35,12 +35,12 @@ def test_set_nickname(
     client: TestClient, session_factory: SessionFactory, mailer: RecordingMailer
 ) -> None:
     session = sign_in(client, session_factory, mailer)
-    response = set_nickname(client, session, "Filip_")
-    assert response.status_code == 200 and response.json()["nickname"] == "Filip_"
-    assert client.get("/v1/me", headers=bearer(session)).json()["nickname"] == "Filip_"
+    response = set_nickname(client, session, "Robin_")
+    assert response.status_code == 200 and response.json()["nickname"] == "Robin_"
+    assert client.get("/v1/me", headers=bearer(session)).json()["nickname"] == "Robin_"
     with session_factory() as s:
         user = s.scalars(select(User)).one()
-    assert (user.nickname, user.nickname_skeleton) == ("Filip_", "flllp")
+    assert (user.nickname, user.nickname_skeleton) == ("Robin_", "robln")
 
 
 def test_nickname_is_nfkc_normalised(
@@ -92,16 +92,16 @@ def test_nickname_taken_by_skeleton_and_own_reset_allowed(
 ) -> None:
     first = sign_in(client, session_factory, mailer, "first@example.com")
     second = sign_in(client, session_factory, mailer, "second@example.com")
-    assert set_nickname(client, first, "Filip_").status_code == 200
+    assert set_nickname(client, first, "Robin_").status_code == 200
 
-    taken = set_nickname(client, second, "fi1ip")
+    taken = set_nickname(client, second, "rob1n")
     assert (taken.status_code, taken.json()) == (409, {"error": "nickname_taken"})
     assert client.get("/v1/me", headers=bearer(second)).json()["nickname"] is None
 
     # The owner may change case or punctuation of their own nickname.
-    assert set_nickname(client, first, "FILIP").status_code == 200
-    assert set_nickname(client, first, "FILIP").status_code == 200
-    assert set_nickname(client, second, "Filip_").status_code == 409
+    assert set_nickname(client, first, "ROBIN").status_code == 200
+    assert set_nickname(client, first, "ROBIN").status_code == 200
+    assert set_nickname(client, second, "Robin_").status_code == 409
 
 
 def test_concurrent_claim_of_one_skeleton_has_one_winner(
@@ -111,7 +111,7 @@ def test_concurrent_claim_of_one_skeleton_has_one_winner(
         sign_in(client, session_factory, mailer, f"user{i}@example.com")
         for i in range(2)
     ]
-    names = ["Filip_", "fi1ip"]
+    names = ["Robin_", "rob1n"]
     with ThreadPoolExecutor(2) as pool:
         results = list(
             pool.map(

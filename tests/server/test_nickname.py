@@ -5,7 +5,7 @@ from beebreak_server.nickname import NicknameError, skeleton, validate_nickname
 
 @pytest.mark.parametrize(
     "raw",
-    ["Filip", "a_b-c", "abc", "a" * 24, "  Filip  ", "modest", "rooted", "systems"],
+    ["Robin", "a_b-c", "abc", "a" * 24, "  Robin  ", "modest", "rooted", "systems"],
 )
 def test_valid_nicknames_pass(raw: str) -> None:
     assert validate_nickname(raw) == raw.strip()
@@ -22,7 +22,7 @@ def test_invalid_nicknames_are_rejected(raw: str) -> None:
 
 
 def test_fullwidth_is_normalized() -> None:
-    assert validate_nickname("\uff26\uff49\uff4c\uff49\uff50") == "Filip"
+    assert validate_nickname("\uff32\uff4f\uff42\uff49\uff4e") == "Robin"
 
 
 @pytest.mark.parametrize(
@@ -49,5 +49,5 @@ def test_error_message_does_not_contain_the_input() -> None:
 
 
 def test_skeleton_collisions() -> None:
-    assert skeleton("Filip_") == skeleton("fi1ip")
-    assert skeleton("filip") != skeleton("philip")
+    assert skeleton("Robin_") == skeleton("rob1n")
+    assert skeleton("robin") != skeleton("robyn")

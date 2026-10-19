@@ -31,7 +31,7 @@ class Account:
 def make_account(
     factory: SessionFactory,
     clock: FixedClock,
-    nickname: str | None = "Filip",
+    nickname: str | None = "Robin",
     *,
     status: str = "active",
     expires_in: float = ACCESS_TTL,
@@ -140,7 +140,7 @@ def test_happy_path(
         ready = ServerWsFrame.model_validate(ws.receive_json()).root
         assert ws.receive_json()["type"] == "sync"
         assert ready.type == "session.ready"
-        assert ready.nickname == "Filip"
+        assert ready.nickname == "Robin"
         assert ready.version == 1
         assert ready.server_time == clock()
         assert connected_at(session_factory, account.device_id) == clock()
