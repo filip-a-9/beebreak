@@ -667,6 +667,9 @@ class ChatWindow(QWidget):
             item = self._rows.takeAt(0)
             widget = item.widget() if item is not None else None
             if widget is not None:
+                # Hidden explicitly: a queued show from the layout would
+                # otherwise pop the orphan up as its own window.
+                widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
         self._retry_buttons = []

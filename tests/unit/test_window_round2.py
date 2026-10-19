@@ -20,15 +20,6 @@ NOW = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 LATER = NOW + timedelta(hours=1)
 
 
-@pytest.fixture(autouse=True)
-def _no_stray_windows() -> None:
-    """Other test modules can leave a parentless widget visible; the close
-    tests count visible windows, so they must start from a clean screen."""
-    for widget in QApplication.topLevelWidgets():
-        if widget.isVisible():
-            widget.hide()
-
-
 @pytest.fixture
 def window(qtbot: QtBot) -> CompanionWindow:
     w = CompanionWindow()
