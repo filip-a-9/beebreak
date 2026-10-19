@@ -73,6 +73,7 @@ def chat_state(
     server_offset_s: float = 0.0,
     reported: bool = False,
     extension_declined: bool = False,
+    cancelling_extension: bool = False,
 ) -> ChatState:
     """A live chat with `peer_nickname`, 15 minutes after T0 unless given."""
     match_id = match_id or uuid4()
@@ -88,4 +89,5 @@ def chat_state(
         server_offset_s=server_offset_s,
         reported=reported,
         extension_declined=extension_declined,
+        cancelling_extension=cancelling_extension,
     )

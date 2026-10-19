@@ -46,6 +46,9 @@ class ChatState:
     # The last status frame said the peer declined my extension request; the
     # next status frame clears it.
     extension_declined: bool = False
+    # I cancelled my own pending request and the server has not answered yet;
+    # the server reports a cancel as a decline, which must not read as "said no".
+    cancelling_extension: bool = False
 
 
 # --- events ---
@@ -64,6 +67,13 @@ class Messages:
 
     match_id: UUID
     page: MessagePage
+
+
+@dataclass(frozen=True)
+class ExtensionCancelling:
+    """I am cancelling my own pending extension request (sent as a decline)."""
+
+    match_id: UUID
 
 
 @dataclass(frozen=True)
@@ -137,6 +147,7 @@ ChatEvent = (
     | Messages
     | ChatFrame
     | StatusEvent
+    | ExtensionCancelling
     | Sending
     | SendFailed
     | Ended
@@ -188,8 +199,19 @@ def reduce(state: ChatState, event: ChatEvent, now: datetime) -> ChatState:
             return replace(
                 state,
                 status=status,
-                extension_declined=change == "extension_declined" and mine,
+                extension_declined=(
+                    change == "extension_declined"
+                    and mine
+                    and not state.cancelling_extension
+                ),
+                cancelling_extension=False,
             )
+        case ExtensionCancelling(match_id=match_id):
+            if match_id != state.match_id or state.ended is not None:
+                return state
+            if state.status is None or state.status.extension != "requested_by_me":
+                return state
+            return replace(state, cancelling_extension=True)
         case Sending(client_message_id=cid, body=body):
             return _sending(state, cid, body)
         case SendFailed(client_message_id=cid):
