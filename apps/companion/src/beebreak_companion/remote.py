@@ -422,7 +422,7 @@ class RemoteWorker(QObject):
             if frame.match_id == self._chat.match_id:
                 self._check_gap(frame.message.seq)
         elif isinstance(frame, WsChatStatus):
-            self._apply_chat(StatusEvent(frame.status))
+            self._apply_chat(StatusEvent(frame.status, frame.change))
 
     # --- chat (loop thread) ---
 

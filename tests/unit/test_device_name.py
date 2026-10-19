@@ -13,9 +13,18 @@ import pytest
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
+from beebreak_companion.config import WSL_DISTRO_ENV, wsl_distro_name
 from beebreak_companion.credentials import FileCredentialStore
-from beebreak_companion.onboarding import PAGE_CODE, PAGE_NICKNAME, OnboardingDialog
-from beebreak_companion.privacy_preview import PrivacyPreviewDialog
+from beebreak_companion.onboarding import (
+    PAGE_CODE,
+    PAGE_NICKNAME,
+    OnboardingDialog,
+    valid_device_name,
+)
+from beebreak_companion.privacy_preview import (
+    PrivacyPreviewDialog,
+    default_device_name,
+)
 from beebreak_companion.remote import DEFAULT_DEVICE_NAME, RemoteWorker
 from beebreak_companion.remote_config import RemoteConfig
 from beebreak_server.models import Device
@@ -133,6 +142,12 @@ def test_typed_name_is_sent_unchanged(
     assert not any(hostname_canary.encode() in blob for blob in sent_requests)
 
 
+@pytest.fixture(autouse=True)
+def _no_distro(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The plain default unless a test sets a distro itself."""
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+
+
 def code_page(qtbot: QtBot) -> OnboardingDialog:
     dialog = OnboardingDialog(FakeRemoteWorker())
     qtbot.addWidget(dialog)
@@ -229,3 +244,58 @@ def test_reopened_dialog_does_not_claim_a_specific_name(qtbot: QtBot) -> None:
     shown = dialog.preview.signin_list_label.text()
     assert DEFAULT_DEVICE_NAME not in shown
     assert "Desk" not in shown
+
+
+def test_default_name_without_a_distro_is_the_plain_default() -> None:
+    assert default_device_name("") == DEFAULT_DEVICE_NAME
+    assert default_device_name() == DEFAULT_DEVICE_NAME
+
+
+def test_default_name_differs_per_distro_and_is_a_valid_name() -> None:
+    first = default_device_name("Ubuntu-24.04")
+    second = default_device_name("Debian")
+    assert first != second
+    assert first != DEFAULT_DEVICE_NAME
+    assert "Ubuntu-24.04" in first
+    assert valid_device_name(first) and valid_device_name(second)
+
+
+@pytest.mark.parametrize("distro", ["", "é/é", "x" * 80])
+def test_default_name_from_an_odd_distro_is_still_valid(distro: str) -> None:
+    assert valid_device_name(default_device_name(distro))
+
+
+@pytest.mark.parametrize("distro", [HOSTNAME_CANARY, f"x-{HOSTNAME_CANARY.lower()}"])
+def test_default_name_never_contains_the_hostname(
+    monkeypatch: pytest.MonkeyPatch, distro: str
+) -> None:
+    monkeypatch.setattr(socket, "gethostname", lambda: HOSTNAME_CANARY)
+    name = default_device_name(distro)
+    assert HOSTNAME_CANARY.lower() not in name.lower()
+    assert name == DEFAULT_DEVICE_NAME
+
+
+def test_a_distro_unrelated_to_the_hostname_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(socket, "gethostname", lambda: HOSTNAME_CANARY)
+    assert "Debian" in default_device_name("Debian")
+
+
+def test_the_distro_comes_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert wsl_distro_name() == ""
+    monkeypatch.setenv(WSL_DISTRO_ENV, "Debian")
+    assert wsl_distro_name() == "Debian"
+
+
+def test_the_dialog_prefills_the_distro_based_default(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Debian")
+    dialog = code_page(qtbot)
+    for edit in (dialog.device_name_edit, dialog.github_device_name_edit):
+        assert "Debian" in edit.text()
+        assert edit.text() != DEFAULT_DEVICE_NAME
+        assert valid_device_name(edit.text())

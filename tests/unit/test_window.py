@@ -845,3 +845,18 @@ def test_ended_by_this_users_block_or_report_offers_no_block(
     window.show()
     window.set_break(BreakState(phase="ended", match=_match(), blocked=True))
     assert _break_visible(window) == {"text", "ok"}
+
+
+@pytest.mark.parametrize("phase", ["joining", "searching", "matched"])
+def test_idle_row_is_hidden_while_searching_or_chatting(
+    window: CompanionWindow, phase: BreakPhase
+) -> None:
+    window.show()
+    window.set_state("idle")
+    assert window.status_label.isVisible()
+    match = _match() if phase == "matched" else None
+    window.set_break(BreakState(phase=phase, match=match))
+    assert not window.status_label.isVisible()
+    assert not window.activity_label.isVisible()
+    window.set_break(BreakState(phase="none"))
+    assert window.status_label.isVisible()

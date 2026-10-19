@@ -668,3 +668,10 @@ def test_failed_credential_save_shows_its_own_text(
     assert error_text(dialog, PAGE_EMAIL) == ERROR_TEXT["credentials_not_saved"]
     assert ERROR_TEXT["credentials_not_saved"] != ERROR_TEXT["network"]
     assert dialog.page == PAGE_EMAIL
+
+
+def test_the_privacy_page_says_finding_a_partner_is_the_acceptance() -> None:
+    from beebreak_companion.onboarding import PRIVACY_INTRO
+    from beebreak_companion.window import FIND
+
+    assert FIND in PRIVACY_INTRO
