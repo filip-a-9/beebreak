@@ -133,8 +133,11 @@ claude plugin install beebreak@beebreak
 beebreak-companion                # start it (it reads the URL saved above)
 ```
 
-`beebreak-companion install` asks for the URL of your server. Then the
-companion window asks you to sign in with the invite from the section above.
+`beebreak-companion install` asks for the URL of your server and prints the
+URL it saved. Then the companion window asks you to sign in. The invite code
+comes from the server operator, who creates it with `beebreak-admin invite
+create` (see [First admin invite](docs/RUNBOOK.md#first-admin-invite) in the
+runbook and "Getting an invite" above). If you do not have one, ask them.
 
 A server with a private CA: add `--ca-file /path/to/ca.pem` to
 `beebreak-companion install`. The file must be a PEM owned by you (or root)
@@ -150,12 +153,44 @@ cause is usually not a missing library but no WSLg display: check that
 autostart: WSLg has no desktop session, so nothing in WSL2 runs autostart
 entries.
 
+Closing the last companion window quits the companion (it asks first while a
+search or a chat is active). There is no tray icon, so to bring it back run
+`beebreak-companion` again.
+
 The companion follows the Windows light or dark app theme, read once at
 start. Set `BEEBREAK_THEME=light` or `dark` to override it (default `auto`;
 light when Windows can't be asked).
 
 Without the `beebreak-hook` command on `PATH` the hooks do nothing and stay
 silent (the `beebreak` MCP server shows as failed in `/mcp`).
+
+### When a break is offered
+
+The companion offers a break only while an agent session has been working on
+its own and you are not needed. With the defaults, an offer appears when:
+
+- a Claude Code run has been active for at least 60 seconds with at least two
+  tool events, and no session is waiting for you;
+- the remaining-time estimate is not `under_5m` (a run that is about to finish
+  is not interrupted);
+- you have turned break suggestions on, are signed in and ready (see
+  `ready` below), and no cooldown is running.
+
+Each agent run is offered at most once. If the run has open tasks and none
+has finished yet, the companion waits up to 5 minutes for the first one, so
+it can tell how long the run still has. An offer stays for 60 seconds and
+then expires. A 15 minute cooldown starts when you answer an offer, when it
+expires, or when a break ends; an offer withdrawn because a session needs you
+starts none. A session counts as `unknown` after 3 minutes without events.
+Because of these rules, a user can wait a few minutes of agent work before
+the first offer.
+The environment variables `BEEBREAK_ACTIVITY_THRESHOLD_S`,
+`BEEBREAK_MIN_TOOL_EVENTS`, `BEEBREAK_COOLDOWN_S` and
+`BEEBREAK_SUGGESTION_TIMEOUT_S` change these values (seconds, positive
+integers), for example when you try Beebreak out.
+
+While you search, the window shows how long the server keeps you in the
+queue (90 seconds unless the operator changes `BEEBREAK_QUEUE_TTL_S`).
 
 ### Check it works
 
