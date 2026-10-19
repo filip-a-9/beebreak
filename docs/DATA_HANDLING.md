@@ -36,7 +36,7 @@ Paths follow `beebreak_shared.paths`. `$XDG_RUNTIME_DIR` falls back to
 |---|---|---|---|---|
 | IPC socket `companion.sock` | `$XDG_RUNTIME_DIR/beebreak/` (dir `0700`, socket `0600`) | Your user account only | Exists while the companion runs; a stale file is removed on the next start | Stop the companion; remove the file |
 | Session-key salt `salt` | `$XDG_RUNTIME_DIR/beebreak/` (`0600`) | Your user account only | Kept in the runtime directory until it is removed | Remove the file |
-| State file `companion-state.json` (suggestions on/off, cooldown deadline, chosen stack tags) | `$XDG_STATE_HOME/beebreak/` (dir `0700`, file `0600`) | Your user account only | Until you remove it | Remove the file |
+| State file `companion-state.json` (suggestions on/off, cooldown deadline, chosen stack tags, the current chat's id and last-read message number) | `$XDG_STATE_HOME/beebreak/` (dir `0700`, file `0600`) | Your user account only | Until you remove it | Remove the file |
 | Refresh token (30 days, rotated) | OS keyring when a real backend exists; otherwise `credentials.json` in the state directory (`0600`, **unencrypted**, and the app tells you) | Your user account (keyring: also anything that can unlock it) | Until sign-out or removal | Sign out in the app; or remove the file or keyring entry |
 | Access token (15 min) | Companion memory only | The companion process | Process lifetime | Quit the companion |
 | Chat messages and peer nickname | Companion memory and window only | You | Until the window closes | Close the window |
