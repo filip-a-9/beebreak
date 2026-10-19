@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_DIR = ROOT / "integrations" / "claude-code"
 COMPANION = ROOT / ".venv" / "bin" / "beebreak-companion"
 
-# Filip's per-invocation ceiling (2026-10-12); lower it with --budget-usd.
+# The per-invocation ceiling (2026-10-12); lower it with --budget-usd.
 MAX_BUDGET_USD = 1.00
 # Variables that would move a run from the claude.ai plan to API billing.
 BILLING_VARS = (
