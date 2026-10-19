@@ -23,6 +23,7 @@ class FakeTray:
 @pytest.fixture
 def alerts(monkeypatch: pytest.MonkeyPatch) -> list[QWidget]:
     seen: list[QWidget] = []
+    monkeypatch.setenv("BEEBREAK_WINDOWS_TOAST", "0")  # never a real toast here
     monkeypatch.setattr(QApplication, "alert", lambda widget, *a: seen.append(widget))
     return seen
 

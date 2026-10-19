@@ -77,7 +77,10 @@ DEVICE_NAME_LABEL = (
 )
 NICKNAME_INTRO = "Choose a nickname. Letters, digits, _ and -, 3 to 24 characters."
 NICKNAME_LABEL = "Nickname"
-PROFILE_DEVICE_LABEL = "Name of this device"
+PROFILE_NICKNAME_LABEL = "Nickname. Letters, digits, _ and -, 3 to 24 characters."
+PROFILE_DEVICE_LABEL = (
+    "Name of this device. Letters, digits, space, . _ and -, up to 40 characters."
+)
 PROFILE_LOCKED = "Names cannot change during a break search or a chat."
 PRIVACY_INTRO = (
     "Choose what may be shared with other people on a break. Each choice is "
@@ -438,10 +441,9 @@ class OnboardingDialog(QDialog):
             return []
         self.profile_locked_label.setVisible(False)
         return [
-            _label(NICKNAME_INTRO),
+            _label(PROFILE_NICKNAME_LABEL),
             self.profile_nickname_edit,
             _label(PROFILE_DEVICE_LABEL),
-            _label(DEVICE_NAME_LABEL),
             self.profile_device_edit,
             self.profile_locked_label,
         ]
@@ -793,7 +795,10 @@ class OnboardingDialog(QDialog):
                 self._steps.pop(0)()
             elif me.consent is not None:
                 self._busy = False
-                self._go(PAGE_DONE)
+                if self._edit_profile:
+                    self.accept()  # Settings: saved, nothing more to say
+                else:
+                    self._go(PAGE_DONE)
 
     @Slot(str)
     def _on_error(self, code: str) -> None:

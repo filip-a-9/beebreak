@@ -41,6 +41,13 @@ Paths follow `beebreak_shared.paths`. `$XDG_RUNTIME_DIR` falls back to
 | Access token (15 min) | Companion memory only | The companion process | Process lifetime | Quit the companion |
 | Chat messages and peer nickname | Companion memory and window only | You | Until the window closes | Close the window |
 
+Under WSL2 there is no tray, so a new match, or a new chat message while the chat
+window is not focused raises a Windows toast through `powershell.exe`. The toast
+is fixed text ("Beebreak", "Your break partner is waiting."): no nickname,
+message, device name or other value from you or the server reaches it, because
+Windows keeps toasts in its notification history, which Beebreak cannot delete
+(2026-10-19). Turn it off with `BEEBREAK_WINDOWS_TOAST=0`.
+
 `beebreak-companion install` writes `install.json` in the state directory
 (`0600`; the server URL chosen at install, no secrets).
 `beebreak-companion uninstall` deletes the state directory, socket directory

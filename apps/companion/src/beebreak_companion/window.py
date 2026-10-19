@@ -324,6 +324,10 @@ class CompanionWindow(QWidget):
             self.decline_button,
         ):
             _reserve(offer_widget)
+        # Never shown: only measures Open chat with a two-digit unread count.
+        self._open_chat_widest = QPushButton(f"{OPEN_CHAT} (99)", self)
+        self._open_chat_widest.setObjectName("primary")
+        self._open_chat_widest.setVisible(False)
         self._unread = 0
         self._chat_held = False
         for button in self._break_buttons:
@@ -351,6 +355,7 @@ class CompanionWindow(QWidget):
         card = QFrame()
         card.setObjectName("card")
         card_layout = QVBoxLayout(card)
+        self._card_layout = card_layout
         card_layout.addWidget(self.status_label)
         card_layout.addWidget(self.activity_label)
         card_layout.addWidget(self.rule_label)
@@ -362,6 +367,7 @@ class CompanionWindow(QWidget):
         card_layout.addWidget(self.extension_label)
         card_layout.addWidget(self.break_error_label)
         break_buttons = QHBoxLayout()
+        self._break_row = break_buttons
         for button in self._break_buttons:
             break_buttons.addWidget(button)
         card_layout.addLayout(break_buttons)
@@ -371,6 +377,7 @@ class CompanionWindow(QWidget):
         layout.addWidget(self.account_label)
         layout.addWidget(self.account_note)
         account_buttons = QHBoxLayout()
+        self._account_row = account_buttons
         for button in self._account_buttons:
             account_buttons.addWidget(button)
         layout.addLayout(account_buttons)
@@ -586,10 +593,51 @@ class CompanionWindow(QWidget):
         layout = self.layout()
         if layout is None:
             return
-        width = max(self.width(), layout.minimumSize().width())
-        wanted = QSize(layout.minimumSize().width(), layout.totalHeightForWidth(width))
+        floor = max(layout.minimumSize().width(), self._widest_state_width())
+        width = max(self.width(), floor)
+        wanted = QSize(floor, layout.totalHeightForWidth(width))
         if wanted != self.minimumSize():
             self.setMinimumSize(wanted)
+
+    def _widest_state_width(self) -> int:
+        """Width of the widest button row any state shows, from size hints, so
+        the window keeps one width across states instead of jumping."""
+        outer = self.layout()
+        if outer is None:
+            return 0
+        outer_m = outer.contentsMargins()
+        card_m = self._card_layout.contentsMargins()
+        # The break row at its fullest: Find with Open chat, Block and OK.
+        row = (
+            self.find_button,
+            self._open_chat_widest,
+            self.block_button,
+            self.ok_button,
+        )
+        break_w = self._row_width(self._break_row, row)
+        # Sign out is shown with one of the other account buttons.
+        others = max(
+            b.sizeHint().width()
+            for b in self._account_buttons
+            if b is not self.sign_out_button
+        )
+        account_w = (
+            others
+            + self.sign_out_button.sizeHint().width()
+            + self._account_row.spacing()
+        )
+        return max(
+            break_w + card_m.left() + card_m.right() + 2 * outer_m.left(),
+            account_w + outer_m.left() + outer_m.right(),
+        )
+
+    @staticmethod
+    def _row_width(layout: QHBoxLayout, widgets: tuple[QPushButton, ...]) -> int:
+        spacing = layout.spacing()
+        if spacing < 0:
+            spacing = 6
+        hints = [w.sizeHint().width() for w in widgets]
+        return sum(hints) + spacing * (len(hints) - 1)
 
     def event(self, event: QEvent) -> bool:
         handled = super().event(event)

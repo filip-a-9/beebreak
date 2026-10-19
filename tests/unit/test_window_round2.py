@@ -139,6 +139,22 @@ def test_content_is_never_clipped_at_the_default_size(window: CompanionWindow) -
     assert window.size().expandedTo(window.minimumSizeHint()) == window.size()
 
 
+def test_width_does_not_jump_between_states(window: CompanionWindow) -> None:
+    window.set_ready(True)
+    window.show()
+    QApplication.processEvents()
+    before = window.minimumWidth()
+    window.set_break(BreakState(phase="ended", match=_match()))
+    window.set_chat_held(True)
+    window.set_unread(3)
+    QApplication.processEvents()
+    after_ended = window.minimumWidth()
+    window.set_break(BreakState(phase="none"))
+    window.set_chat_held(False)
+    QApplication.processEvents()
+    assert before == after_ended == window.minimumWidth()
+
+
 # --- U2, U3, U4, U7 ---
 
 

@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QCloseEvent,
     QContextMenuEvent,
@@ -176,6 +176,29 @@ class _BodyLabel(QLabel):
 
     def contextMenuEvent(self, ev: QContextMenuEvent) -> None:
         self.build_context_menu().exec(ev.globalPos())
+
+
+PLACEMENT_GAP_PX = 12  # between the main window and a chat window beside it
+
+
+def chat_position(size: QSize, main: QRect | None, available: QRect) -> QPoint:
+    """Top-left for a chat window of `size`, wholly inside `available`.
+
+    Beside the main window when there is room (right first, then left), level
+    with its top; else it overlaps. Never above the top of `available`.
+    """
+    width, height = size.width(), size.height()
+    if main is None:
+        x = available.left() + (available.width() - width) // 2
+        y = available.top() + (available.height() - height) // 2
+    else:
+        x = main.right() + 1 + PLACEMENT_GAP_PX
+        if x + width - 1 > available.right():
+            x = main.left() - PLACEMENT_GAP_PX - width
+        y = main.top()
+    x = max(available.left(), min(x, available.right() - width + 1))
+    y = max(available.top(), min(y, available.bottom() - height + 1))
+    return QPoint(x, y)
 
 
 class ChatWindow(QWidget):
@@ -461,11 +484,36 @@ class ChatWindow(QWidget):
 
     def open_for_user(self) -> None:
         """The user asked for the window: show, raise and focus the input."""
+        if not self.isVisible():
+            self._place()
         self.show()
         self.raise_()
         self.activateWindow()
         if self._live:
             self.input.setFocus()
+
+    def _place(self) -> None:
+        """Move beside the visible main window, on its screen (a no-op on
+        platforms where the compositor chooses window positions)."""
+        main = next(
+            (
+                w
+                for w in QApplication.topLevelWidgets()
+                if isinstance(w, CompanionWindow) and w.isVisible()
+            ),
+            None,
+        )
+        screen = (main or self).screen()
+        if screen is None:
+            return
+        frame = self.frameGeometry()
+        size = QSize(frame.width(), frame.height())
+        origin = chat_position(
+            size,
+            main.frameGeometry() if main is not None else None,
+            screen.availableGeometry(),
+        )
+        self.move(origin)
 
     def _note_extension(self, previous: ChatState, state: ChatState) -> None:
         """An accepted extension moves the deadline later and uses one up."""
@@ -810,6 +858,15 @@ class ChatWindow(QWidget):
     def hideEvent(self, event: QHideEvent) -> None:
         super().hideEvent(event)
         self._timer.stop()
+        # WSLg keeps drawing a hidden Wayland toplevel, so the window looked
+        # unclosable. Dropping the native window removes it; show() makes a new
+        # one. Deferred: not while Qt is still inside the hide.
+        QTimer.singleShot(0, self._release_native_window)
+
+    def _release_native_window(self) -> None:
+        handle = self.windowHandle()
+        if handle is not None and not self.isVisible():
+            handle.destroy()
 
     def changeEvent(self, event: QEvent) -> None:
         super().changeEvent(event)

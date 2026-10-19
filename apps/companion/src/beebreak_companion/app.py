@@ -371,13 +371,14 @@ def wire_chat(
 
     notifier.on_click = open_chat
 
-    def notify(nickname: str) -> None:
+    def notify(nickname: str, *, matched: bool = False) -> None:
         last = seen["notified"]
         now = clock()
         if isinstance(last, float) and now - last < notify_interval_s():
             return
         seen["notified"] = now
-        notifier.notify(NOTIFY_TITLE, f"New message from {safe_nickname(nickname)}")
+        verb = "Matched with" if matched else "New message from"
+        notifier.notify(NOTIFY_TITLE, f"{verb} {safe_nickname(nickname)}")
 
     def on_chat(state: object, *, may_open: bool = True) -> None:
         if not isinstance(state, ChatState):
@@ -414,14 +415,17 @@ def wire_chat(
         # A match opens the window only while the main window is active; else it
         # would take focus from the editor on WSLg (F6) and the notification and
         # the Open chat button are the way in.
+        # The same applies to the notice: a new live match raises it (once per
+        # match, within the throttle) without opening the window (W6).
         if may_open and new_match and state.ended is None and main_active():
             open_chat()
         else:
             if viewed():
                 known["read"] = known["seq"]
                 remember_read()
-            if fresh and not focused():
-                notify(state.peer_nickname)
+            matched = may_open and new_match and state.ended is None and not focused()
+            if (fresh and not focused()) or matched:
+                notify(state.peer_nickname, matched=matched and not fresh)
         show_unread()
 
     def on_break(state: object) -> None:

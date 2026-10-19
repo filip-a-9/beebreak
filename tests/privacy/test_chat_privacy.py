@@ -217,8 +217,13 @@ def test_a_full_chat_leaks_no_content(
 
     # The peer got a notification that names the nickname only.
     assert b.notifier.calls, "B's window was inactive, a notification was due"
-    assert {c[1] for c in b.notifier.calls} == {f"New message from {ADA}"}
-    assert {c[1] for c in a.notifier.calls} <= {f"New message from {BOB}"}
+    notices = {f"New message from {ADA}", f"Matched with {ADA}"}
+    assert {c[1] for c in b.notifier.calls} <= notices
+    assert b.notifier.calls  # a notice, the match's or the message's
+    assert {c[1] for c in a.notifier.calls} <= {
+        f"New message from {BOB}",
+        f"Matched with {BOB}",
+    }
     assert a.notifier.calls
 
     # Rule 14 while chatting: the fixed enum and nothing else.

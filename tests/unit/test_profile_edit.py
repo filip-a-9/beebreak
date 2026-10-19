@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from PySide6.QtWidgets import QDialog, QLabel
 from pytestqt.qtbot import QtBot
 from sqlalchemy import select
 
@@ -16,7 +17,9 @@ from beebreak_companion.break_state import BreakState
 from beebreak_companion.chat_state import ChatState
 from beebreak_companion.config import wsl_distro_name
 from beebreak_companion.onboarding import (
+    DEVICE_NAME_LABEL,
     ERROR_TEXT,
+    NICKNAME_INTRO,
     PAGE_DONE,
     PAGE_NICKNAME,
     PAGE_PRIVACY,
@@ -102,7 +105,8 @@ def test_save_sends_changed_names_one_after_another_then_the_consent(
     worker.push_me(me("Office PC").model_copy(update={"nickname": "grace_h"}))
     assert worker.calls.consents == [CONSENT]
     worker.push_me(me("Office PC"))
-    assert dialog.page == PAGE_DONE
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog.page != PAGE_DONE
 
 
 def test_only_the_device_name_changed(qtbot: QtBot) -> None:
@@ -111,6 +115,19 @@ def test_only_the_device_name_changed(qtbot: QtBot) -> None:
     dialog.next_button.click()
     assert worker.calls.nicknames == []
     assert worker.calls.renames == ["Office PC"]
+
+
+def test_settings_labels_state_each_rule_once(qtbot: QtBot) -> None:
+    dialog, _ = settings(qtbot)
+    page = dialog.stack.widget(PAGE_PRIVACY)
+    assert page is not None
+    texts = [w.text() for w in page.findChildren(QLabel) if w.isVisibleTo(dialog)]
+    # One label for the nickname field, one for the device field; neither
+    # reads as first-run ("Choose a nickname") and no rule is repeated.
+    assert NICKNAME_INTRO not in texts
+    assert DEVICE_NAME_LABEL not in texts
+    assert sum("3 to 24" in t for t in texts) == 1
+    assert sum("40 characters" in t for t in texts) == 1
 
 
 def test_invalid_names_disable_save(qtbot: QtBot) -> None:
@@ -224,7 +241,7 @@ def test_rename_through_settings_reaches_the_server(qtbot: QtBot, rig: Rig) -> N
     dialog.profile_device_edit.setText("Renamed box")
     dialog.profile_nickname_edit.setText("ada_new")
     dialog.next_button.click()
-    wait_page(qtbot, dialog, PAGE_DONE)
+    qtbot.waitUntil(lambda: dialog.result() == QDialog.DialogCode.Accepted)
     assert device_names(rig.server) == ["Renamed box"]
     assert rig.rec.last.nickname == "ada_new"
     assert rig.rec.last.device_name == "Renamed box"

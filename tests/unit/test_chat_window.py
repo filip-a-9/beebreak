@@ -6,14 +6,14 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 from pytestqt.qtbot import QtBot
 
 from beebreak_companion.chat_state import ChatEnd, ChatState, PendingMessage
-from beebreak_companion.chat_window import ChatWindow, _BodyLabel
+from beebreak_companion.chat_window import ChatWindow, _BodyLabel, chat_position
 from beebreak_companion.report_dialog import ReportDialog
 from beebreak_companion.window import CompanionWindow
 from tests.fakes.chat import T0, chat_state, chat_status, message_view
@@ -736,6 +736,35 @@ def test_an_empty_state_hides_the_window_and_clears_everything(
     assert not window.report_button.isVisibleTo(window)
 
 
+def _has_native_window(window: ChatWindow) -> bool:
+    return window.testAttribute(Qt.WidgetAttribute.WA_WState_Created)
+
+
+def test_a_hidden_window_releases_its_native_window(
+    window: ChatWindow, qtbot: QtBot
+) -> None:
+    # WSLg keeps drawing a hidden Wayland toplevel until it is destroyed (the
+    # window stayed on screen and looked unclosable), so every hide drops it.
+    window.set_chat(chat_state())
+    assert _has_native_window(window)
+    window.set_chat(ChatState())
+    qtbot.waitUntil(lambda: not _has_native_window(window), timeout=1000)
+
+
+def test_a_hidden_live_window_comes_back_with_a_native_window(
+    window: ChatWindow, qtbot: QtBot
+) -> None:
+    main = CompanionWindow()
+    qtbot.addWidget(main)
+    main.show()
+    window.set_chat(chat_state())
+    window.close()  # a live chat only hides
+    qtbot.waitUntil(lambda: not _has_native_window(window), timeout=1000)
+    window.open_for_user()
+    assert window.isVisible()
+    assert _has_native_window(window)
+
+
 def test_a_new_match_clears_the_draft(window: ChatWindow) -> None:
     window.set_chat(chat_state())
     window.input.setPlainText("draft")
@@ -1265,3 +1294,49 @@ def test_a_real_extension_after_a_resync_still_adds_its_line(
     before = len(_texts(window))
     window.set_chat(_same_match(mid, left_s=700, extensions_left=1))
     assert len(_texts(window)) == before + 1
+
+
+# --- placement ---
+
+SCREEN = QRect(0, 0, 1280, 720)
+CHAT = QSize(366, 513)
+
+
+def _fits(origin: QPoint, size: QSize = CHAT) -> bool:
+    return SCREEN.contains(QRect(origin, size))
+
+
+def test_a_chat_window_goes_beside_the_main_window_when_there_is_room() -> None:
+    main = QRect(100, 80, 326, 503)
+    chat = QRect(chat_position(CHAT, main, SCREEN), CHAT)
+    assert _fits(chat.topLeft())
+    assert not chat.intersects(main)
+
+
+def test_a_chat_window_goes_left_when_the_right_has_no_room() -> None:
+    main = QRect(900, 80, 326, 503)
+    chat = QRect(chat_position(CHAT, main, SCREEN), CHAT)
+    assert _fits(chat.topLeft())
+    assert not chat.intersects(main)
+
+
+def test_a_chat_window_stays_on_screen_when_it_cannot_avoid_the_main_window() -> None:
+    main = QRect(300, 80, 700, 503)
+    assert _fits(chat_position(CHAT, main, SCREEN))
+
+
+def test_a_chat_window_is_never_placed_above_the_screen_top() -> None:
+    main = QRect(100, -40, 326, 503)  # a title bar above the work area
+    area = QRect(0, 40, 1280, 680)
+    assert chat_position(CHAT, main, area).y() >= area.top()
+
+
+def test_a_chat_window_is_never_placed_below_the_screen_bottom() -> None:
+    main = QRect(100, 600, 326, 503)
+    origin = chat_position(CHAT, main, SCREEN)
+    assert origin.y() + CHAT.height() <= SCREEN.bottom() + 1
+
+
+def test_a_chat_window_without_a_main_window_is_centred_on_screen() -> None:
+    origin = chat_position(CHAT, None, SCREEN)
+    assert _fits(origin)

@@ -153,6 +153,12 @@ cause is usually not a missing library but no WSLg display: check that
 autostart: WSLg has no desktop session, so nothing in WSL2 runs autostart
 entries.
 
+With no tray under WSL2, a new match, or a new chat message while the chat window is not
+focused raises a Windows toast with fixed text only (it names nobody and shows
+no message, since Windows keeps toast history). Set `BEEBREAK_WINDOWS_TOAST=0`
+to turn it off, or `BEEBREAK_POWERSHELL` to point at a different
+`powershell.exe`.
+
 Closing the last companion window quits the companion (it asks first while a
 search or a chat is active). There is no tray icon, so to bring it back run
 `beebreak-companion` again.
