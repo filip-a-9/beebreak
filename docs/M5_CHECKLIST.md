@@ -23,7 +23,7 @@ M6 (TLS and hosting).
 
 - T1: the Docker stack (`docker compose ...`, `beebreak-admin` commands, the
   network proxy of M5-C03).
-- T2: companion A (default state and runtime directories), account `Filip`.
+- T2: companion A (default state and runtime directories), account `Ada`.
 - T3: companion B (separate directories and a different server address, see
   M5-C03), account `Bea`.
 - T4: a Claude Code session used only by M5-C17, attached to A.
@@ -130,7 +130,7 @@ docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT r.status, r
 (`MQ`, `XQ` and `RQ` in the steps below.) `MQ` lists the latest match's
 messages by sequence number, author and length, never a body.
 
-**Test identities** are the M3 ones: `filip@example.com` (A, nickname `Filip`)
+**Test identities** are the M3 ones: `ada@example.com` (A, nickname `Ada`)
 and `bea@example.com` (B, nickname `Bea`); sign-in codes arrive in Mailpit at
 `http://127.0.0.1:8025`.
 
@@ -201,19 +201,19 @@ address for the credentials, so B shows `Not signed in`: sign in as
 consent from M4 still exist; if the nickname or settings pages appear, enter
 `Bea` and tick **Share stack tags** with the tag **Python**). In A, if the
 M4 settings were lost, tick **Share stack tags** and the tag **Python**.
-Wait for `Connected as Filip` and `Connected as Bea`. Then click **Find a break
+Wait for `Connected as Ada` and `Connected as Bea`. Then click **Find a break
 partner** in A and in B.
 
 ```
 docker compose exec server beebreak-admin matches
 ```
 
-Expect: both main windows show `Chatting with Bea` / `Chatting with Filip`
+Expect: both main windows show `Chatting with Bea` / `Chatting with Ada`
 and the `Open chat` button; a second window titled `Beebreak chat` opened
 by itself on each side without stealing the keyboard focus (the terminal you
 were typing in keeps it); it shows the peer's nickname, `In common: Python`,
 `15 min left` and the footer. `matches` prints exactly one line naming `Bea`
-and `Filip`. Leave this chat running for M5-C04 to M5-C07.
+and `Ada`. Leave this chat running for M5-C04 to M5-C07.
 
 ## Chat
 
@@ -259,7 +259,7 @@ Expect in A: the line appears literally, with the angle brackets and `&amp;`
 visible, no bold, no link styling, no image. Click on the text: nothing
 opens. Open the report dialog in A (`Report`, then `Cancel`): the same line
 is listed literally in the message list and nothing is ticked. Also check the
-nickname lines show `Bea` and `Filip` only.
+nickname lines show `Bea` and `Ada` only.
 
 Notification: in A click the main window (so the chat window is not the
 active window) and have B send `ping CANARY-M5-7f3a`. Expect: the main
@@ -348,7 +348,7 @@ window shows `4 min left`. After about 2 minutes (when 2 minutes are left)
 both windows show the banner `2 minutes left. Extend by 2 minutes?` with an
 `Extend` button (not before). In A click **Extend**.
 
-Expect: A shows `Waiting for Bea…` with a `Cancel` button; B shows `Filip
+Expect: A shows `Waiting for Bea…` with a `Cancel` button; B shows `Ada
 wants 2 more minutes.` with `Yes` and `No`. Click **Yes** in B. Both banners
 disappear and the countdown goes up to about `4 min left`. Wait (the banner
 returns when 2 minutes are left) and extend once more the same way; after the
@@ -397,14 +397,14 @@ docker compose exec server beebreak-admin block list Bea
 ```
 
 Expect: both chat windows show `The chat ended.` (A gets no hint that it was
-blocked); `block list Bea` prints `Filip`; `XQ` shows the match `ended`
+blocked); `block list Bea` prints `Ada`; `XQ` shows the match `ended`
 with the stored reason `blocked` (never shown to A). Click `Close` in both chat
 windows and OK in both main windows (Find is hidden until then). Click Find in
 both and wait
 about 95 s: no match is made. Then remove the block and match again:
 
 ```
-docker compose exec server beebreak-admin block remove Bea Filip
+docker compose exec server beebreak-admin block remove Bea Ada
 ```
 
 Click OK in both, Find in both: they match. End that chat (End in A).
@@ -420,23 +420,23 @@ tick only `Bea: harassing line CANARY-M5-7f3a`, click **Report and block**.
 docker compose exec server beebreak-admin report list
 docker compose exec server beebreak-admin report show REPORT_ID
 docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT r.status, r.reason, (r.note IS NOT NULL) AS has_note, (SELECT count(*) FROM report_messages rm WHERE rm.report_id = r.id) AS evidence FROM reports r ORDER BY r.created_at"
-docker compose exec server beebreak-admin block list Filip
+docker compose exec server beebreak-admin block list Ada
 ```
 
 (Take `REPORT_ID` from the first column of `report list`.) Expect: A's chat
 window shows `The chat ended.` and its `Report` button is disabled (no `Block`
 button either); B's chat window shows `The chat ended.` and B sees nothing
 about a report or block; the main windows show `Break ended.`. `report list`
-prints one line: `harassment`, `Filip`, `Bea`, evidence count `1`, `open`,
+prints one line: `harassment`, `Ada`, `Bea`, evidence count `1`, `open`,
 and no note or message text. `report show` starts with the WARNING line, shows
-`reason: harassment`, `reporter: Filip`, `reported: Bea`, `note:
+`reason: harassment`, `reporter: Ada`, `reported: Bea`, `note:
 CANARY-NOTE-M5-7f3a` and exactly one message line, `[1] reported <time>:
 harassing line CANARY-M5-7f3a` (seq 1 here; only the ticked one, none of the
 others). `RQ` shows `open`, `harassment`, `has_note` `t`, `evidence` `1`, and `XQ`
 shows the match `ended` with the stored reason `reported` (neither window shows
 it).
-`block list Filip` prints `Bea`. Remove the block before going on:
-`docker compose exec server beebreak-admin block remove Filip Bea`. Click
+`block list Ada` prints `Bea`. Remove the block before going on:
+`docker compose exec server beebreak-admin block remove Ada Bea`. Click
 `Close` and OK in both windows.
 
 **M5-C14 — Late report from the ended chat window.** Find in both and send a
@@ -448,7 +448,7 @@ two`, no note, **Report and block**.
 
 ```
 docker compose exec server beebreak-admin report list
-docker compose exec server beebreak-admin block remove Filip Bea
+docker compose exec server beebreak-admin block remove Ada Bea
 ```
 
 Expect: the report is accepted (no error line such as `The report window has
@@ -561,7 +561,7 @@ echo "access lines (must be > 0): $(grep -c beebreak_server.access reports/m5-se
 echo "message requests logged (must be > 0): $(grep beebreak_server.access reports/m5-server-all.txt | grep -c '/messages')"
 echo "report requests logged (must be > 0): $(grep beebreak_server.access reports/m5-server-all.txt | grep -c '/v1/reports')"
 echo "canary hits: $(grep -c 'CANARY' reports/m5-server-all.txt)"
-echo "server logs: $(grep -cE 'CANARY|harassing line|late two|hello from|Filip|Bea|filip@|bea@|bra_|brr_|<b>bold' reports/m5-server-all.txt)"
+echo "server logs: $(grep -cE 'CANARY|harassing line|late two|hello from|Ada|Bea|ada@|bea@|bra_|brr_|<b>bold' reports/m5-server-all.txt)"
 ```
 
 Expect: the three counts above `0` (otherwise the zero proves nothing); both

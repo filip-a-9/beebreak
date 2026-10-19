@@ -1,13 +1,49 @@
 # Runbook
 
-How to run the Beebreak server from `compose.prod.yaml`. Every command runs on
-the host, from the repository root. `dc` below means:
+How to run a Beebreak server from `compose.prod.yaml`. The Beebreak project
+runs no server (ADR 0021): you are the operator of yours, and the controller of
+the data on it. Every command runs on the host, from the repository root. `dc` below means:
 
 ```sh
 alias dc='docker compose -f compose.prod.yaml'
 ```
 
 The stack is Caddy (TLS) -> server -> Postgres. Only Caddy publishes ports.
+
+Read [Before you open your server to others](#before-you-open-your-server-to-others)
+and [Untested on a real host](#untested-on-a-real-host) before you let anyone
+else sign in.
+
+## Before you open your server to others
+
+Fill in each field below. Each is written in angle brackets. Copy
+`docs/PRIVACY_NOTICE.md`, fill in your copy, and run `grep -n '<'
+your-copy-of-PRIVACY_NOTICE.md`: it must print nothing. Point the links in the
+notice that go to `DATA_HANDLING.md` at that file in the repository at the tag
+you run.
+
+| Field | What to put | File |
+|---|---|---|
+| `<operator name>` | Who is responsible for the data (you or your organisation) | `docs/PRIVACY_NOTICE.md` |
+| `<contact address>` | A mailbox you read, for appeals, data requests and abuse reports | `docs/PRIVACY_NOTICE.md` (also named in `docs/DATA_HANDLING.md` and this file) |
+| `<response time>` | How fast you answer; this runbook assumes 14 days | `docs/PRIVACY_NOTICE.md` |
+| `<email provider>` | The SMTP provider, if email sign-in is on | `docs/PRIVACY_NOTICE.md` |
+| `<hosting provider>` | Who hosts the machine and database | `docs/PRIVACY_NOTICE.md` |
+| `<backup retention>` | How long you keep backups, and where | `docs/PRIVACY_NOTICE.md` (also the backups row of `docs/DATA_HANDLING.md`) |
+| `<transfers>` | Whether a provider is outside your country and on what basis | `docs/PRIVACY_NOTICE.md` |
+| `<supervisory authority>` | The data protection authority for your country | `docs/PRIVACY_NOTICE.md` |
+| `<changes>` | Where the notice is published and how you announce changes | `docs/PRIVACY_NOTICE.md` |
+| `<abuse report owner>` and `<abuse report response time>` | Who runs `report list`, and how fast they act | [Abuse reports](#abuse-reports) in this file |
+
+Then:
+
+- Publish the filled-in privacy notice where your users can read it, and check
+  its lawful bases and retention periods against the law that applies to you.
+  No lawyer has reviewed the template.
+- Register your own GitHub OAuth App if you use GitHub sign-in (see below).
+- Go through [Untested on a real host](#untested-on-a-real-host).
+- Set up [alerting](#alerting).
+- Run the [restore drill](#restore-drill) on your host once.
 
 ## Start and stop
 
@@ -54,8 +90,10 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 Needs no email provider and no client secret.
 
+Each operator registers their own OAuth App; the project has none to share.
+
 1. On GitHub: Settings, Developer settings, OAuth Apps, New OAuth App. Name it,
-   set the homepage to the project page, and set the authorization callback URL
+   set the homepage to your server's page or the project page, and set the authorization callback URL
    to the same page (the field is required; the device flow never uses it).
 2. On the new app's page, tick **Enable Device Flow** and save. Without it,
    sign-in fails with `github_unavailable` (GitHub answers `device_flow_disabled`;
@@ -80,8 +118,9 @@ Export or delete a GitHub account with `account export --github-id <id>` and
 `account delete --github-id <id> --yes` (the id is in the export of an
 account, or look it up with the same `GET /users/<name>`). An account is either
 email or GitHub; to switch someone, delete and re-invite. After enabling GitHub
-for the first time, confirm once on a rehearsal deploy that a sign-in with no
-scope can call `GET /user` (GitHub's docs do not say it outright).
+for the first time, check on your host that a sign-in with no
+scope can call `GET /user` (GitHub's docs do not say it outright); it is on
+the [untested list](#untested-on-a-real-host).
 
 Changing `.env` takes effect with `dc up -d` (it recreates what changed).
 Changing `POSTGRES_PASSWORD` later does **not** change the password inside an
@@ -98,8 +137,8 @@ dc exec server beebreak-admin invite create you@example.com --send
 
 (Needs email sign-in on; on a GitHub-only server use `--github` below.)
 
-`--send` emails the code; without it the code is printed once on stdout (it is
-never stored in clear). The invitee enters the email and the code in the
+The code is printed once on stdout either way (it is never stored in clear);
+`--send` also emails it. The invitee enters the email and the code in the
 companion. `invite list` shows state, `invite revoke <id>` ends an invite.
 `--days N` overrides the 7-day validity.
 
@@ -293,9 +332,10 @@ a warning line) and `report resolve <id> dismiss|disable`.
 
 ## Answer an appeal or a data request
 
-Appeals, access (export) and erasure (delete) requests all arrive at one
-address: `<contact address>`. The response time is **14 days**
-(ADR 0013). Moderation and data requests are handled only through the admin
+Appeals, access (export) and erasure (delete) requests on your server arrive at
+your `<contact address>`. This runbook assumes a response time of **14 days**
+(ADR 0013); change `<response time>` in the privacy notice if you choose
+another. Moderation and data requests are handled only through the admin
 CLI.
 
 - **Appeal** of a disabled account: confirm the mail comes from the account's
@@ -323,11 +363,80 @@ CLI.
 
 ## Abuse reports
 
-Who answers reports and how fast:
-`<abuse report owner and response time — to be decided>`
+Reports are not pushed to anyone. They appear only when someone runs
+`report list`. Decide, and write here:
 
-This is **undecided** by the project owner. Until it is, the people running the
-server see reports only when they run `report list`.
+- Abuse report owner: `<abuse report owner>`
+- Response time: `<abuse report response time>`
+
+See [Alerting](#alerting) for a way to be told when a report is open.
+
+## Untested on a real host
+
+Everything below was tested locally only: on one machine, with Caddy removed or
+pointed at a local listener, and fake mail. Check each item on your own host
+before you let other people in, and again after you change the host, the proxy
+or the compose files.
+
+- **TLS via Caddy.** A public certificate for `BEEBREAK_PUBLIC_HOST`, ports 80
+  and 443 reachable, and the WebSocket (`/v1/realtime`) working through Caddy
+  from a client on another network.
+- **Proxy limits.** A spoofed `X-Forwarded-For` sent to the public address must
+  not change the rate-limit key, while the real peer address does
+  (`BEEBREAK_TRUSTED_PROXIES`).
+- **Two-machine behaviour.** The M4 and M5 checklists ran both companions on one
+  machine against a local proxy. Repeat the match, chat, offline-hold (a real
+  network cut on the second machine), extension, block and report steps with
+  two machines (`docs/M4_CHECKLIST.md`, `docs/M5_CHECKLIST.md`).
+- **Restore drill on a host.** The drill in [Restore drill](#restore-drill) ran
+  without Caddy or real mail, and without the `age` path. Run it on the host,
+  with an off-host copy of the backup.
+- **IPv6 client address.** `compose.prod.yaml` trusts Caddy at one IPv4 address
+  on the `edge` network. What the server records as `remote_ip` for a client
+  that arrives over IPv6 was not tested. Either enable IPv6 on `edge` and check
+  the recorded address is the client's, or publish no AAAA record for the host.
+- **The `172.29.7.0/24` network.** `edge` uses this fixed subnet. Check that it
+  is free on your provider (`docker network inspect` and your provider's
+  private ranges); if not, change it and the `BEEBREAK_TRUSTED_PROXIES` value
+  together.
+- **Caddy error-log contents.** The error log can include the client address,
+  the host and the requested path. Look at what it holds on a real 502 (stop the
+  server briefly) and decide whether to cut it down. The privacy notice says it
+  may include these.
+- **GitHub `GET /user` with no scope.** GitHub's docs do not say outright that a
+  token with no scope can call it. Sign in with GitHub once on your server and
+  confirm.
+- **Transitive versions.** `uv tool install` from git ignores `uv.lock`, so
+  transitive dependencies resolve to whatever is newest at install time.
+- **Real mail.** A real provider sends the sign-in code, with SPF and DKIM set
+  before any real send, and `BEEBREAK_SMTP_TLS` set for starttls or implicit TLS.
+
+## Alerting
+
+Guidance only; the project ships no monitoring. Use what you already run, or
+self-hosted tools. Three things are worth knowing about.
+
+- **The server is down.** Probe `https://<BEEBREAK_PUBLIC_HOST>/v1/health` from
+  a machine other than the host, every minute or so, and alert on anything but
+  HTTP 200. A self-hosted tool such as Uptime Kuma does this on a second
+  machine; a cron job on another host with `curl -fsS` and `mail` also works.
+  Probing from the host itself misses a dead host.
+- **A backup failed.** The backup cron line in [Backup schedule](#backup-schedule)
+  appends to a log. Make cron mail you on failure: set `MAILTO=` at the top of
+  the crontab and drop the log redirect, so any output from a failed run is
+  mailed, or end the line with `|| echo "beebreak backup failed" | mail -s
+  "beebreak backup" you@example.com`. Also alert when the newest file in
+  `backups/` is more than a day old.
+- **A report is open.** `report list` prints open reports and nothing when there
+  are none. A cron job can count its lines and mail you only the count, never
+  the report text:
+
+  ```sh
+  n=$(cd /srv/beebreak && docker compose -f compose.prod.yaml exec -T server beebreak-admin report list | wc -l)
+  [ "$n" -gt 0 ] && echo "$n open Beebreak reports" | mail -s "beebreak reports" you@example.com
+  ```
+
+  Your abuse report response time starts when this mail arrives.
 
 ## Single-worker rule
 

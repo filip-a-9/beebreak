@@ -2,7 +2,7 @@
 
 **Status:** Draft v0.1, engineering proposal (not an authorization to implement)  
 **Date:** 2026-10-12  
-**Scope:** Claude Code-first, open-source-oriented, invite-only hosted beta  
+**Scope:** Claude Code-first, open source, self-hosted by each operator (ADR 0021)  
 **Product concept:** A voluntary, spontaneous one-to-one chat break while AI coding agents work.
 
 > **Decision status convention:** **CONFIRMED** means agreed during the twelve-question product interview. **PROPOSED** means a technical/default choice for review, and must not be mistaken for user approval. **DEFERRED** means explicitly outside the first MVP.
@@ -24,9 +24,9 @@ All twelve product decisions are **CONFIRMED**:
 | 9 | Scarcity | Bounded queue for one-to-one matching; no group room in MVP |
 | 10 | Integration | Claude Code first; Codex adapter later |
 | 11 | Distribution | Claude Code plugin and separately installed companion application |
-| 12 | Launch | Local verification, then a small closed beta |
+| 12 | Launch | Local verification, then an open-source release; no hosted instance (ADR 0021) |
 
-**Open-source preference:** Raised after Question 12; **PROPOSED** approach is public source code, restricted hosted beta. License: Apache-2.0 (**CONFIRMED** 2026-10-12). Open source and access to the hosted network are separate decisions.
+**Open-source preference:** Raised after Question 12; approach is public source code with no maintainer-run network: every server is self-hosted by its operator (**CONFIRMED** 2026-10-19, [ADR 0021](ADR/0021-no-hosted-instance.md)). License: Apache-2.0 (**CONFIRMED** 2026-10-12).
 
 ### Problem statement
 
@@ -34,7 +34,7 @@ Developers with coding agents often have short intervals when the agent is execu
 
 ### MVP success hypothesis
 
-Some developers will accept unobtrusive invitations, meet an available peer, and choose to repeat the experience. The beta tests **demand and timing** as well as technical feasibility.
+Some developers will accept unobtrusive invitations, meet an available peer, and choose to repeat the experience. Operators and users of a self-hosted server test **demand and timing** as well as technical feasibility.
 
 ### Explicit non-goals
 
@@ -46,7 +46,7 @@ Some developers will accept unobtrusive invitations, meet an available peer, and
 - Agent-to-agent conversation; use the chat window for people only.
 - A commercial subscription system or production-scale federated network.
 - Automatic sharing of task descriptions with chat partners.
-- Full self-hosting support documentation for the initial closed beta (architecture should permit later support).
+- A maintainer-operated public server (ADR 0021). Self-hosting is the only model; operator documentation is `docs/RUNBOOK.md`.
 
 ## 2. Proposed technology decisions
 
@@ -115,7 +115,7 @@ flowchart TD
 
 ### 3.3 Hosted backend
 
-- Handles authentication, invitation eligibility for a closed beta, profile nickname, presence, queue, match sessions, blocking/reporting, and one-to-one messages.
+- Handles authentication, invitation eligibility, profile nickname, presence, queue, match sessions, blocking/reporting, and one-to-one messages.
 - Receives only explicitly allowed task categories/tags and broad time availability; it must not accept or store prompt bodies or local file paths as structured task data.
 - Enforces server-side authority over account, queue membership, chat participants, and session expiration.
 - Manages concurrency, reconnections, and idempotency independently of client timeouts.
@@ -379,7 +379,7 @@ M4 (**CONFIRMED** 2026-10-13): availability does not filter pairs; the remaining
 
 ### First run
 
-1. Install companion; open it; create or join an invite-only beta account.
+1. Install companion; open it; sign in to a server with an invite.
 2. Choose a nickname, notifications preference, data-sharing categories, and optional interests.
 3. Companion presents its local integration health and a data-sharing preview.
 4. Install Claude Code plugin; companion verifies hooks and MCP connection.
@@ -438,10 +438,10 @@ Avoid fabricated benchmarks. Numeric latency/uptime objectives should be set aft
 | M3 — Identity & remote connectivity | Invite account, nickname, consent settings, token storage, HTTPS/WSS connection | Two authorized accounts connect; private content never sent as task metadata |
 | M4 — Matchmaking | Queue, atomic pairing, timeouts, cancellation, blocking | Two real clients match once; race tests prevent duplicate match; scarcity case expires safely |
 | M5 — Human chat | Messages, reconnect, independent window, deadlines, mutual extension, reports | Two-user end-to-end chat survives transient disconnect; expiration and moderation controls tested |
-| M6 — Beta hardening | OS packages, install/uninstall, privacy test corpus, usability flows, logging/ops, docs, OSS readiness | Reproducible installations and vetted disclosure/retention before closed beta |
-| M7 — Closed beta | Invite small coordinated cohort, measure product metrics, prioritize feedback | Written continue/pivot decision based on observed use rather than feature checklist |
+| M6 — Beta hardening | OS packages, install/uninstall, privacy test corpus, usability flows, logging/ops, docs, OSS readiness | Reproducible installations and vetted disclosure/retention before the open-source release |
+| M7 — Closed beta | Dropped 2026-10-19: the maintainer runs no instance (ADR 0021) | None |
 
-**Do not initiate M2–M7 prematurely.** First finish and physically verify M1; report blocked platforms as pending rather than assuming their behavior.
+**Do not initiate M2–M6 prematurely.** First finish and physically verify M1; report blocked platforms as pending rather than assuming their behavior.
 
 ## 15. Proposed repository layout
 
@@ -497,7 +497,7 @@ These are deliberately unresolved until the next *non-interview* architecture re
 4. Exact availability estimation baseline and calibration; what counts as a reliable task finish. M2 baseline (**CONFIRMED** 2026-10-12): heuristic engine only; nothing counts as a whole-task finish, `TaskCompleted` is a hint; with several sessions, invite only if one qualifies and none waits for input. Calibration stays open.
 5. Local model candidates and resource budgets. No default model weight bundled until evaluated.
 6. Auth provider, email invitation workflow, token/device lifecycle. M3 (**CONFIRMED** 2026-10-13): self-hosted email codes with admin invites, see §2; email change stays open, account deletion is item 7.
-7. Message and reports retention policy, deletion/export UX, locale/jurisdiction requirements. M5 (**CONFIRMED** 2026-10-14): message bodies deleted 24 h after the chat ends, report evidence 90 days after resolution, open reports kept until resolved, all configurable. M6 (**CONFIRMED** 2026-10-16): export and hard delete are operator-run (`beebreak-admin account export|delete`), requested by email and answered within 14 days, with no in-app UI; deletion is refused while the user is queued, in a live match or on either side of an open report, and for a disabled account without an explicit operator override, which then leaves a tombstone (a keyed hash of the email, kept 1 year) so a new invite for that email needs `--override-tombstone`. Sign-in rows: challenges 24 h after use or expiry, refresh tokens 7 days after expiry, terminal invites 30 days, all configurable. Jurisdiction: one GDPR-grade privacy notice (`docs/PRIVACY_NOTICE.md`), lawyer review recommended before M7.
+7. Message and reports retention policy, deletion/export UX, locale/jurisdiction requirements. M5 (**CONFIRMED** 2026-10-14): message bodies deleted 24 h after the chat ends, report evidence 90 days after resolution, open reports kept until resolved, all configurable. M6 (**CONFIRMED** 2026-10-16): export and hard delete are operator-run (`beebreak-admin account export|delete`), requested by email and answered within 14 days, with no in-app UI; deletion is refused while the user is queued, in a live match or on either side of an open report, and for a disabled account without an explicit operator override, which then leaves a tombstone (a keyed hash of the email, kept 1 year) so a new invite for that email needs `--override-tombstone`. Sign-in rows: challenges 24 h after use or expiry, refresh tokens 7 days after expiry, terminal invites 30 days, all configurable. Jurisdiction: one GDPR-grade privacy notice template (`docs/PRIVACY_NOTICE.md`) that each operator checks for their jurisdiction (ADR 0021).
 8. Exact timer defaults, UI presentation when estimated duration changes. M2 (**CONFIRMED** 2026-10-12): the invitation shows the remaining-time bucket as a range, nothing when unknown; no live countdown. M5 (**CONFIRMED** 2026-10-14): 15 min chat, grace the last 2 min before the deadline, 10 min extensions by mutual agreement, at most 2; 60 s offline hold.
 9. ~~Apache-2.0 versus MIT/AGPL~~ — resolved 2026-10-12: Apache-2.0.
 10. Hosting cost ceiling, monitoring and abuse operational responsibilities (backup/restore: `docs/RUNBOOK.md`). M3 runs on local Docker only; a host is chosen later.
@@ -533,4 +533,4 @@ Each architecture decision should have its own ADR explaining choice, alternativ
 - Official MCP Python SDK v2: https://github.com/modelcontextprotocol/python-sdk
 - MCP Python SDK docs: https://py.sdk.modelcontextprotocol.io/
 
-**Final recommendation:** Build the open-source-friendly local vertical slice first. Instrument it, validate privacy and noninterference with real Claude Code sessions, then add the smallest remotely hosted one-to-one service that can support a controlled beta. Preserve the 12 confirmed product decisions; treat technical defaults as proposals until tested.
+**Final recommendation:** Build the open-source-friendly local vertical slice first. Instrument it, validate privacy and noninterference with real Claude Code sessions, then add the smallest remotely hosted one-to-one service that an operator can self-host. Preserve the 12 confirmed product decisions; treat technical defaults as proposals until tested.

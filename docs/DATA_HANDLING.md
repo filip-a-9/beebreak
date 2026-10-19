@@ -5,6 +5,9 @@ is deleted. Server retention values are the defaults in `ServerConfig`
 (`apps/server/src/beebreak_server/config.py`); each can be changed with the
 environment variable named in the table.
 
+The Beebreak project runs no server and collects no data. "The operator" below
+is whoever runs the server you use.
+
 ## The operator can read chats
 
 Chat is not end-to-end encrypted. Messages sit in the server database in clear
@@ -61,7 +64,7 @@ user.
 | Refresh tokens: SHA-256 hash, device, expiry, used time | `refresh_tokens` | Operator | Deleted 7 days after the token expires, used or not (`BEEBREAK_REFRESH_TOKEN_RETENTION_S`); an unexpired token is kept | Automatic purge |
 | Sign-in challenges: email, HMAC of the emailed code, attempts, expiry, consumed time; for GitHub sign-in no identity at all, only the GitHub device code (a secret valid for about 15 minutes, cleared when the challenge is used or refused; a never-polled one stays until the purge), the poll interval and next poll time. The GitHub access token is never stored | `auth_challenges` | Operator | Deleted 24 h after use or expiry (`BEEBREAK_CHALLENGE_RETENTION_S`). A code is valid for 10 minutes (`BEEBREAK_CODE_TTL_S`) | Automatic purge |
 | Beta invites: email and HMAC of the invite code, or a GitHub numeric id (no code, no username), expiry, redeemed and revoked times, who redeemed | `beta_invites` | Operator | An invite is valid for 7 days (`BEEBREAK_INVITE_TTL_S`); expired, redeemed or revoked rows are deleted after 30 days (`BEEBREAK_INVITE_RETENTION_S`) | Automatic purge; `invite revoke` ends validity |
-| Account tombstone: keyed hash (HMAC under a subkey of the server secret) of the email, or of `github:<id>`, of an account that was disabled for abuse and then deleted, created time. No email, no user id | `deleted_account_tombstones` | Operator (the hash cannot be reversed to an email without the secret and a guess) | 1 year (`BEEBREAK_TOMBSTONE_RETENTION_S`). Purpose: abuse prevention, so a banned person cannot return as a new user unnoticed. Lawful basis: legitimate interest, PROPOSED for the lawyer review | Automatic purge; `invite create --override-tombstone` removes it when the operator decides to invite that address |
+| Account tombstone: keyed hash (HMAC under a subkey of the server secret) of the email, or of `github:<id>`, of an account that was disabled for abuse and then deleted, created time. No email, no user id | `deleted_account_tombstones` | Operator (the hash cannot be reversed to an email without the secret and a guess) | 1 year (`BEEBREAK_TOMBSTONE_RETENTION_S`). Purpose: abuse prevention, so a banned person cannot return as a new user unnoticed. Lawful basis: legitimate interest, PROPOSED; each operator checks it | Automatic purge; `invite create --override-tombstone` removes it when the operator decides to invite that address |
 | Queue entries: presence id, task category, stack tags, time bucket (only while queued), status, times, device, match | `queue_entries` | Operator | The four presence columns are cleared the moment the entry ends. The row is deleted 30 days after it ends (`BEEBREAK_RETENTION_S`). A search lasts 90 s (`BEEBREAK_QUEUE_TTL_S`) | Automatic purge; `account delete` |
 | Matches (also the chat): times, end reason, shared tags and category, extension count and requester, last message number | `matches` | Operator. Both participants see the shared tags and category | Deleted 30 days after the chat ends (`BEEBREAK_RETENTION_S`) | Automatic purge |
 | Match participants: who took part, active flag, offline-since time, count of messages sent | `match_participants` | Operator | Deleted with the match, 30 days after it ends | Automatic purge; `account delete` |
@@ -69,7 +72,7 @@ user.
 | Blocks: blocker, blocked, time | `blocks` | Operator (a block is never shown to the blocked person) | Until the account is deleted | `account delete`; the admin CLI can remove a block |
 | Reports: reporter, reported, match id, reason, optional note (500 chars), status, times | `reports` | Operator. The reported person is not told | Open reports are kept until resolved; resolved reports are deleted 90 days after resolution (`BEEBREAK_REPORT_RETENTION_S`) | Automatic purge. `account delete` is refused while the user is on either side of an open report |
 | Report evidence: copies of the messages the reporter ticked (author role, body, time) | `report_messages` | Operator | Same as the report | Deleted with the report |
-| Backups: database dumps (every table above) | `backups/` on the host, mode 0600, optionally age or gpg encrypted | Operator | Not decided yet; the runbook's 14-day cron prune is an example | Delete the file. An older backup still holds accounts deleted since it was taken |
+| Backups: database dumps (every table above) | `backups/` on the host, mode 0600, optionally age or gpg encrypted | Operator | Set by the operator (`<backup retention>` in the privacy notice); the runbook's 14-day cron prune is an example | Delete the file. An older backup still holds accounts deleted since it was taken |
 
 Not stored in the database: the in-memory rate-limit counters (lost on server
 restart). Server logs hold fixed strings, counts and opaque row ids, never an
@@ -91,19 +94,21 @@ The Caddy proxy (`compose.prod.yaml`) has its own log. Its error log may
 include the client IP address, the host and the request URI, for example on a
 502 while the server restarts. Docker's json-file driver keeps it, capped at 5
 files of 10 MB per service (`max-size: 10m`, `max-file: "5"`), so retention is
-by size, not by time. To confirm at the rehearsal deploy: what the Caddy log
-really contains on the production host, and whether it should be cut down.
+by size, not by time. Check on your host what the Caddy log
+really contains, and whether it should be cut down (see the
+[untested list](RUNBOOK.md#untested-on-a-real-host)).
 
 GitHub sign-in (OAuth device flow, driven by the server): the server sends GitHub its client id (no scope, no secret), receives a device code and a user code, and later one access token. It uses the token for one `GET /user`, keeps only the numeric `id`, and drops the token; it is never written to the database or to a log, and never reaches the companion. The companion sees only the user code and the page to open. A GitHub username is used once at invite time to find the id and is not stored. Servers with an empty SMTP host send no email at all.
 
 Sign-in emails are sent through the configured SMTP host (Mailpit in local
 development), over STARTTLS or implicit TLS in production. SMTP credentials
-come only from the environment and are never logged. The provider for the hosted beta is to be named before the beta.
+come only from the environment and are never logged. The operator names the provider in the privacy notice.
 
 ## Your data requests
 
-Email `<contact address>`. The operator exports or deletes an account with the
-admin CLI and answers within 14 days.
+Email the operator (`<contact address>` in the privacy notice). The operator exports or deletes an account with the
+admin CLI and answers within the response time in that server's privacy
+notice (14 days by default, ADR 0013).
 
 - Export (`beebreak-admin account export <email>` or `--github-id <id>`): your own rows as JSON, including
   your own message bodies while they exist and your own messages copied into
@@ -117,8 +122,8 @@ admin CLI and answers within 14 days.
   deleting it leaves a keyed hash of its email for a year (see the
   tombstone row in the table above). Deleting an account also deletes the
   reports filed against it and their evidence, resolved ones included, so the
-  record of a resolved report about you goes with you (PROPOSED, for the
-  lawyer review). Your devices are
+  record of a resolved report about you goes with you (PROPOSED; each
+  operator checks it). Your devices are
   signed out first. If the other person in a chat remains, their side of the chat is
   kept.
 

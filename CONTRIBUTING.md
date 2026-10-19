@@ -1,6 +1,7 @@
 # Contributing
 
-Beebreak is pre-beta. Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
+Beebreak is pre-release and self-hosted only: the maintainer runs no server
+(ADR 0021). Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) first;
 decisions marked CONFIRMED are settled, PROPOSED ones are open to discussion.
 Report security problems privately, see [SECURITY.md](SECURITY.md).
 

@@ -19,7 +19,7 @@ hosting).
 **Terminals.**
 
 - T1: the Docker stack (`docker compose ...` and `beebreak-admin` commands).
-- T2: companion A (default state and runtime directories), account `Filip`.
+- T2: companion A (default state and runtime directories), account `Ada`.
 - T3: companion B (separate directories, see M4-C03), account `Bea`.
 - T4: a Claude Code session used only by M4-C11 and M4-C12, attached to A.
 
@@ -86,7 +86,7 @@ docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT u.nickname,
 (`Q` in the steps below.) In this output `stack_tags` is comma-joined in
 vocabulary order (`python,docker`).
 
-**Test identities** are the M3 ones: `filip@example.com` (A, nickname `Filip`)
+**Test identities** are the M3 ones: `ada@example.com` (A, nickname `Ada`)
 and `bea@example.com` (B, nickname `Bea`).
 
 ## Setup
@@ -131,10 +131,10 @@ migration); the table list contains
 container runs `beebreak-server migrate` on every start.)
 
 **M4-C03 — Companions A and B signed in, tags chosen.** If the two accounts
-from M3 still exist, start both companions and wait for `Connected as Filip`
+from M3 still exist, start both companions and wait for `Connected as Ada`
 and `Connected as Bea`. Otherwise redo M3-C03 to M3-C05 first (invites and
-sign-in). If M3-C11 left `Filip` disabled, run
-`docker compose exec server beebreak-admin user enable Filip` and sign A in
+sign-in). If M3-C11 left `Ada` disabled, run
+`docker compose exec server beebreak-admin user enable Ada` and sign A in
 again.
 
 Start A with the demo thresholds from M2-C02, so M4-C11 can use it. In T2:
@@ -182,10 +182,10 @@ docker compose exec server beebreak-admin queue list
 ```
 
 Expect: both windows show `Looking for a break partner…` for a moment, then A
-shows `Chatting with Bea` and B shows `Chatting with Filip`. The shared line is
+shows `Chatting with Bea` and B shows `Chatting with Ada`. The shared line is
 `In common: Python` on both (Python is the only tag both shared; neither
 shows Docker, a time label or a task kind). `matches` prints exactly one line
-naming `Bea` and `Filip`; `queue list` prints nothing. Repeat the whole step
+naming `Bea` and `Ada`; `queue list` prints nothing. Repeat the whole step
 once more (End first, see M4-C05) and again expect one line, not two. A and B
 must not be matched with anyone else at any time.
 
@@ -208,7 +208,7 @@ M4-C04 and End from B; A shows `Break ended.` too.
 docker compose exec server beebreak-admin queue list
 ```
 
-Expect: right after the click `queue list` shows one `Filip` line with
+Expect: right after the click `queue list` shows one `Ada` line with
 `fields=presence_id,stack_tags,remaining_time_bucket` (names only: no `python`,
 no `unknown`, no `Bea`). A shows `Looking for a break partner…` and Cancel.
 After about 90 s A shows `Nobody is around right now. Try again later.` and
@@ -232,9 +232,9 @@ same shell so the demo variables stay set).
 docker compose exec server beebreak-admin queue list
 ```
 
-Expect: after the restart A goes `Connecting…`, `Connected as Filip`, and then
+Expect: after the restart A goes `Connecting…`, `Connected as Ada`, and then
 shows `Looking for a break partner…` again (the server's state is replayed on
-connect). `queue list` shows exactly one `Filip` line the whole time. If you
+connect). `queue list` shows exactly one `Ada` line the whole time. If you
 click Find in B now, they match. If you wait the full 90 s from the original
 click, A shows `Nobody is around right now. Try again later.` instead; click
 OK.
@@ -274,13 +274,13 @@ docker compose exec server beebreak-admin matches
 ```
 
 Expect: both windows show `Break ended.`; A shows no hint that it was blocked
-(the same text as a normal End). `block list Bea` prints `Filip`; `matches`
+(the same text as a normal End). `block list Bea` prints `Ada`; `matches`
 prints nothing. Click OK in both, then click Find in both and wait about 95 s:
 no match is made and both show `Nobody is around right now. Try again later.`
 Change nothing about nicknames; the block is by account. Then:
 
 ```
-docker compose exec server beebreak-admin block remove Bea Filip
+docker compose exec server beebreak-admin block remove Bea Ada
 docker compose exec server beebreak-admin block list Bea
 ```
 
@@ -335,7 +335,7 @@ against a fake corpus; this step reads the real stored rows. Start with no
 entries and both companions idle and connected.
 
 1. A alone: click Find in A, then run `Q` (the query above). Expect one row:
-   `Filip`, `queued`, `task_category` empty, `stack_tags` `python`,
+   `Ada`, `queued`, `task_category` empty, `stack_tags` `python`,
    `remaining_time_bucket` `unknown`, `has_presence_id` `t`. Nothing from
    Settings that A left off appears (no task kind).
 2. Click Cancel in A, run `Q`: that row is `cancelled` and `stack_tags`,
@@ -352,7 +352,7 @@ entries and both companions idle and connected.
 docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT shared_tags, shared_category FROM matches"
 echo "access lines (must be > 0): $(docker compose logs server 2>&1 | grep -c beebreak_server.access)"
 echo "queue requests logged (must be > 0): $(docker compose logs server 2>&1 | grep beebreak_server.access | grep -c '/v1/queue')"
-echo "server logs: $(docker compose logs server 2>&1 | grep -cE 'python|docker|10_20m|5_10m|Filip|Bea|filip@|bea@|bra_|brr_')"
+echo "server logs: $(docker compose logs server 2>&1 | grep -cE 'python|docker|10_20m|5_10m|Ada|Bea|ada@|bea@|bra_|brr_')"
 ```
 
 Expect: the last command prints `0` (the third also keeps your tokens, emails

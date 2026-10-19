@@ -253,9 +253,10 @@ def test_restore_of_an_age_file_needs_an_identity(tmp_path: Path) -> None:
 # --- runbook -----------------------------------------------------------------
 
 
-def test_runbook_keeps_the_undecided_placeholders_and_the_appeal_time() -> None:
+def test_runbook_keeps_the_operator_fields_and_the_appeal_time() -> None:
     text = (ROOT / "docs" / "RUNBOOK.md").read_text()
-    assert "<abuse report owner and response time — to be decided>" in text
+    assert "<abuse report owner>" in text
+    assert "<abuse report response time>" in text
     assert "<contact address>" in text
     assert "14 days" in text
 

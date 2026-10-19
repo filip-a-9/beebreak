@@ -1,10 +1,10 @@
 # ADR 0001: Apache-2.0 licence
 
-Status: Accepted (CONFIRMED 2026-10-12). Source: ARCHITECTURE §1, §2, §16 item 9.
+Status: Accepted (CONFIRMED 2026-10-12). Amended by [ADR 0021](0021-no-hosted-instance.md). Source: ARCHITECTURE §1, §2, §16 item 9.
 
 ## Context
-The project prefers public source code with a restricted hosted beta. Open
-source and access to the hosted network are separate decisions.
+The project prefers public source code. At first it also planned a restricted hosted beta (dropped, ADR 0021). Open
+source and access to a network are separate decisions.
 
 ## Decision
 The source is licensed under Apache-2.0 (`LICENSE`).

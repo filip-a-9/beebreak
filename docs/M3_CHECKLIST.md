@@ -52,7 +52,7 @@ are 8 characters (Crockford base32, no I, L, O, U); case and the hyphen are
 ignored.
 
 **Test identities** (any addresses work, nothing is sent outside Docker):
-`filip@example.com` (account A, nickname `Filip`), `bea@example.com`
+`ada@example.com` (account A, nickname `Ada`), `bea@example.com`
 (account B, nickname `Bea`), `eve@example.com` (negative tests only).
 
 ## Setup
@@ -103,7 +103,7 @@ untracked (`git status` does not list it).
 **M3-C03 — Two invites.**
 
 ```
-docker compose exec server beebreak-admin invite create filip@example.com
+docker compose exec server beebreak-admin invite create ada@example.com
 docker compose exec server beebreak-admin invite create bea@example.com
 docker compose exec server beebreak-admin invite list
 ```
@@ -127,8 +127,8 @@ the window sits idle). The server writes one `beebreak_server.access` line per
 request (method, route, status, timing, opaque ids), so a non-zero count here
 is a real request.
 
-Click Sign in. Enter `filip@example.com` and INVITE1, continue. Open Mailpit,
-read the code from the newest message, type it. Choose the nickname `Filip`.
+Click Sign in. Enter `ada@example.com` and INVITE1, continue. Open Mailpit,
+read the code from the newest message, type it. Choose the nickname `Ada`.
 On the privacy page:
 
 - the three boxes (task category, stack tags, time remaining) are all
@@ -143,7 +143,7 @@ On the privacy page:
 
 Save with all boxes off. Expect: the dialog shows "You are all set." with a
 Close button (it does not close by itself); click Close. The window shows
-`Connected as Filip` (a brief `Connecting…` may come first; on a local stack it
+`Connected as Ada` (a brief `Connecting…` may come first; on a local stack it
 often lasts too short to see). If the window shows `Finish setup`
 instead, the nickname or privacy page was skipped.
 
@@ -151,7 +151,7 @@ Now the server log shows the sign-in as access lines, and nothing else:
 
 ```
 docker compose logs server | grep beebreak_server.access | grep -E "POST /v1/auth/(start|verify)|PATCH /v1/me|PUT /v1/me/consent"
-docker compose logs server | grep -cE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|\?|bra_|brr_|filip@"
+docker compose logs server | grep -cE "[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|\?|bra_|brr_|ada@"
 ```
 
 Expect: the first command lists the start, verify, nickname and consent
@@ -170,8 +170,10 @@ Expect: a second window opens (no "already running" message). Sign in with
 `bea@example.com` and INVITE2, code from Mailpit. On the nickname page, check
 the skeleton rule first, in this order (the page stays open after each error):
 
-- `fi1ip`: rejected with "That nickname is already taken." (it collides with
-  `Filip` once `1` becomes `l` and `i` becomes `l`);
+- `A_d-a`: rejected with "That nickname is already taken." (it collides with
+  `Ada` once case is folded and `_` and `-` are dropped; the digit and letter
+  look-alike mapping `1`/`i` to `l` is covered by
+  `tests/server/test_nickname.py`);
 - `admin`: rejected with "That nickname is not allowed.";
 - `Bea`: accepted.
 
@@ -186,8 +188,8 @@ Expect: `Connected as Bea`.
 docker compose exec server beebreak-admin devices
 ```
 
-Expect: both windows say `Connected as Filip` and `Connected as Bea`; the
-output has a `Filip` line and a `Bea` line, each with `connected=yes`.
+Expect: both windows say `Connected as Ada` and `Connected as Bea`; the
+output has a `Ada` line and a `Bea` line, each with `connected=yes`.
 
 **M3-C07 — Restart A without signing in again; credential location.**
 Close companion A (Ctrl+C in T2, or close the window) and start it again the
@@ -199,7 +201,7 @@ ls -ld ~/.local/state/beebreak
 uv run python -c "import keyring; print(keyring.get_keyring())"
 ```
 
-Expect: the window goes `Connecting…` then `Connected as Filip` with no
+Expect: the window goes `Connecting…` then `Connected as Ada` with no
 sign-in dialog and no new email in Mailpit. Note which storage is used:
 
 - keyring (a real Secret Service backend): `credentials.json` does not
@@ -247,12 +249,12 @@ Replace INVITE1 with the real code. Expect: the request answers `202` (the
 server never reveals whether an email was sent) and the two message counts are
 equal: **no email arrives**.
 
-(b) Five wrong codes. Sign in again as Filip through the API so the companion
+(b) Five wrong codes. Sign in again as Ada through the API so the companion
 windows are left alone:
 
 ```
 CH=$(curl -s -X POST http://127.0.0.1:8000/v1/auth/start -H 'content-type: application/json' \
-  -d '{"email":"filip@example.com"}' | python3 -c "import json,sys; print(json.load(sys.stdin)['challenge_id'])")
+  -d '{"email":"ada@example.com"}' | python3 -c "import json,sys; print(json.load(sys.stdin)['challenge_id'])")
 for i in 1 2 3 4 5; do
   curl -s -o /dev/null -w '%{http_code} ' -X POST http://127.0.0.1:8000/v1/auth/verify \
     -H 'content-type: application/json' \
@@ -277,20 +279,20 @@ ls -l "$B_ROOT/state/beebreak/credentials.json" 2>&1
 ```
 
 Expect: B's window says `Not signed in`; `devices` no longer lists `Bea`
-(Filip still `connected=yes`); B's credentials are gone (file missing, or if
+(Ada still `connected=yes`); B's credentials are gone (file missing, or if
 B used a keyring, signing in again asks for a fresh code instead of resuming).
 
 **M3-C11 — Admin disables an account.**
 
 ```
-docker compose exec server beebreak-admin user disable Filip
+docker compose exec server beebreak-admin user disable Ada
 ```
 
 Expect: within about 30 s companion A drops to `Not signed in` (the server
 closes the session on the next frame; the companion's own keep-alive is 25 s)
 and its stored credential is removed; `beebreak-admin devices` no longer
-lists Filip. Starting a new sign-in as Filip (`POST /v1/auth/start` with
-`filip@example.com`) still returns `202`, but no email arrives in Mailpit.
+lists Ada. Starting a new sign-in as Ada (`POST /v1/auth/start` with
+`ada@example.com`) still returns `202`, but no email arrives in Mailpit.
 
 ## Privacy and report
 
@@ -302,12 +304,12 @@ Prepare: re-enable and re-sign-in so a companion is connected, and use a
 project directory with a unique name outside the Beebreak checkout:
 
 ```
-docker compose exec server beebreak-admin user enable Filip
+docker compose exec server beebreak-admin user enable Ada
 mkdir -p ~/m3-canary-project && cd ~/m3-canary-project
 ```
 
 Sign companion A in again (new code from Mailpit; INVITE not needed for an
-existing account) and wait for `Connected as Filip`. In T4, from
+existing account) and wait for `Connected as Ada`. In T4, from
 `~/m3-canary-project`, start an **interactive** session with the plugin
 (`claude --plugin-dir <path to this repo>/integrations/claude-code`) and send
 two prompts:

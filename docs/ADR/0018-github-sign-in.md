@@ -1,6 +1,6 @@
 # ADR 0018: GitHub sign-in next to email codes
 
-Status: Accepted (Filip, 2026-10-17). Extends ADR 0005.
+Status: Accepted (the maintainer, 2026-10-17). Extends ADR 0005.
 Source: `.claude/specs/github-signin.md`; THREAT_MODEL T61 to T66.
 
 ## Context
