@@ -26,8 +26,8 @@ from beebreak_shared.presence import StackTag, build_presence
 
 EXAMPLE_HEADING = "Example"
 EXAMPLE_NOTE = (
-    "Example values only. Your real values are chosen locally and only the "
-    "fields you tick are included."
+    "Example values only. Your real values are chosen locally, and fields you "
+    "have not turned on are left empty."
 )
 SENT_ONLY_NOTE = (
     "These fields are sent only when you start a break, and only the ones you "
@@ -123,7 +123,6 @@ class PrivacyPreviewDialog(QDialog):
         self.sent_only_label = _plain(SENT_ONLY_NOTE)
         self.example_edit = QPlainTextEdit()
         self.example_edit.setReadOnly(True)
-        self.resize(480, 400)
         self.signin_label = _plain(SIGN_IN_HEADING)
         self.signin_list_label = _plain("")
         self.set_device_name(device_name, already_sent=already_sent)
@@ -147,6 +146,7 @@ class PrivacyPreviewDialog(QDialog):
         ):
             layout.addWidget(widget)
         self.set_consent(consent)
+        self.resize(max(480, self.sizeHint().width()), self.sizeHint().height())
 
     def set_consent(
         self, consent: Consent, tags: Sequence[StackTag] | None = None
@@ -160,7 +160,7 @@ class PrivacyPreviewDialog(QDialog):
         edit = self.example_edit
         lines = edit.document().blockCount()
         margins = 2 * (edit.frameWidth() + int(edit.document().documentMargin()))
-        edit.setMinimumHeight(lines * edit.fontMetrics().lineSpacing() + margins)
+        edit.setMinimumHeight((lines + 1) * edit.fontMetrics().lineSpacing() + margins)
 
     def set_device_name(
         self, device_name: str | None, *, already_sent: bool = False

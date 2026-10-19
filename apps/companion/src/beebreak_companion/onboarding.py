@@ -505,9 +505,13 @@ class OnboardingDialog(QDialog):
         )
         # Back only where it can undo something: the code page returns to the
         # email page. Once the code is verified there is nothing to go back to.
-        self.back_button.setEnabled(
-            (page == PAGE_CODE and not self._busy)
-            or (page == PAGE_GITHUB and self.methods.email and not self._verified)
+        can_go_back = (page == PAGE_CODE and not self._busy) or (
+            page == PAGE_GITHUB and self.methods.email and not self._verified
+        )
+        self.back_button.setEnabled(can_go_back)
+        # Hidden, not just greyed, where there is nothing to go back to.
+        self.back_button.setVisible(
+            page == PAGE_CODE or (page == PAGE_GITHUB and self.methods.email)
         )
         self.next_button.setVisible(page != PAGE_METHOD)
         self.cancel_button.setVisible(page != PAGE_DONE)

@@ -502,3 +502,8 @@ def test_stop_wait_env_reaches_the_wait_and_bad_values_fall_back(
         monkeypatch.setenv("BEEBREAK_STOP_WAIT_S", bad)
         monkeypatch.setenv("BEEBREAK_CONNECT_TIMEOUT_S", bad)
         assert (config.stop_wait_s(), config.connect_timeout_s()) == (5.0, 1.0)
+
+
+def test_install_output_names_the_saved_server_url(home: Path) -> None:
+    done = install.install(ORIGIN)
+    assert any(ORIGIN in line for line in done)

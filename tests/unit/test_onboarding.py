@@ -675,3 +675,24 @@ def test_the_privacy_page_says_finding_a_partner_is_the_acceptance() -> None:
     from beebreak_companion.window import FIND
 
     assert FIND in PRIVACY_INTRO
+
+
+def test_back_is_hidden_where_there_is_nothing_to_go_back_to(
+    qtbot: QtBot, rig: Rig
+) -> None:
+    dialog = new_dialog(qtbot, rig)
+    dialog.show()
+    assert dialog.page == PAGE_EMAIL
+    assert not dialog.back_button.isVisibleTo(dialog)
+    dialog.email_edit.setText("ada@example.com")
+    dialog.next_button.click()
+    wait_page(qtbot, dialog, PAGE_CODE)
+    assert dialog.back_button.isVisibleTo(dialog)
+
+
+def test_single_page_settings_have_no_back_button(qtbot: QtBot, rig: Rig) -> None:
+    me = Me(nickname="ada_l", consent=None, consented_at=None)
+    settings = new_dialog(qtbot, rig, me)
+    settings.show()
+    assert settings.page == PAGE_PRIVACY
+    assert not settings.back_button.isVisibleTo(settings)
