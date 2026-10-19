@@ -602,11 +602,11 @@ def test_nobody_available_offers_ok_and_find(window: CompanionWindow) -> None:
     assert window.break_label.text() not in ("", nobody)
 
 
-def test_ended_shows_text_and_ok_only(window: CompanionWindow) -> None:
+def test_ended_shows_text_find_and_ok(window: CompanionWindow) -> None:
     window.show()
     window.set_ready(True)
     window.set_break(BreakState(phase="ended"))
-    assert _break_visible(window) == {"text", "ok"}
+    assert _break_visible(window) == {"text", "find", "ok"}
     assert window.break_label.text() != ""
 
 

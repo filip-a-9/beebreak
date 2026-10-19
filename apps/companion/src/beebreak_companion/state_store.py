@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, get_args
+from uuid import UUID
 
 from beebreak_shared.presence import StackTag
 
@@ -22,6 +23,10 @@ class PersistedState:
     cooldown_until: datetime | None = None
     # Chosen in Settings, sent only with consent (M4-06). At most 5, vocabulary.
     stack_tags: tuple[StackTag, ...] = ()
+    # Read marker (U8): the highest peer message seq the user has seen in this
+    # chat. Ids and counts only, never message content.
+    read_match: UUID | None = None
+    read_seq: int = 0
 
 
 class StateStore(Protocol):
@@ -66,6 +71,8 @@ class FileStateStore:
                 state.cooldown_until.isoformat() if state.cooldown_until else None
             ),
             "stack_tags": list(state.stack_tags),
+            "read_match": str(state.read_match) if state.read_match else None,
+            "read_seq": state.read_seq,
         }
         tmp = self._path.with_name(f"{self._path.name}.{os.getpid()}.tmp")
         try:
@@ -93,17 +100,35 @@ def _parse(data: object) -> PersistedState:
     if not isinstance(enabled, bool):
         raise ValueError("bad enabled flag")
     tags = _parse_tags(data.get("stack_tags"))
+    read_match, read_seq = _parse_read_marker(data)
     raw = data.get("cooldown_until")
     if raw is None:
-        return PersistedState(enabled=enabled, stack_tags=tags)
+        return PersistedState(
+            enabled=enabled, stack_tags=tags, read_match=read_match, read_seq=read_seq
+        )
     if not isinstance(raw, str):
         raise ValueError("bad cooldown")
     when = datetime.fromisoformat(raw)
     if when.tzinfo is None or when.utcoffset() is None:
         raise ValueError("naive cooldown")
     return PersistedState(
-        enabled=enabled, cooldown_until=when.astimezone(UTC), stack_tags=tags
+        enabled=enabled,
+        cooldown_until=when.astimezone(UTC),
+        stack_tags=tags,
+        read_match=read_match,
+        read_seq=read_seq,
     )
+
+
+def _parse_read_marker(data: dict[str, object]) -> tuple[UUID | None, int]:
+    """Lenient: a bad marker is just no marker."""
+    raw_match, seq = data.get("read_match"), data.get("read_seq")
+    if not isinstance(raw_match, str) or type(seq) is not int or seq < 0:
+        return None, 0
+    try:
+        return UUID(raw_match), seq
+    except ValueError:
+        return None, 0
 
 
 def normalize_tags(raw: object) -> tuple[StackTag, ...]:

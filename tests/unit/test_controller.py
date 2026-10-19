@@ -505,3 +505,34 @@ def test_break_ending_without_cooldown_flag_starts_none() -> None:
     c.set_break_active(False, at(5), cooldown=False)
     assert store.state.cooldown_until is None
     assert run_long(c, 10, 200) == ["suggested"]
+
+
+def test_a_timed_out_offer_is_marked_expired() -> None:
+    c = new()
+    assert run_long(c, 0, 100) == ["suggested"]
+    assert c.offer_expired is False
+    assert c.tick(at(100 + CFG.suggestion_timeout_s + 5)) == "idle"
+    assert c.offer_expired is True
+
+
+def test_an_offer_withdrawn_for_a_waiting_session_is_not_expired() -> None:
+    c = new()
+    run_long(c, 0, 100)
+    assert c.on_event(ev(105, "waiting_input", "b")) == "idle"
+    assert c.offer_expired is False
+
+
+def test_an_answered_offer_is_not_expired() -> None:
+    c = new()
+    run_long(c, 0, 100)
+    assert c.on_outcome("declined", at(110)) == "idle"
+    assert c.offer_expired is False
+
+
+def test_the_expired_flag_resets_on_the_next_state_change() -> None:
+    c = new()
+    run_long(c, 0, 100)
+    c.tick(at(300))
+    assert c.offer_expired is True
+    c.set_enabled(False)
+    assert c.offer_expired is False

@@ -6,6 +6,7 @@ import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
+from uuid import UUID
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication
@@ -14,7 +15,7 @@ from beebreak_companion import theme
 from beebreak_companion.break_state import BreakPhase, BreakState
 from beebreak_companion.chat_state import ChatState
 from beebreak_companion.chat_window import ChatWindow
-from beebreak_companion.config import notify_interval_s
+from beebreak_companion.config import TriggerConfig, notify_interval_s
 from beebreak_companion.controller import Controller
 from beebreak_companion.credentials import default_credential_store
 from beebreak_companion.desktop_notify import DesktopNotifier
@@ -153,8 +154,11 @@ def wire(
 
     def apply(new: InvitationState | None) -> None:
         if new is not None:
-            window.set_state(new, controller.estimate)
-        window.set_last_activity(controller.last_event_at, datetime.now(UTC))
+            window.set_state(new, controller.estimate, expired=controller.offer_expired)
+        now = datetime.now(UTC)
+        window.set_last_activity(
+            controller.last_event_at, now, active=controller.activity(now) == "active"
+        )
         worker.set_status(
             initial_status(
                 controller,
@@ -216,7 +220,7 @@ def wire_break(
 
     def apply(new: InvitationState | None) -> None:
         if new is not None:
-            window.set_state(new, controller.estimate)
+            window.set_state(new, controller.estimate, expired=controller.offer_expired)
         publish()
 
     def me_ready() -> Me | None:
@@ -309,6 +313,7 @@ def wire_chat(
     is_active: Callable[[], bool] | None = None,
     in_view: Callable[[], bool] | None = None,
     main_window_active: Callable[[], bool] | None = None,
+    read_marker: Controller | None = None,
 ) -> None:
     """Connect the chat window: state in, intents out, unread count, notices.
 
@@ -319,6 +324,7 @@ def wire_chat(
     A window that is shown counts as read (the badge); a new peer message while
     it is not focused raises one notification per chat per `notify_interval_s()`
     that names the nickname only (rule 12: no user content in logs).
+    `read_marker` keeps the read position across a restart (U8).
     """
     if remote is None:
         return
@@ -330,7 +336,14 @@ def wire_chat(
         lambda: chat_window.isVisible() and chat_window.isActiveWindow()
     )
     main_active = main_window_active or window.isActiveWindow
-    seen: dict[str, object] = {"match": None, "notified": None}
+    # "declined": the status object whose decline the user has seen (X6); a
+    # later message frame keeps the flag but not a newer status.
+    seen: dict[str, object] = {
+        "match": None,
+        "notified": None,
+        "state": None,
+        "declined": None,
+    }
     # Highest peer seq counted, and highest peer seq the user has had in view.
     known = {"seq": 0, "read": 0}
     peer_seqs: list[int] = []
@@ -338,8 +351,18 @@ def wire_chat(
     def show_unread() -> None:
         window.set_unread(sum(1 for seq in peer_seqs if seq > known["read"]))
 
+    def remember_read() -> None:
+        match_id = seen["match"]
+        if read_marker is not None and isinstance(match_id, UUID):
+            read_marker.set_read_marker(match_id, known["read"])
+
     def read_all() -> None:
         known["read"] = known["seq"]
+        remember_read()
+        latest = seen["state"]
+        if isinstance(latest, ChatState) and latest.extension_declined:
+            seen["declined"] = latest.status  # the user has now seen this decline
+        window.set_extension_declined(False)
         show_unread()
 
     def open_chat() -> None:
@@ -360,12 +383,27 @@ def wire_chat(
         if not isinstance(state, ChatState):
             return
         chat_window.set_chat(state)
-        window.set_chat_held(state.match_id is not None and state.ended is not None)
+        window.set_chat_held(
+            state.match_id is not None
+            and state.ended is not None
+            and not state.reported
+        )
+        seen["state"] = state
+        if state.extension_declined and viewed():
+            seen["declined"] = state.status
+        window.set_extension_declined(
+            state.extension_declined and state.status is not seen["declined"]
+        )
         new_match = state.match_id != seen["match"]
         if new_match:
             seen["match"] = state.match_id
             seen["notified"] = None
-            known.update(seq=0, read=0)
+            marker = (
+                read_marker.read_marker(state.match_id)
+                if read_marker is not None and state.match_id is not None
+                else 0
+            )
+            known.update(seq=marker, read=marker)
         peer_seqs[:] = [m.seq for m in state.messages if not m.mine]
         newest = max(peer_seqs, default=0)
         fresh = newest > known["seq"]
@@ -381,6 +419,7 @@ def wire_chat(
         else:
             if viewed():
                 known["read"] = known["seq"]
+                remember_read()
             if fresh and not focused():
                 notify(state.peer_nickname)
         show_unread()
@@ -492,7 +531,8 @@ def main() -> int:
         print("beebreak-companion: unsafe runtime directory", file=sys.stderr)
         return EXIT_START_FAILED
     try:
-        controller = Controller()
+        trigger = TriggerConfig.from_env()
+        controller = Controller(trigger)
     except ValueError:  # a BEEBREAK_* setting is invalid
         print("beebreak-companion: invalid configuration", file=sys.stderr)
         return EXIT_START_FAILED
@@ -506,7 +546,8 @@ def main() -> int:
     app = QApplication(sys.argv)
     theme.apply_theme(app)  # before any widget exists
     collect_on_gui_thread(app)  # before any worker thread exists
-    window = CompanionWindow()
+    app.setQuitOnLastWindowClosed(True)  # D2: closing the last window quits
+    window = CompanionWindow(trigger)
     window.set_state(controller.state, controller.estimate)
     tracker = BreakTracker()
     worker = IpcWorker(
@@ -541,8 +582,14 @@ def main() -> int:
         on_accepted=on_accepted,
         readiness=tracker.readiness,
     )
-    chat_window = ChatWindow()
-    wire_chat(window, chat_window, remote, DesktopNotifier(chat_window))
+    chat_window = ChatWindow(busy=lambda: tracker.queue_state() != "none")
+    wire_chat(
+        window,
+        chat_window,
+        remote,
+        DesktopNotifier(chat_window),
+        read_marker=controller,
+    )
     try:
         worker.start()
     except CompanionAlreadyRunning:

@@ -168,3 +168,30 @@ def test_the_tick_limit_is_the_contract_limit() -> None:
 
     limit = ReportRequest.model_fields["message_seqs"].metadata
     assert any(getattr(m, "max_length", None) == MAX_TICKED for m in limit)
+
+
+def test_a_hint_explains_why_report_is_disabled_until_a_reason_is_picked(
+    dialog: ReportDialog,
+) -> None:
+    dialog.show()
+    assert not dialog.report_button.isEnabled()
+    assert dialog.reason_hint_label.isVisible()
+    dialog.reason_buttons["spam"].setChecked(True)
+    assert dialog.report_button.isEnabled()
+    assert not dialog.reason_hint_label.isVisible()
+
+
+def test_an_empty_message_list_is_explained(qtbot: QtBot) -> None:
+    empty = ReportDialog("bob_b", ())
+    qtbot.addWidget(empty)
+    empty.show()
+    assert empty.no_messages_label.isVisible()
+    assert not empty.message_list.isVisible()
+
+
+def test_no_empty_list_explanation_when_there_are_messages(
+    dialog: ReportDialog,
+) -> None:
+    dialog.show()
+    assert not dialog.no_messages_label.isVisible()
+    assert dialog.message_list.isVisible()

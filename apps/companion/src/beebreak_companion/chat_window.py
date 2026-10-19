@@ -35,15 +35,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from beebreak_companion import theme
+from beebreak_companion import config, theme
 from beebreak_companion.chat_state import ChatEnd, ChatState, PendingMessage
 from beebreak_companion.report_dialog import ReportDialog, display_text
 from beebreak_companion.window import (
     BLOCK_CONFIRM,
     BLOCK_TITLE,
+    BREAK_ENDED,
     ERROR_SECONDS,
     IN_COMMON,
     CompanionWindow,
+    confirm_leave,
     safe_nickname,
 )
 from beebreak_shared.api import ChatStatus
@@ -82,9 +84,10 @@ ERROR_TEXT: dict[str, str] = {
 REPORTED = "Reported and blocked."
 NOT_SENT_ENDED = "not sent"
 ENDED_LINES: dict[ChatEnd, str] = {
-    "ended": "The chat ended.",
-    "expired": "Time is up.",
-    "disconnected": "The connection was lost.",
+    # Same opening words as the main window's card (U5).
+    "ended": BREAK_ENDED,
+    "expired": f"{BREAK_ENDED} Time is up.",
+    "disconnected": f"{BREAK_ENDED} The connection was lost.",
 }
 
 
@@ -92,6 +95,17 @@ def _count(seconds: float) -> tuple[int, str]:
     """Whole minutes (at least one) and the unit word."""
     minutes = max(1, round(seconds / 60))
     return minutes, "minute" if minutes == 1 else "minutes"
+
+
+def _extension_note(minutes: int, left: int) -> str:
+    """The system line after an accepted extension (X5)."""
+    if left <= 0:
+        remaining = "No more extensions."
+    else:
+        remaining = (
+            f"{left} extension left." if left == 1 else f"{left} extensions left."
+        )
+    return f"Extended by {minutes} min. {remaining}"
 
 
 def _minutes(seconds: float) -> str:
@@ -182,8 +196,10 @@ class ChatWindow(QWidget):
         *,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        busy: Callable[[], bool] = lambda: False,
     ) -> None:
         super().__init__(parent)
+        self._busy = busy  # a search or match is running (D2)
         self._clock = clock
         self._now = now
         self._state = ChatState()
@@ -201,6 +217,14 @@ class ChatWindow(QWidget):
         # The peer's "no" shows as a banner line until this monotonic reading;
         # None until the window is first on screen with the flag set.
         self._declined_until: float | None = None
+        # Extension click guards (X1-X3). In flight: a button was clicked and
+        # no newer chat status has arrived (until this reading, then it gives
+        # up). Swap guard: a Yes/No/Cancel just replaced other buttons.
+        self._inflight_until: float | None = None
+        self._swap_until = 0.0
+        self._shown: tuple[QPushButton, ...] = ()
+        # Accepted extensions as (messages before it, line), per match (X5).
+        self._notes: list[tuple[int, str]] = []
 
         self.setWindowTitle("Beebreak chat")
         self.resize(360, 480)
@@ -348,12 +372,10 @@ class ChatWindow(QWidget):
         self.input.textChanged.connect(self._on_text_changed)
         self.input.submit.connect(self._submit)
         self.send_button.clicked.connect(self._submit)
-        self.extend_button.clicked.connect(self.extend_requested)
-        self.cancel_extension_button.clicked.connect(
-            lambda: self.extension_answered.emit(False)
-        )
-        self.yes_button.clicked.connect(lambda: self.extension_answered.emit(True))
-        self.no_button.clicked.connect(lambda: self.extension_answered.emit(False))
+        self.extend_button.clicked.connect(self._on_extend_clicked)
+        self.cancel_extension_button.clicked.connect(lambda: self._answer(False))
+        self.yes_button.clicked.connect(lambda: self._answer(True))
+        self.no_button.clicked.connect(lambda: self._answer(False))
         self.end_button.clicked.connect(self._on_end_clicked)
         self.block_button.clicked.connect(self._on_block_clicked)
         self.report_button.clicked.connect(self._on_report_clicked)
@@ -363,6 +385,10 @@ class ChatWindow(QWidget):
         self._error_timer.setSingleShot(True)
         self._error_timer.setInterval(ERROR_SECONDS * 1000)
         self._error_timer.timeout.connect(self._clear_error)
+        self._guard_timer = QTimer(self)
+        self._guard_timer.setSingleShot(True)
+        self._guard_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._guard_timer.timeout.connect(self._render_banner)
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_INTERVAL_MS)
         self._timer.timeout.connect(self.tick)
@@ -383,6 +409,8 @@ class ChatWindow(QWidget):
         ):
             self._declined_until = None
         if state.match_id != previous.match_id:
+            self._notes = []
+            self._inflight_until = None
             self.input.clear()
             self._clear_error()
             # A report dialog belongs to the chat it was opened for.
@@ -392,6 +420,9 @@ class ChatWindow(QWidget):
                 self._report_dialog = None
         if state.match_id is None:
             self._shared = ""
+        self._note_extension(previous, state)
+        if state.status is not previous.status:
+            self._inflight_until = None  # the awaited status has arrived
         self._anchor_time(state)
         self._render()
         if state.match_id is None and self.isVisible():
@@ -435,6 +466,35 @@ class ChatWindow(QWidget):
         self.activateWindow()
         if self._live:
             self.input.setFocus()
+
+    def _note_extension(self, previous: ChatState, state: ChatState) -> None:
+        """An accepted extension moves the deadline later and uses one up."""
+        old, new = previous.status, state.status
+        if (
+            old is None
+            or new is None
+            or state.match_id != previous.match_id
+            or new.ends_at <= old.ends_at
+            or new.extensions_left >= old.extensions_left
+        ):
+            return
+        added = round((new.ends_at - old.ends_at).total_seconds() / 60)
+        line = _extension_note(max(1, added), new.extensions_left)
+        self._notes.append((len(state.messages), line))
+
+    # --- extension buttons ---
+
+    def _on_extend_clicked(self) -> None:
+        self._begin_inflight()
+        self.extend_requested.emit()
+
+    def _answer(self, accepted: bool) -> None:
+        self._begin_inflight()
+        self.extension_answered.emit(accepted)
+
+    def _begin_inflight(self) -> None:
+        self._inflight_until = self._clock() + config.extension_inflight_s()
+        self._render_banner()
 
     # --- time ---
 
@@ -502,11 +562,13 @@ class ChatWindow(QWidget):
         if not show:
             self.time_label.setText("")
             return
+        self.time_label.setText(f"{self._left()} left")
+
+    def _left(self) -> str:
+        """The time to the deadline as the chip words it; the banner uses the
+        same text so the two never disagree (X4)."""
         left = self.remaining()
-        if left < 60:
-            self.time_label.setText("< 1 min left")
-        else:
-            self.time_label.setText(f"{math.ceil(left / 60)} min left")
+        return "< 1 min" if left < 60 else f"{math.ceil(left / 60)} min"
 
     def _in_grace(self, status: ChatStatus) -> bool:
         return self.remaining() <= (status.ends_at - status.grace_at).total_seconds()
@@ -555,7 +617,7 @@ class ChatWindow(QWidget):
                 return f"{nick} said no.", ()
         if not self._in_grace(status):
             return "", ()
-        left = _minutes((status.ends_at - status.grace_at).total_seconds())
+        left = self._left()
         if status.extensions_left > 0:
             text = f"{left} left. Extend by {_minutes(status.extension_s)}?"
             return text, (self.extend_button,)
@@ -568,8 +630,18 @@ class ChatWindow(QWidget):
         if self._live and status is not None:
             text, shown = self._banner(status)
         self.banner_label.setText(text)
+        now = self._clock()
+        if shown and shown != self._shown:
+            delay = config.extension_swap_guard_s()
+            self._swap_until = now + delay
+            self._guard_timer.start(int(delay * 1000) + 20)
+        self._shown = shown
+        if self._inflight_until is not None and now >= self._inflight_until:
+            self._inflight_until = None
+        usable = self._inflight_until is None and now >= self._swap_until
         for button in self._banner_buttons:
             button.setVisible(button in shown)
+            button.setEnabled(usable)
         self.banner.setVisible(bool(text))
 
     def _on_range(self, _low: int, high: int) -> None:
@@ -584,6 +656,7 @@ class ChatWindow(QWidget):
             state.pending,
             state.peer_nickname,
             state.ended,
+            tuple(self._notes),
         )
         if key == self._transcript_key:
             return
@@ -598,8 +671,13 @@ class ChatWindow(QWidget):
                 widget.deleteLater()
         self._retry_buttons = []
         self._body_labels = []
-        for message in state.messages:
+        notes = list(self._notes)
+        for index, message in enumerate(state.messages):
+            while notes and notes[0][0] <= index:
+                self._add_note(notes.pop(0)[1])
             self._add_row(message.mine, display_text(message.body), None)
+        for _, line in notes:
+            self._add_note(line)
         for pending in state.pending:
             self._add_row(True, display_text(pending.body), pending)
         # The range change may have happened before the layout settled.
@@ -618,6 +696,14 @@ class ChatWindow(QWidget):
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._body_labels.append(label)
         return label
+
+    def _add_note(self, text: str) -> None:
+        note = QLabel(text)
+        note.setObjectName("muted")
+        note.setTextFormat(Qt.TextFormat.PlainText)
+        note.setWordWrap(True)
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._rows.addWidget(note)
 
     def _add_row(self, mine: bool, body: str, pending: PendingMessage | None) -> None:
         row = QWidget()
@@ -730,17 +816,29 @@ class ChatWindow(QWidget):
     def closeEvent(self, event: QCloseEvent) -> None:
         """Closing a live chat hides the window while the main window is visible;
         an ended one is forgotten."""
-        if self._state.match_id is not None and self._state.ended is not None:
-            event.accept()
-            self.close_requested.emit()
-            return
-        if not any(
+        ended = self._state.match_id is not None and self._state.ended is not None
+        last = not any(
             isinstance(w, CompanionWindow) and w.isVisible()
             for w in QApplication.topLevelWidgets()
-        ):
+        )
+        if last:
             # Nothing else is on screen: hiding would leave the app running
-            # with no window. Closing lets it quit (lastWindowClosed).
-            event.accept()
+            # with no window. Closing lets it quit (lastWindowClosed), after
+            # asking if a chat or search is active. A close made by code never
+            # asks. This is the only place that asks, so never twice.
+            if event.spontaneous() and not self.may_quit():
+                event.ignore()
+                return
+        elif not ended:
+            event.ignore()
+            self.hide()
             return
-        event.ignore()
-        self.hide()
+        event.accept()
+        if ended:
+            self.close_requested.emit()
+
+    def may_quit(self) -> bool:
+        """Closing this last window quits; during a live chat or a search,
+        ask first (D2)."""
+        live = self._state.match_id is not None and self._state.ended is None
+        return not (live or self._busy()) or confirm_leave(self)

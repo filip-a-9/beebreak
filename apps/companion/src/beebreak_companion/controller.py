@@ -9,6 +9,7 @@ decision engine only judges the sessions it is shown.
 import sys
 from datetime import datetime, timedelta
 from typing import Literal
+from uuid import UUID
 
 from beebreak_companion.activity import ActivityTracker
 from beebreak_companion.config import TriggerConfig
@@ -64,11 +65,14 @@ class Controller:
         self._enabled = persisted.enabled
         self._cooldown_until: datetime | None = persisted.cooldown_until
         self._stack_tags: tuple[StackTag, ...] = normalize_tags(persisted.stack_tags)
+        self._read: tuple[UUID | None, int] = (persisted.read_match, persisted.read_seq)
         # Suggestions need a connected, set-up account and no break in progress
         # (M4). The app pushes both; tests of the bare engine keep the default.
         self._ready = True
         self._break_active = False
         self.state: InvitationState = "idle" if persisted.enabled else "disabled"
+        # True when the last offer ended by timing out; the window says so.
+        self.offer_expired = False
         self.last_event_at: datetime | None = None
         self.estimate: RemainingTimeBucket | None = None
         self._suggested_at: datetime | None = None
@@ -89,16 +93,20 @@ class Controller:
                 enabled=self._enabled,
                 cooldown_until=self._cooldown_until,
                 stack_tags=self._stack_tags,
+                read_match=self._read[0],
+                read_seq=self._read[1],
             )
         )
 
-    def _end_suggestion(self) -> None:
+    def _end_suggestion(self, *, expired: bool = False) -> None:
+        # `expired`: nobody answered before the timeout (not a withdrawal).
+        self.offer_expired = expired
         self.state = "idle"
         self.estimate = None
         self._suggested_at = None
 
-    def _start_cooldown(self, now: datetime) -> None:
-        self._end_suggestion()
+    def _start_cooldown(self, now: datetime, *, expired: bool = False) -> None:
+        self._end_suggestion(expired=expired)
         self._cooldown_until = now + timedelta(seconds=self._config.cooldown_s)
         self._persist()
 
@@ -111,7 +119,7 @@ class Controller:
             and now - self._suggested_at
             >= timedelta(seconds=self._config.suggestion_timeout_s)
         ):
-            self._start_cooldown(now)
+            self._start_cooldown(now, expired=True)
         sessions = self._tracker.sessions(now)
         if self.state == "suggested":
             if any(s.state == "waiting_input" for s in sessions.values()):
@@ -159,6 +167,7 @@ class Controller:
         if new == self.state:
             return None
         self.state = new
+        self.offer_expired = False
         self.estimate = None
         self._suggested_at = None
         return new
@@ -171,6 +180,16 @@ class Controller:
         """Remember the user's stack tags locally (vocabulary only, at most 5)."""
         self._stack_tags = normalize_tags(tags)
         self._persist()
+
+    def read_marker(self, match_id: UUID) -> int:
+        """Highest peer message seq the user has read in this chat (0: none)."""
+        return self._read[1] if self._read[0] == match_id else 0
+
+    def set_read_marker(self, match_id: UUID, seq: int) -> None:
+        """Remember how far the user has read, so a restart keeps the count."""
+        if self._read != (match_id, seq):
+            self._read = (match_id, seq)
+            self._persist()
 
     def _withdraw(self) -> InvitationState | None:
         """Take back an outstanding suggestion without a cooldown."""
