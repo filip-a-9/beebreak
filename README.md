@@ -18,31 +18,87 @@ completion-time predictions; uploading repository contents, prompts, plan text,
 shell commands or file paths; a hard dependency on local model weights; agent-to-agent
 conversation; a commercial subscription system.
 
-## Status
+## There is no public server
 
-Pre-beta, invite-only hosted network. The source is Apache-2.0 (see
-[LICENSE](LICENSE)); access to the network is a separate invite. No hosted
-server is running yet. The companion bundles the Nunito font (Copyright 2014
-The Nunito Project Authors) under the SIL Open Font License 1.1, as static
-weights cut from the upstream variable font; the licence text ships beside it
-in `apps/companion/src/beebreak_companion/assets/fonts/OFL.txt`.
+Beebreak is open source and nothing more. **The maintainer runs no server and
+collects no data.** There is no hosted network to join, and no demo instance.
+To use Beebreak, you or someone you trust runs a server, and everyone who
+wants to chat points their companion at it. Whoever runs a server is its
+operator and is responsible for the data on it ([ADR 0021](docs/ADR/0021-no-hosted-instance.md)).
+
+Chat is not end-to-end encrypted. The operator can read messages while they
+exist. See [docs/DATA_HANDLING.md](docs/DATA_HANDLING.md) and the
+[privacy notice template](docs/PRIVACY_NOTICE.md), which each operator fills in.
+
+The source is Apache-2.0 (see [LICENSE](LICENSE)). The companion bundles the
+Nunito font (Copyright 2014 The Nunito Project Authors) under the SIL Open Font
+License 1.1, as static weights cut from the upstream variable font; the licence
+text ships beside it in
+`apps/companion/src/beebreak_companion/assets/fonts/OFL.txt`.
+
+Beebreak is provided "AS IS", without warranties or conditions of any kind
+(Apache-2.0, sections 7 and 8). Operators run their servers at their own risk.
 
 Supported platform: WSL2 only. Claude Code, the hooks, the MCP server and the
-companion all run inside WSL2 (the companion's window uses WSLg).
+companion all run inside WSL2 (the companion's window uses WSLg). Status:
+pre-release.
 
-Chat is not end-to-end encrypted. Whoever runs the server can read messages
-while they exist. See [docs/DATA_HANDLING.md](docs/DATA_HANDLING.md) and the
-draft [privacy notice](docs/PRIVACY_NOTICE.md).
+## Run a server
 
-## Install
+Needs Docker with Docker Compose 2.24 or newer, on a host with a DNS name and
+ports 80 and 443 open.
 
-WSL2 only. On a fresh Ubuntu distro, set up these first, in the same distro:
+```bash
+git clone --branch v0.1.0 https://github.com/filip-a-9/beebreak && cd beebreak
+cp .env.example .env && chmod 600 .env   # replace every placeholder; see the runbook
+docker compose -f compose.prod.yaml up -d --build
+curl https://<your host>/v1/health       # {"status":"ok"}
+```
+
+[compose.prod.yaml](compose.prod.yaml) runs the server behind Caddy (TLS on
+80/443). Compose refuses to start when a required value in `.env` is missing,
+and the server refuses the example passwords. It does not check your host name
+or mail settings: check those by hand. Use the same tag for the server and the
+clients (the install below uses `v0.1.0` too). Run
+exactly one server container; never scale it. Backups, restore, GitHub sign-in
+and moderation are in [docs/RUNBOOK.md](docs/RUNBOOK.md).
+
+Before you let other people in, read two lists in the runbook:
+[Before you open your server to others](docs/RUNBOOK.md#before-you-open-your-server-to-others)
+(the privacy notice and contact fields you fill in) and
+[Untested on a real host](docs/RUNBOOK.md#untested-on-a-real-host) (what was
+tested locally only).
+
+### Getting an invite
+
+Sign-in is by invitation. The operator creates it:
+
+```bash
+docker compose -f compose.prod.yaml exec server beebreak-admin invite create <email> --send
+```
+
+The command prints the one-time code once; `--send` also emails it. The
+person enters the email and the code in the companion. This needs email
+sign-in (SMTP) on the server.
+
+Or the server uses GitHub sign-in instead: the operator registers their own
+GitHub OAuth App with device flow enabled, and invites a person by GitHub
+username with `docker compose -f compose.prod.yaml exec server beebreak-admin invite create --github <username>`. See
+[GitHub sign-in](docs/RUNBOOK.md#github-sign-in-optional) in the runbook. If
+you are the operator, invite yourself first. If you are not, ask whoever runs
+your server.
+
+## Install the plugin and the companion
+
+You need an invite and the address of the server you were invited to. Install
+on WSL2, in the distro where you run Claude Code. On a fresh Ubuntu distro, set
+up these first:
 
 1. System packages, as one line (a WSL Ubuntu image already has some of them;
    `apt` skips what is installed):
 
    ```bash
-   sudo apt-get update && sudo apt-get install -y --no-install-recommends curl ca-certificates libglib2.0-0t64 libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1
+   sudo apt-get update && sudo apt-get install -y --no-install-recommends curl ca-certificates libglib2.0-0t64 libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3 libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1 git
    ```
 
 2. [uv](https://docs.astral.sh/uv/getting-started/installation/) and
@@ -56,35 +112,29 @@ The companion supports Python 3.12 only, so the install below passes
 `--python 3.12`. uv uses a `python3` 3.12 if the distro has one and downloads
 one otherwise; without the flag it could pick a newer Python that does not work.
 
-The repository is private, so testers install from a release bundle
-(`beebreak-release.tar.gz`, built by `scripts/build_release.sh`). Compare the
-tarball's SHA-256 with the one on the release page. The `SHA256SUMS` file inside
-it only checks that the unpacked wheels were not corrupted; it is not tamper
-protection.
-
-Run the commands below from the directory that holds the tarball (a file in
-`C:\Temp` on Windows is `/mnt/c/Temp` in WSL). The first line prints the
-SHA-256 to compare:
+Both parts install from a git tag of this repository (`v0.1.0` below; use the
+latest tag on the releases page):
 
 ```bash
-sha256sum beebreak-release.tar.gz
-mkdir -p ~/beebreak-release && tar xzf beebreak-release.tar.gz -C ~/beebreak-release
-(cd ~/beebreak-release && sha256sum -c SHA256SUMS)
+V=v0.1.0
+REPO=git+https://github.com/filip-a-9/beebreak@$V
 
-# The three wheels are named explicitly, so uv cannot substitute a package of
-# the same name from PyPI. This also installs the beebreak-hook and
-# beebreak-mcp commands the plugin calls.
-R=~/beebreak-release
-uv tool install --python 3.12 $R/beebreak_companion-*.whl \
-  --with $R/beebreak_shared-*.whl \
-  --with $R/beebreak_agent_bridge-*.whl \
-  --with-executables-from beebreak-agent-bridge
+# --with adds the agent bridge. --with-executables-from puts beebreak-hook and
+# beebreak-mcp in ~/.local/bin, where the plugin looks for them. A custom
+# UV_TOOL_BIN_DIR or XDG_BIN_HOME puts them elsewhere and breaks the plugin.
+uv tool install --python 3.12 \
+  --with "beebreak-agent-bridge @ $REPO#subdirectory=packages/agent_bridge" \
+  --with-executables-from beebreak-agent-bridge \
+  "$REPO#subdirectory=apps/companion"
 
 beebreak-companion install        # asks for the server URL
-claude plugin marketplace add ~/beebreak-release/marketplace
+claude plugin marketplace add filip-a-9/beebreak#$V
 claude plugin install beebreak@beebreak
 beebreak-companion                # start it (it reads the URL saved above)
 ```
+
+`beebreak-companion install` asks for the URL of your server. Then the
+companion window asks you to sign in with the invite from the section above.
 
 A server with a private CA: add `--ca-file /path/to/ca.pem` to
 `beebreak-companion install`. The file must be a PEM owned by you (or root)
@@ -104,20 +154,28 @@ The companion follows the Windows light or dark app theme, read once at
 start. Set `BEEBREAK_THEME=light` or `dark` to override it (default `auto`;
 light when Windows can't be asked).
 
-To check it works, start a Claude Code session, ask it to do anything, then
-ask it to call the `beebreak_status` tool. `running` with a non-null
-`last_event_at` means the hooks reach the companion; `not_running` means the
-companion is not up; `last_event_at: null` means the hooks are not connected.
-`ready: false` with a `not_ready_reason` (`signed_out`, `connecting`,
-`offline`, `no_nickname` or `no_consent`) means no break is offered yet; the
-companion window shows the same reason.
-
 Without the `beebreak-hook` command on `PATH` the hooks do nothing and stay
 silent (the `beebreak` MCP server shows as failed in `/mcp`).
 
-Once the repository is public, the wheels step becomes
-`uv tool install --python 3.12 --with-executables-from beebreak-agent-bridge "git+https://github.com/<owner>/<repo>#subdirectory=apps/companion"`
-(untested until then) and the marketplace is `claude plugin marketplace add <owner>/<repo>`.
+### Check it works
+
+Start a Claude Code session, ask it to do anything, then ask it to call the
+`beebreak_status` tool. It prints these fields:
+
+| Field | Meaning |
+|---|---|
+| `companion` | `running` if the companion answered on its local socket, `not_running` if not. When it is `not_running`, every other field is `null`. |
+| `invitation` | `disabled` (break suggestions are switched off), `idle` (on, nothing to offer now) or `suggested` (the companion is offering a break now). `null` when the companion is not running. |
+| `last_event_at` | Time of the last hook event the companion received. `null` means no hook has reached the companion yet: the hooks are not connected. |
+| `activity` | The combined state of your Claude Code sessions, from hook events only: `active` (working), `waiting_input` (waiting for you, which wins over the others), `idle` (turn stopped) or `unknown` (no recent events). `null` when the companion is not running. |
+| `estimate` | A coarse bucket for the remaining agent time (`under_5m`, `5_10m`, `10_20m`, `20m_plus` or `unknown`), set only while `invitation` is `suggested`. Otherwise `null`. |
+| `queue` | `none`, `searching` (looking for a break partner) or `chatting` (you are in a break chat; Claude cannot see or take part in it). `null` from an older companion or when it is not running. |
+| `ready` | `true` when the companion can offer a break, `false` when it cannot. `null` from an older companion or when it is not running. |
+| `not_ready_reason` | When `ready` is `false`: `signed_out`, `connecting`, `offline`, `no_nickname` or `no_consent`. The companion window shows the same reason. `null` otherwise. |
+
+The tool is read-only. `companion: running` with a non-null `last_event_at` means the hooks reach the
+companion. `ready: false` with a `not_ready_reason` means no break is offered
+yet.
 
 ## Uninstall
 
@@ -126,7 +184,6 @@ beebreak-companion uninstall                # add --keep-account to keep the ser
 claude plugin uninstall beebreak@beebreak
 claude plugin marketplace remove beebreak
 uv tool uninstall beebreak-companion
-rm -rf ~/beebreak-release              # and the downloaded beebreak-release.tar.gz
 ```
 
 Claude Code keeps a copy of uninstalled plugins in
@@ -180,20 +237,13 @@ To try the Claude Code plugin from a checkout, see
 | `tests` | All tests |
 | `docs` | Specification, threat model, data handling, ADRs |
 
-## Operations
-
-[compose.prod.yaml](compose.prod.yaml) runs the server behind Caddy (TLS on
-80/443) on any Docker host: copy `.env.example` to `.env`, replace every
-placeholder (the file refuses to start with one missing), then
-`docker compose -f compose.prod.yaml up -d --build`. Run exactly one server
-container; never scale it. Backups, restore and operations are in `docs/RUNBOOK.md` (`scripts/backup.sh`, `scripts/restore.sh`).
-
 ## Links
 
 - [Architecture and product decisions](docs/ARCHITECTURE.md)
 - [Threat model](docs/THREAT_MODEL.md)
 - [Data handling](docs/DATA_HANDLING.md)
-- [Privacy notice (draft)](docs/PRIVACY_NOTICE.md)
+- [Privacy notice (template for operators)](docs/PRIVACY_NOTICE.md)
 - [Architecture decision records](docs/ADR/README.md)
+- [Runbook for operators](docs/RUNBOOK.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)

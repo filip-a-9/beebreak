@@ -19,10 +19,10 @@ passed. Step IDs are stable; do not renumber.
 Written against the M6 specs and the M4 and M5 checklists, whose stack,
 terminals and two accounts this one reuses. Failing steps go back to the
 owning spec (the owner is named in each step). Steps whose result depends on
-a value Filip has not given yet (`<contact address>`, `<operator name>`,
-`<owner>/<repo>`, the abuse-report owner) are recorded as `blocked`, never
-`fail`. Items that need a public host, TLS or a second machine are not steps
-here: see "Moved to the rehearsal deploy" near the end.
+a value an operator fills in (`<contact address>`, `<operator name>`, the
+abuse-report owner) are recorded as `blocked`, never `fail`. Items that need a
+public host, TLS or a second machine are not steps here: see "Moved to the
+untested list" near the end.
 
 ## How the steps work
 
@@ -31,12 +31,12 @@ here: see "Moved to the rehearsal deploy" near the end.
 - T1: the development Docker stack (`docker compose ...`,
   `beebreak-admin` commands, git and `gh`), in the main distro.
 - T2: companion A in the main distro (default state and runtime directories),
-  account `FilipM6`.
+  account `AdaM6`.
 - T3: companion B in the main distro (separate directories, see M6-C11),
   account `BeaM6`.
 - T4: the fresh distro `beebreak-clean` (M6-C07 to M6-C10): its shell, the
   companion and one Claude Code session.
-- PS: a Windows PowerShell window. Commands there are **run by Filip** (this
+- PS: a Windows PowerShell window. Commands there are **run by the maintainer** (this
   checklist never asks an agent to run them).
 
 **Two companions on one machine.** As in M4: companion B gets its own
@@ -88,7 +88,7 @@ docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT table_name 
 ```
 
 **Test identities** (new for this run, never the M3 to M5 accounts):
-`filip-m6@example.com` (A, nickname `FilipM6`), `bea-m6@example.com` (B,
+`ada-m6@example.com` (A, nickname `AdaM6`), `bea-m6@example.com` (B,
 nickname `BeaM6`), `clean@example.com` (fresh distro, nickname `Clean`),
 `drill@example.com` (restore drill, nickname `Drill`). Create an invite for
 each with `invite create`. The old accounts must not be reused: their device
@@ -149,7 +149,7 @@ Result (pass / fail / blocked):
 ## CI (M6-01, ci-speed)
 
 These three steps need the GitHub repository (private) and `gh` logged in.
-Pushing and opening a pull request are Filip's to approve. The workflow runs
+Pushing and opening a pull request are the maintainer's to approve. The workflow runs
 on `pull_request`; its jobs are `groups`, `lint`, `collection`,
 `tests (unit)`, `tests (server)`, `tests (rest)` and the single gate job
 `checks`. Precondition: `ci-speed` is merged into `main` (until then the
@@ -243,44 +243,43 @@ or a public repository) or HTTP 404 (branch not protected). Either confirms
 there is no technical gate, so **a merge to `main` must wait for a green
 `checks` by hand**. Record the status code. A 404, or a rule being returned, means the premise
 of this item has changed (the plan or the repository visibility changed): do
-not mark `pass`; record it in `deviations` and tell Filip, because the
+not mark `pass`; record it in `deviations` and tell the maintainer, because the
 project state assumes no protection is possible.
 
 Result (pass / fail / blocked):
 
 ## Install and uninstall (M6-02)
 
-The repository is private, so the install does **not** use the README's
-`git+https://github.com/<owner>/<repo>` line (that path is untested until the
-repository is public, and `<owner>/<repo>` is a placeholder). It uses the
-release wheels from `scripts/build_release.sh`, named as explicit paths, which
-is the README's Install section as written today. Follow the README and
-nothing else: **every extra command you need beyond the README is a finding**
+The tag and the public repository do not exist yet, so the install does
+**not** use the README's `https://github.com/filip-a-9/beebreak` URLs. It uses
+the README's commands with a local clone and a local tag in place of the
+repository and the release tag (`git+file://` and a local marketplace
+directory). Follow the README and nothing else: **every extra command you need beyond the README is a finding**
 (write it in the step note). The server for this part is the development
 stack of M6-C02 running in the main distro; all WSL2 distros share one
 network, so the fresh distro is expected to reach it at `http://127.0.0.1:8000`
 (if it does not, record that, it is a finding for the README or this
 checklist, not a pass).
 
-**M6-C06 — Build the release bundle (main distro, T1).**
+**M6-C06 — Prepare a local source and tag (main distro, T1).** From the
+committed state under test (commit first):
 
 ```
-scripts/build_release.sh
-sha256sum dist/beebreak-release.tar.gz
-tar tzf dist/beebreak-release.tar.gz | sort
+git tag m6-test
+rm -rf /mnt/c/Temp/beebreak-src && mkdir -p /mnt/c/Temp
+git clone --branch m6-test . /mnt/c/Temp/beebreak-src
+git -C /mnt/c/Temp/beebreak-src rev-parse HEAD
+ls /mnt/c/Temp/beebreak-src/.claude-plugin/marketplace.json
 ```
 
-Expect: the script prints `built:` and lists `SHA256SUMS`,
-`beebreak-release.tar.gz`, `beebreak_agent_bridge-*.whl`,
-`beebreak_companion-*.whl`, `beebreak_shared-*.whl` and `marketplace`.
-The tarball lists the three wheels, `SHA256SUMS`, `./.gitignore` and
-`marketplace/` (with `.claude-plugin/marketplace.json` and
-`integrations/claude-code/`). Write the
-SHA-256 down for M6-C08. `dist/` is git-ignored.
+Expect: the clone is at the tag, `rev-parse` prints the commit under test
+(write it down for M6-C07), and `marketplace.json` exists at the clone's root,
+which is what `claude plugin marketplace add` reads. The local tag `m6-test`
+is deleted at the end (`git tag -d m6-test`).
 
 Result (pass / fail / blocked):
 
-**M6-C07 — Fresh distro (PS, run by Filip).** Import a distro that has never
+**M6-C07 — Fresh distro (PS, run by the maintainer).** Import a distro that has never
 been used, so nothing of Beebreak, uv or Claude Code exists in it. **Never
 export a distro you work in** (it holds your files and credentials). Needs
 WSL 2.4.4 or newer for `--name` (`wsl --version`; write the version down).
@@ -301,21 +300,20 @@ wsl -d beebreak-clean
 ```
 
 (If the distro opens as root, the `useradd` command has not taken effect:
-check `/etc/wsl.conf`.) The last command opens T4 as `tester`. Hand the
-tarball over through the Windows temp folder and leave it there: M6-C08
-unpacks from that path, so no tarball lands in the fresh home directory (the
-README assumes it in the current directory; that is a test-setup deviation,
-not a finding):
+check `/etc/wsl.conf`.) The last command opens T4 as `tester`. The
+source clone from M6-C06 is already in the Windows temp folder, which the
+distro reaches as `/mnt/c/Temp`; M6-C08 installs from it, so nothing is copied
+into the fresh home directory. Install `git` first (`sudo apt-get install -y
+git`; the README lists it):
 
 ```
-# in the main distro
-mkdir -p /mnt/c/Temp && cp dist/beebreak-release.tar.gz /mnt/c/Temp/
 # in T4
-sha256sum /mnt/c/Temp/beebreak-release.tar.gz
+git config --global --add safe.directory /mnt/c/Temp/beebreak-src/.git
+git -C /mnt/c/Temp/beebreak-src rev-parse HEAD
 ```
 
-Expect: the SHA-256 in T4 equals the one from M6-C06 (this is the README's
-"compare with the release page" step; there is no release page yet). `echo
+Expect: the commit in T4 equals the one from M6-C06 (if git refuses the
+directory for another reason, record it). `echo
 $WSL_DISTRO_NAME` prints `beebreak-clean`, and `ls ~/.local ~/.config`
 printing `No such file or directory` is the expected pass on a new user
 (otherwise it shows no `beebreak`, `uv` or `claude`). The fresh distro does not have uv and
@@ -327,33 +325,31 @@ fresh distro. Record the finding first (the README names none), then continue
 by installing the README's package set: `sudo apt-get install -y
 --no-install-recommends curl ca-certificates libglib2.0-0t64 libegl1 libgl1
 libxkbcommon0 libfontconfig1 libdbus-1-3 libxcb-cursor0 libxkbcommon-x11-0
-libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1`. Check `~/.local/bin` is on `PATH`
+libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xkb1 git`. Check `~/.local/bin` is on `PATH`
 (`uv tool update-shell` adds it, as the README says).
 
 Result (pass / fail / blocked):
 
-**M6-C08 — Install from the wheels (T4).** Exactly the README commands, with
-the explicit wheel paths. The install pins `--python 3.12`: without it, a
+**M6-C08 — Install from the local source (T4).** Exactly the README commands,
+with the local clone and tag in place of the repository URL and release tag.
+The install pins `--python 3.12`: without it, a
 distro that has no `python3` makes uv fetch a newer managed Python, which the
 companion does not support:
 
 ```
-mkdir -p ~/beebreak-release && tar xzf /mnt/c/Temp/beebreak-release.tar.gz -C ~/beebreak-release
-(cd ~/beebreak-release && sha256sum -c SHA256SUMS)
-R=~/beebreak-release
-uv tool install --python 3.12 $R/beebreak_companion-*.whl \
-  --with $R/beebreak_shared-*.whl \
-  --with $R/beebreak_agent_bridge-*.whl \
-  --with-executables-from beebreak-agent-bridge
+REPO=git+file:///mnt/c/Temp/beebreak-src@m6-test
+uv tool install --python 3.12 \
+  --with "beebreak-agent-bridge @ $REPO#subdirectory=packages/agent_bridge" \
+  --with-executables-from beebreak-agent-bridge \
+  "$REPO#subdirectory=apps/companion"
 command -v beebreak-companion beebreak-hook beebreak-mcp
 beebreak-companion install
-claude plugin marketplace add ~/beebreak-release/marketplace
+claude plugin marketplace add /mnt/c/Temp/beebreak-src
 claude plugin install beebreak@beebreak
 ```
 
 At the `Server URL` prompt press Enter (the default is
-`http://127.0.0.1:8000`). Expect: `sha256sum -c` prints `OK` for the three
-wheels; `command -v` prints three paths under `~/.local/bin`;
+`http://127.0.0.1:8000`). Expect: `command -v` prints three paths under `~/.local/bin`;
 `beebreak-companion install` prints `saved server URL`, then `Next, add the
 Claude Code plugin:` with the two `claude plugin ...` commands; the two
 `claude plugin` commands succeed. `ls -l ~/.local/state/beebreak/install.json`
@@ -393,7 +389,7 @@ docker compose exec server beebreak-admin devices
 Expect one line starting `Clean`, then `WSL device`, then `connected=yes`.
 
 Now the Claude Code part, in a new terminal in T4, from a scratch directory
-outside `~/beebreak-release`:
+outside the install directories:
 
 ```
 mkdir -p ~/scratch && cd ~/scratch
@@ -431,7 +427,6 @@ beebreak-companion uninstall
 claude plugin uninstall beebreak@beebreak
 claude plugin marketplace remove beebreak
 uv tool uninstall beebreak-companion
-rm -rf ~/beebreak-release
 ```
 
 Expect from `beebreak-companion uninstall`, one fixed line each and exit 0:
@@ -458,7 +453,7 @@ ls -d "${XDG_RUNTIME_DIR:-/tmp/beebreak-$(id -u)}/beebreak" ~/.local/state/beebr
 command -v beebreak-companion beebreak-hook beebreak-mcp
 ```
 
-Expect: `find` prints nothing (the release tarball is outside the home
+Expect: `find` prints nothing (the source clone is outside the home
 directory, in `/mnt/c/Temp`, on purpose); the `ls` lines all say `No such file
 or directory`. Anything under `~/.claude/` or `~/.cache/claude-cli-nodejs/` (its MCP logs)
 is Claude Code's own cache: if
@@ -486,7 +481,7 @@ Result (pass / fail / blocked):
 
 **M6-C11 — The server never sees the hostname; the edited name is stored.**
 Needs the stack of M6-C02, two new accounts (create the invites for
-`filip-m6@example.com` and `bea-m6@example.com` with `invite create`; see
+`ada-m6@example.com` and `bea-m6@example.com` with `invite create`; see
 "Test identities") and two companions in the main distro. Note the start time
 in T1: `T0=$(date -u +%Y-%m-%dT%H:%M:%SZ)`. T2 (A, default directories):
 `.venv/bin/beebreak-companion`. T3 (B):
@@ -499,17 +494,17 @@ XDG_RUNTIME_DIR="$B_ROOT/run" XDG_STATE_HOME="$B_ROOT/state" .venv/bin/beebreak-
 
 (Always start B with this command.) B starts `Not signed in`; if A's default
 directories still hold an old login, click **Sign out** in A first (the device
-name is chosen only at sign-in). In A: sign in as `filip-m6@example.com`; on
-the code page **replace** the device name with `FilipM6 test laptop` and click **Show what is sent**. Expect the
+name is chosen only at sign-in). In A: sign in as `ada-m6@example.com`; on
+the code page **replace** the device name with `AdaM6 test laptop` and click **Show what is sent**. Expect the
 preview `What this app shares` to list under `Sent when you sign in`
-`Email`, `Nickname`, and `Device name: FilipM6 test laptop`; type another name
+`Email`, `Nickname`, and `Device name: AdaM6 test laptop`; type another name
 and watch the line follow. Finish the sign-in; after it the preview line reads
 `Device name: the name you chose at sign-in`. In B: sign in as
 `bea-m6@example.com` and leave the name `WSL device` (open **Show what is sent**:
 `Device name: WSL device`). Check the validation once in B's dialog before you finish it: type a valid
 code first and see **Next** enabled, then change the device name to `bad/name`
 and see **Next** disabled, then restore `WSL device`. Save each privacy
-page with all boxes off; wait for `Connected as FilipM6` and `Connected as BeaM6`.
+page with all boxes off; wait for `Connected as AdaM6` and `Connected as BeaM6`.
 
 ```
 docker compose exec server beebreak-admin devices
@@ -519,7 +514,7 @@ echo "hostname hits in the server log since the start: $(docker compose logs --s
 ```
 
 Expect: `devices`
-shows `FilipM6	FilipM6 test laptop	connected=yes` and `BeaM6	WSL device
+shows `AdaM6	AdaM6 test laptop	connected=yes` and `BeaM6	WSL device
 connected=yes`; the query shows the same names with `revoked` `f`; both hostname
 counts print `0` (the row count covers only rows created in this run, which is
 why old accounts are not reused; the log count covers the whole lifetime of
@@ -533,7 +528,7 @@ Result (pass / fail / blocked):
 ## Data request (M6-04)
 
 **M6-C12 — Export, then delete a test account; the peer's history remains.**
-With A (`FilipM6`) and B (`BeaM6`) connected (M6-C11), click **Find a break
+With A (`AdaM6`) and B (`BeaM6`) connected (M6-C11), click **Find a break
 partner** in both so they match. Send `export-test A1` from A and
 `export-test B1` from B. While the chat is live:
 
@@ -557,16 +552,16 @@ exits 1 with one line saying the account is queued, in a live match or has an
 open report (the chat is live) and the account is untouched.
 
 Now End the chat in A (**End**, then **Yes**) and click `Close`/OK in both
-windows. Take Filip's "before" export only now: ending a chat changes the
+windows. Take AdaM6's "before" export only now: ending a chat changes the
 match's `ended_at` and `end_reason`, so an export taken during the live chat
 would never compare equal. Then delete:
 
 ```
-(umask 077; docker compose exec -T server beebreak-admin account export filip-m6@example.com > reports/m6-filip-before.json)
+(umask 077; docker compose exec -T server beebreak-admin account export ada-m6@example.com > reports/m6-ada-before.json)
 docker compose exec server beebreak-admin account delete bea-m6@example.com --yes; echo "exit $?"
 docker compose exec server beebreak-admin account export bea-m6@example.com; echo "exit $?"
-(umask 077; docker compose exec -T server beebreak-admin account export filip-m6@example.com > reports/m6-filip-after.json)
-python3 -c "import json; a=json.load(open('reports/m6-filip-before.json')); b=json.load(open('reports/m6-filip-after.json')); print(a['messages']==b['messages'], a['matches']==b['matches'], len(b['matches']), [m['body'] for m in b['messages']])"
+(umask 077; docker compose exec -T server beebreak-admin account export ada-m6@example.com > reports/m6-ada-after.json)
+python3 -c "import json; a=json.load(open('reports/m6-ada-before.json')); b=json.load(open('reports/m6-ada-after.json')); print(a['messages']==b['messages'], a['matches']==b['matches'], len(b['matches']), [m['body'] for m in b['messages']])"
 docker compose exec -T postgres psql -U beebreak beebreak -c "SELECT count(*) FROM matches"
 docker compose exec server beebreak-admin devices
 ```
@@ -575,7 +570,7 @@ Expect: `delete` exits 0 and prints one line of `table=count` pairs (names
 `report_messages reports messages queue_entries match_participants matches
 blocks refresh_tokens devices user_preferences auth_challenges beta_invites
 users`) with `users=1` and `matches=0` (the match has another participant);
-the export of BeaM6 now exits 1 with `no such account`; Filip's export compares
+the export of BeaM6 now exits 1 with `no such account`; AdaM6's export compares
 `True True`, shows one match and the body `['export-test A1']`; the `matches`
 count is at least `1`; `devices` no longer lists BeaM6. B's companion drops to
 `Offline – retrying` or `Not signed in`. `reports/` is never committed; delete
@@ -589,7 +584,7 @@ Result (pass / fail / blocked):
 **M6-C13 — Backup, destroy, restore, sign in again.** Per `docs/RUNBOOK.md`
 ("Restore drill"), on a local copy of the production stack. It does not
 exercise Caddy's real certificate or a real mail provider (those move to the
-rehearsal deploy). This needs **its own Compose project name**: the
+untested list). This needs **its own Compose project name**: the
 production file and the development file share the directory name, so
 without `COMPOSE_PROJECT_NAME` the drill would share (and `down -v` would
 destroy) the development database volume. `backup.sh` and `restore.sh` exit 2
@@ -775,7 +770,7 @@ account is gone after M6-C12):
    access lines:
 
    ```
-   docker compose logs server 2>&1 | grep -cE '([0-9]{1,3}\.){3}[0-9]{1,3}|filip-m6@|bea-m6@|bra_|brr_|FilipM6|BeaM6|test laptop|export-test|\b[0-9A-Z]{4}-[0-9A-Z]{4}\b'
+   docker compose logs server 2>&1 | grep -cE '([0-9]{1,3}\.){3}[0-9]{1,3}|ada-m6@|bea-m6@|bra_|brr_|AdaM6|BeaM6|test laptop|export-test|\b[0-9A-Z]{4}-[0-9A-Z]{4}\b'
    ```
 
    Expect `0`. Read the matching lines before judging, as in M5-C18: a bind
@@ -789,27 +784,22 @@ the placeholders here: M6-C15 covers them.
 
 Result (pass / fail / blocked):
 
-**M6-C15 — Placeholders still open (expected: blocked).** Placeholders stay
-unfilled for now (decided 2026-10-17). This step lists them and records them
-as `blocked`, not `fail`.
+**M6-C15 — Operator fields match the list (expected: pass).** The template
+fields are left for each operator to fill in (ADR 0021). This step checks the
+list is complete.
 
 ```
-grep -rnE '<contact address>|<operator name>|<owner>/<repo>|abuse report owner' README.md SECURITY.md CONTRIBUTING.md docs/RUNBOOK.md docs/DATA_HANDLING.md docs/PRIVACY_NOTICE.md
+grep -rnoE '<(operator name|contact address|response time|email provider|hosting provider|backup retention|transfers|supervisory authority|changes|abuse report owner|abuse report response time)>' docs/PRIVACY_NOTICE.md docs/RUNBOOK.md
 ```
 
-Expect hits for `<contact address>` (SECURITY.md, DATA_HANDLING.md,
-PRIVACY_NOTICE.md, RUNBOOK.md), `<operator name>` (PRIVACY_NOTICE.md),
-`<owner>/<repo>` (README.md, the git+https install line and marketplace
-line) and the abuse-report owner line (RUNBOOK.md). The step is `blocked`
-while any remains; write the count per placeholder in the note. If a hit
-appears in a file not listed, or a new kind of placeholder, record it. When
-Filip fills them, the step becomes `pass` if the grep prints nothing and the
-filled text is the same everywhere. A placeholder that is not documented as
-open is a `fail`. Two decisions the documents still leave open are not found
-by the grep; list them in the note too: the backup lifetime and the off-host
-copy (RUNBOOK "Backup schedule" and "Retention reminder"; the DATA_HANDLING
-backups row says "Not decided yet"), and the abuse-report owner and response
-time (RUNBOOK "Abuse reports").
+The fields are those in RUNBOOK "Before you open your server to others". Pass
+when the set of field names in `docs/PRIVACY_NOTICE.md` and in RUNBOOK "Abuse
+reports" is exactly that list: no field is missing from the table, and no
+other angle-bracket field appears in either file (look at the output of
+`grep -rnoE '<[a-z][a-z ]+>' docs/PRIVACY_NOTICE.md` too and record anything
+that is not a field). This checks the templates, not a real server: on an
+operator's copy every field is filled and the grep prints nothing. Write the
+count per field in the note. A field that is not in the table is a `fail`.
 
 Result (pass / fail / blocked):
 
@@ -821,7 +811,7 @@ Result (pass / fail / blocked):
 Beebreak goes through, using only the documents (README, the in-app texts):
 install, onboarding, a first invite, a match, a chat, an extension, report
 and block, and uninstall. Use the fresh distro of M6-C07 (re-import it, the
-last run removed it) and the development stack, with a second tester or Filip
+last run removed it) and the development stack, with a second tester or the maintainer
 playing the other side. The observer says nothing and does not touch the
 keyboard. Record each point where the person stalled, hesitated, read
 something twice, guessed or asked: the screen or document, what they
@@ -831,36 +821,14 @@ spec follows.
 
 Result (pass / fail / blocked):
 
-## Moved to the rehearsal deploy
+## Moved to the untested list
 
-These are **not** steps in this checklist (decided 2026-10-17: no LAN
-two-machine run; see README "Next" step 8). They are run on the rehearsal host
-with the real domain, then the host is destroyed, and again on the real
-deployment:
-
-- TLS: a public certificate for `BEEBREAK_PUBLIC_HOST` from Caddy; a client on
-  another network signs in, matches and chats through it; the WebSocket
-  (`/v1/realtime`) works through Caddy (M6-03).
-- Proxy limits: a spoofed `X-Forwarded-For` sent to the public address does not
-  change the limiter key, while the real peer address does (M6-03,
-  `BEEBREAK_TRUSTED_PROXIES`).
-- Mail: a real provider sends the sign-in code (SPF and DKIM set before any
-  real send); `BEEBREAK_SMTP_TLS` starttls or implicit with credentials.
-- The restore drill repeated on the host (RUNBOOK: the local drill ran without
-  Caddy or real SMTP), including the `age` path and an off-host copy of the
-  backup.
-- The two-machine steps of the M4 and M5 checklists, which ran on one machine
-  against a local proxy. Neither checklist marks single steps as pending; their
-  reports list the platform "two separate machines (M6)". The steps that stand
-  in for a second machine and should be reused, by ID: **M4-C03** (two
-  companions signed in), **M4-C04** (gate: match exactly once), **M4-C09**
-  (server restart while both search), **M4-C10** (block), **M5-C03** (the
-  `socat` proxy at port 8001 stands in for a separate network), **M5-C04**
-  (chat both ways), **M5-C07** (B offline about 20 s: replace the forwarder
-  kill with a real network cut on the second machine), **M5-C08** (B offline
-  over 60 s), **M5-C09** and **M5-C10** (extension and expiry) and **M5-C11**
-  to **M5-C15** (End, Block, Report, late report, resolve). M5-C07 and M5-C08
-  are the ones the single-machine setup only imitates.
+These are **not** steps in this checklist: the Beebreak project runs no server
+(ADR 0021), so they are checked by each operator on their own host. The list
+is in [RUNBOOK.md](RUNBOOK.md#untested-on-a-real-host): TLS, proxy limits,
+real mail, the restore drill on a host, the two-machine steps of the M4 and
+M5 checklists (reuse M4-C03, M4-C04, M4-C09, M4-C10, M5-C03, M5-C04, M5-C07
+to M5-C15 with a real second machine), and the rest.
 
 ## Report
 
@@ -875,13 +843,13 @@ uv run pytest --junitxml=reports/m6-junit.xml
 `reports/m6-report.json` from the template below, using `pass`, `fail` or
 `blocked` per step. Note platforms still pending (native Windows, macOS,
 Linux without WSL, and the two-machine and TLS items under "Moved to the
-rehearsal deploy"). `reports/` is never committed. Clean up what this run
+untested list"). `reports/` is never committed. Clean up what this run
 left; nothing is deleted automatically, each item is yours to confirm:
 
 - `reports/m6-*.json` exports and `reports/m6-junit.xml` once the report is
-  written; `dist/` if the bundle is no longer needed.
-- `/mnt/c/Temp/beebreak-release.tar.gz` and any `C:\wsl\` files you created;
-  the test distro (`wsl --unregister beebreak-clean` in PS, run by Filip;
+  written; the local tag (`git tag -d m6-test`).
+- `/mnt/c/Temp/beebreak-src` and any `C:\wsl\` files you created;
+  the test distro (`wsl --unregister beebreak-clean` in PS, run by the maintainer;
   `wsl --list` must no longer show it).
 - Companion B's directories: `XDG_RUNTIME_DIR="$B_ROOT/run"
   XDG_STATE_HOME="$B_ROOT/state" .venv/bin/beebreak-companion uninstall
@@ -911,7 +879,7 @@ left; nothing is deleted automatically, each item is yours to confirm:
     "M6-C12": {"result": "", "note": ""},
     "M6-C13": {"result": "", "note": ""},
     "M6-C14": {"result": "", "note": ""},
-    "M6-C15": {"result": "", "note": "expected blocked: list the open placeholders"},
+    "M6-C15": {"result": "", "note": "field counts per file"},
     "M6-C16": {"result": "", "note": "expected blocked until the design pass has run"},
     "M6-C17": {"result": "", "note": ""}
   },
@@ -921,7 +889,7 @@ left; nothing is deleted automatically, each item is yours to confirm:
     "ci_revert_checks_result": null,
     "ci_ungrouped_test_failed_job": null,
     "branch_protection_status_code": null,
-    "release_tarball_sha256_matches": null,
+    "source_commit_matches": null,
     "wsl_version": null,
     "extra_install_steps_beyond_readme": [],
     "hook_last_event_at_set": null,
@@ -939,14 +907,13 @@ left; nothing is deleted automatically, each item is yours to confirm:
     "usability_stall_points": []
   },
   "deviations": [],
-  "pending_platforms": ["native Windows", "macOS", "Linux without WSL", "public TLS and a second machine (rehearsal deploy)"]
+  "pending_platforms": ["native Windows", "macOS", "Linux without WSL", "public TLS and a second machine (untested list)"]
 }
 ```
 
 M6 gate (§14): reproducible installations and vetted disclosure and retention
 before the closed beta. Passing means M6-C01, M6-C02, M6-C03, M6-C04, M6-C08,
-M6-C09, M6-C10, M6-C11, M6-C12, M6-C13 and M6-C14 pass; M6-C15 is `blocked`
-only on the named placeholders; M6-C05 records the convention; M6-C16 is run
+M6-C09, M6-C10, M6-C11, M6-C12, M6-C13 and M6-C14 pass; M6-C15 passes when the fields match the list; M6-C05 records the convention; M6-C16 is run
 after the design pass. The steps that count most are the clean install and
 uninstall (M6-C08 to M6-C10), the data request (M6-C12), the restore drill
 (M6-C13) and the disclosure review (M6-C14).

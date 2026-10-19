@@ -1,6 +1,6 @@
 # ADR 0019: Rename Breakroom to Beebreak
 
-Status: Accepted (Filip, 2026-10-18).
+Status: Accepted (the maintainer, 2026-10-18).
 Source: `.claude/specs/rename-beebreak.md`.
 
 ## Context
@@ -25,8 +25,8 @@ Bumble (a famous chat-app mark) were rejected for the same kind of overlap.
 ## Consequences
 Beebreak: free on PyPI and GitHub, no product found by web search (nearest
 mark BEEBLE, app software), no rows in a TMview "contains" search of the EU
-(EM) and Serbian (RS) registers (2026-10-18). A registry search is not a legal
-clearance; the lawyer review before M7 covers it. Keeps the B-shaped logo.
+(EM) register (2026-10-18). A registry search is not a legal
+clearance; a lawyer review would cover it and is not planned (ADR 0021). Keeps the B-shaped logo.
 Privacy corpus v1 keeps its old marker as a frozen fixture; v2 uses
 `beebreak-canary`.
 
