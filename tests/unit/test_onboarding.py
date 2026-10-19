@@ -539,6 +539,17 @@ def test_show_what_is_shared_follows_the_boxes(qtbot: QtBot, rig: Rig) -> None:
     assert not dialog.preview.isVisible()
 
 
+def test_settings_for_a_signed_in_user_are_not_titled_as_a_sign_in(
+    qtbot: QtBot,
+) -> None:
+    signed_out = OnboardingDialog(FakeRemoteWorker())
+    settings = OnboardingDialog(FakeRemoteWorker(), _ME)
+    qtbot.addWidget(signed_out)
+    qtbot.addWidget(settings)
+    assert "sign in" in signed_out.windowTitle().lower()
+    assert "sign in" not in settings.windowTitle().lower()
+
+
 # --- M4-06: stack tag picker (no server needed) ---
 
 _ME = Me(
