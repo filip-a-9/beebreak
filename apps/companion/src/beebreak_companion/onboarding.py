@@ -60,6 +60,7 @@ from beebreak_shared.presence import StackTag
 ) = range(7)
 
 TITLE = "Sign in to Beebreak"
+SETTINGS_TITLE = "Beebreak settings"
 EMAIL_LABEL = "Email"
 INVITE_LABEL = "Invite code (first sign-in only)"
 CODE_INTRO = "We emailed you an 8-character code. Type it here."
@@ -83,7 +84,10 @@ SENT_ONLY = (
 TAGS_INTRO = "Pick up to 5 tags. They stay on this computer until you start a break."
 SHOW_SHARED_LABEL = "Show what is shared"
 SHOW_SENT_LABEL = "Show what is sent"
-DONE_TEXT = "You are all set."
+DONE_TEXT = (
+    "You are all set. Beebreak suggests a break while Claude Code works on its "
+    'own; to take one right away, press "Find a break partner".'
+)
 METHOD_INTRO = "How do you want to sign in?"
 GITHUB_BUTTON = "Sign in with GitHub"
 EMAIL_BUTTON = "Email me a code"
@@ -215,7 +219,7 @@ class OnboardingDialog(QDialog):
         self.methods = AuthMethods(email=True, github=False)  # until the server says
         self.github_start: GitHubStartResponse | None = None
         self._save_tags = save_tags
-        self.setWindowTitle(TITLE)
+        self.setWindowTitle(TITLE if me is None else SETTINGS_TITLE)
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self._state: str = worker.state
         self._verified = me is not None

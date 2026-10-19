@@ -51,6 +51,9 @@ _ACCOUNT_LABELS: dict[str, str] = {
 # Break area (M4-06). Fixed strings only. Peer text never reaches a label as
 # received: tags and categories go through these maps, unknown values are dropped.
 FIND = "Find a break partner"
+FIND_TIP = (
+    "Match now with another person who is free, whether or not your agent is busy."
+)
 SEARCHING = "Looking for a break partner\N{HORIZONTAL ELLIPSIS}"
 CANCEL = "Cancel"
 CHATTING_WITH = "Chatting with"
@@ -137,7 +140,9 @@ def shared_labels(tags: Iterable[object], category: object) -> list[str]:
 CONNECTED_AS = "Connected as"
 UNKNOWN_NICKNAME = "?"
 SERVER_REFUSED = "Server address not allowed"
-UNENCRYPTED_NOTE = "Stored unencrypted"
+UNENCRYPTED_NOTE = (
+    "No system keyring: your sign-in is kept unencrypted in a file only you can read."
+)
 _NICKNAME = TypeAdapter(Nickname)
 
 
@@ -194,6 +199,7 @@ class CompanionWindow(QWidget):
         self.account_note = QLabel(UNENCRYPTED_NOTE)
         self.account_note.setObjectName("muted")
         self.account_note.setTextFormat(Qt.TextFormat.PlainText)
+        self.account_note.setWordWrap(True)
         self.sign_in_button = QPushButton("Sign in")
         self.finish_setup_button = QPushButton("Finish setup")
         self.settings_button = QPushButton("Settings")
@@ -222,6 +228,7 @@ class CompanionWindow(QWidget):
         self._break_error_timer.setInterval(ERROR_SECONDS * 1000)
         self._break_error_timer.timeout.connect(self._clear_break_error)
         self.find_button = QPushButton(FIND)
+        self.find_button.setToolTip(FIND_TIP)
         self.cancel_button = QPushButton(CANCEL)
         self.block_button = QPushButton(BLOCK)
         self.ok_button = QPushButton(OK)

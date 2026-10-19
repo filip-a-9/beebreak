@@ -48,7 +48,9 @@ WSL2 only. On a fresh Ubuntu distro, set up these first, in the same distro:
 2. [uv](https://docs.astral.sh/uv/getting-started/installation/) and
    [Claude Code](https://docs.claude.com/en/docs/claude-code/setup): follow
    each official install page.
-3. `~/.local/bin` on your `PATH` (`uv tool update-shell` adds it).
+3. `~/.local/bin` on your `PATH`. The uv installer usually adds it already;
+   if `command -v uv` finds nothing, run `~/.local/bin/uv tool update-shell`.
+   Then open a new terminal.
 
 The companion supports Python 3.12 only, so the install below passes
 `--python 3.12`. uv uses a `python3` 3.12 if the distro has one and downloads
@@ -60,7 +62,12 @@ tarball's SHA-256 with the one on the release page. The `SHA256SUMS` file inside
 it only checks that the unpacked wheels were not corrupted; it is not tamper
 protection.
 
+Run the commands below from the directory that holds the tarball (a file in
+`C:\Temp` on Windows is `/mnt/c/Temp` in WSL). The first line prints the
+SHA-256 to compare:
+
 ```bash
+sha256sum beebreak-release.tar.gz
 mkdir -p ~/beebreak-release && tar xzf beebreak-release.tar.gz -C ~/beebreak-release
 (cd ~/beebreak-release && sha256sum -c SHA256SUMS)
 
@@ -85,7 +92,11 @@ that only its owner can write. It is recorded next to the server URL and
 applied on every start unless `BEEBREAK_CA_FILE` is
 already set. It is read once at start: restart the companion after changing it.
 
-Start the companion by hand with `beebreak-companion`. There is no login
+Start the companion by hand with `beebreak-companion`. If it stops with
+`could not connect to display` (Qt then names `xcb` or `xcb-cursor0`), the
+cause is usually not a missing library but no WSLg display: check that
+`echo $DISPLAY` prints something like `:0`, and run `wsl --update` and
+`wsl --shutdown` from Windows if it is empty. There is no login
 autostart: WSLg has no desktop session, so nothing in WSL2 runs autostart
 entries.
 
@@ -107,8 +118,11 @@ beebreak-companion uninstall                # add --keep-account to keep the ser
 claude plugin uninstall beebreak@beebreak
 claude plugin marketplace remove beebreak
 uv tool uninstall beebreak-companion
-rm -rf ~/beebreak-release
+rm -rf ~/beebreak-release              # and the downloaded beebreak-release.tar.gz
 ```
+
+Claude Code keeps a copy of uninstalled plugins in
+`~/.claude/plugins/cache/beebreak/`; delete it too if you want no trace left.
 
 `uninstall` stops a running companion, revokes this device on the server
 (skipped with `--keep-account`; if the server is unreachable it says so and
