@@ -773,9 +773,10 @@ def test_pending_messages_fail_when_the_chat_ends(
     server.send_error = (409, "chat_ended")
     server.sync = {"queue": None, "match": None}
 
-    wait(qtbot, lambda: rig.rec.last.ended == "ended")
+    # The end shows first; pending stays `sending` until the gap fill settles.
+    wait(qtbot, lambda: [p.status for p in rig.rec.last.pending] == ["failed"])
 
-    assert [p.status for p in rig.rec.last.pending] == ["failed"]
+    assert rig.rec.last.ended == "ended"
 
 
 # --- end, sync without the match ---

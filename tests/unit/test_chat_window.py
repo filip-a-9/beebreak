@@ -707,6 +707,23 @@ def test_quitting_from_an_ended_chat_does_not_ask(
     assert window.may_quit()
 
 
+def test_rerendering_a_hidden_window_leaves_no_stray_window(
+    window: ChatWindow, qtbot: QtBot
+) -> None:
+    before = {id(w) for w in QApplication.topLevelWidgets() if w.isVisible()}
+    window.show()
+    window.set_chat(chat_state(messages=(message_view(1),)))
+    window.hide()
+    window.set_chat(chat_state(messages=(message_view(1), message_view(2))))
+    QApplication.processEvents()
+    strays = [
+        w
+        for w in QApplication.topLevelWidgets()
+        if w.isVisible() and id(w) not in before
+    ]
+    assert strays == []
+
+
 def test_an_empty_state_hides_the_window_and_clears_everything(
     window: ChatWindow,
 ) -> None:
