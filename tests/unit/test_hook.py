@@ -63,7 +63,7 @@ def test_garbage_stdin_exits_silently(stdin: bytes, runtime: str) -> None:
 
 
 def test_oversized_stdin_exits_silently_and_quickly(runtime: str) -> None:
-    payload = PAYLOADS["UserPromptSubmit"] | {"prompt": "x" * (3 * 1024 * 1024)}
+    payload = PAYLOADS["UserPromptSubmit"] | {"prompt": "x" * (16 * 1024 * 1024 + 1)}
     proc, elapsed = _run(json.dumps(payload).encode(), runtime)
     _assert_silent_success(proc)
     assert elapsed < MAX_SECONDS

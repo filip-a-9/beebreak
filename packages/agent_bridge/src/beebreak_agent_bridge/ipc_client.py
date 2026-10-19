@@ -31,7 +31,7 @@ from beebreak_shared.presence import RemainingTimeBucket
 class LegacyStatusReply(BaseModel):
     """A version 2 StatusReply from a companion that predates the queue field."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True)
 
     kind: Literal["status"]
     version: Literal[2]
@@ -44,7 +44,7 @@ class LegacyStatusReply(BaseModel):
 class _V3StatusReply(BaseModel):
     """A version 3 StatusReply (M4 companion): `matched` is today's `chatting`."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True)
 
     kind: Literal["status"]
     version: Literal[3]

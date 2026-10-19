@@ -26,6 +26,11 @@ QueueState = Literal["none", "searching", "chatting"]
 
 LeaveResult = Literal["cancelled", "not_searching", "unavailable"]
 
+# Why the companion cannot offer a break yet, in precedence order (U10 D2).
+NotReadyReason = Literal[
+    "signed_out", "connecting", "offline", "no_nickname", "no_consent"
+]
+
 
 class EventFrame(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -41,7 +46,7 @@ class StatusRequest(BaseModel):
 
 
 class StatusReply(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True)
 
     kind: Literal["status"]
     version: Literal[4]
@@ -51,6 +56,9 @@ class StatusReply(BaseModel):
     # Remaining-time bucket of the current suggestion; None unless "suggested".
     estimate: RemainingTimeBucket | None = None
     queue: QueueState = "none"
+    # Additive and optional (U10 D3): None from a companion that predates them.
+    ready: bool | None = None
+    not_ready_reason: NotReadyReason | None = None
 
 
 class LeaveQueueRequest(BaseModel):
@@ -60,7 +68,7 @@ class LeaveQueueRequest(BaseModel):
 
 
 class LeaveQueueReply(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True)
 
     kind: Literal["leave_queue_result"]
     result: LeaveResult

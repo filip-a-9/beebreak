@@ -21,6 +21,7 @@ from beebreak_shared.ipc import (
     ActivityState,
     InvitationState,
     LeaveResult,
+    NotReadyReason,
     QueueState,
     StatusReply,
 )
@@ -35,6 +36,8 @@ class BeebreakStatus(TypedDict):
     activity: ActivityState | None
     estimate: RemainingTimeBucket | None
     queue: QueueState | None
+    ready: bool | None
+    not_ready_reason: NotReadyReason | None
 
 
 class LeaveQueueResult(TypedDict):
@@ -62,7 +65,10 @@ def build_server(
             "an invitation is showing, a coarse remaining-time bucket. "
             "queue is none, searching (looking for a break partner) or chatting "
             "(the user is in a break chat; Claude cannot see or take part in the "
-            "chat). Read-only, no side effects."
+            "chat). ready is true when the companion can offer a break; when "
+            "false, not_ready_reason says why (signed_out, connecting, offline, "
+            "no_nickname or no_consent); both are null from an older companion. "
+            "Read-only, no side effects."
         ),
     )
     def beebreak_status() -> BeebreakStatus:
@@ -75,6 +81,8 @@ def build_server(
                 "activity": None,
                 "estimate": None,
                 "queue": None,
+                "ready": None,
+                "not_ready_reason": None,
             }
         return {
             "companion": "running",
@@ -85,6 +93,10 @@ def build_server(
             "activity": reply.activity,
             "estimate": reply.estimate,
             "queue": reply.queue if isinstance(reply, StatusReply) else None,
+            "ready": reply.ready if isinstance(reply, StatusReply) else None,
+            "not_ready_reason": (
+                reply.not_ready_reason if isinstance(reply, StatusReply) else None
+            ),
         }
 
     @server.tool(

@@ -6,6 +6,7 @@ server text, re-validated against the Nickname pattern and shown as plain text.
 """
 
 from collections.abc import Iterable
+from datetime import datetime
 
 from pydantic import TypeAdapter, ValidationError
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
 from beebreak_companion import theme
 from beebreak_companion.break_state import BreakPhase, BreakState
 from beebreak_shared.api import Me, Nickname
-from beebreak_shared.ipc import InvitationState
+from beebreak_shared.ipc import InvitationState, NotReadyReason
 from beebreak_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
 
 _LABELS: dict[InvitationState, str] = {
@@ -31,6 +32,16 @@ _LABELS: dict[InvitationState, str] = {
     "idle": "Idle \N{EM DASH} will suggest a break when appropriate",
     "suggested": "Your agent is busy. Want to take a short break?",
 }
+
+# Shown instead of the idle line while the app cannot offer a break (U10 D2).
+_NOT_READY_LABELS: dict[NotReadyReason, str] = {
+    "signed_out": "Not signed in \N{EM DASH} sign in to get break suggestions",
+    "connecting": "Connecting to the server\N{HORIZONTAL ELLIPSIS}",
+    "offline": "Can't reach the server \N{EM DASH} retrying",
+    "no_nickname": "Choose a nickname to get break suggestions",
+    "no_consent": "Finish setup to get break suggestions",
+}
+NO_ACTIVITY = "No agent activity yet"
 
 # Fixed strings only (T11). under_5m never appears: it vetoes the invitation.
 _ESTIMATE_LABELS: dict[RemainingTimeBucket, str] = {
@@ -181,6 +192,9 @@ class CompanionWindow(QWidget):
         self.status_label = QLabel()
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
+        self.activity_label = QLabel()
+        self.activity_label.setObjectName("muted")
+        self.activity_label.setTextFormat(Qt.TextFormat.PlainText)
         self.estimate_label = QLabel()
         self.estimate_label.setObjectName("muted")
         self.estimate_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -249,6 +263,8 @@ class CompanionWindow(QWidget):
         self._break = BreakState()
         self._ready = False
         self._invitation: InvitationState = "idle"
+        self._not_ready: NotReadyReason | None = None
+        self._last_activity: tuple[datetime | None, datetime | None] = (None, None)
         self._remote_state = "signed_out"
         self._me: Me | None = None
         self._store_encrypted = True
@@ -267,6 +283,7 @@ class CompanionWindow(QWidget):
         card.setObjectName("card")
         card_layout = QVBoxLayout(card)
         card_layout.addWidget(self.status_label)
+        card_layout.addWidget(self.activity_label)
         card_layout.addWidget(self.estimate_label)
         card_layout.addLayout(buttons)
         card_layout.addWidget(self.break_label)
@@ -309,8 +326,8 @@ class CompanionWindow(QWidget):
     def set_state(
         self, state: InvitationState, estimate: RemainingTimeBucket | None = None
     ) -> None:
-        self.status_label.setText(_LABELS[state])
-        theme.set_state(self.status_label, _INVITATION_PILL[state])
+        self._invitation = state
+        self._render_status()
         text = (
             _ESTIMATE_LABELS.get(estimate)
             if estimate and state == "suggested"
@@ -318,7 +335,6 @@ class CompanionWindow(QWidget):
         )
         self.estimate_label.setText(text or "")
         self.estimate_label.setVisible(text is not None)
-        self._invitation = state
         offered = state == "suggested" and not self._break_active
         self.accept_button.setVisible(offered)
         self.decline_button.setVisible(offered)
@@ -333,6 +349,45 @@ class CompanionWindow(QWidget):
     def _break_active(self) -> bool:
         return self._break.phase in _ACTIVE_PHASES
 
+    def set_not_ready_reason(self, reason: NotReadyReason | None) -> None:
+        """Why no break can be offered yet; None once the app is ready."""
+        self._not_ready = reason
+        self._render_status()
+
+    def set_last_activity(self, last: datetime | None, now: datetime) -> None:
+        """Latest agent event time (None: none yet), aged against `now`."""
+        self._last_activity = (last, now)
+        self._render_status()
+
+    def _render_status(self) -> None:
+        """The status row: the invitation line, or in the idle view the
+        not-ready reason, plus the last-activity line. A pending offer or a
+        break in progress always wins over both."""
+        state = self._invitation
+        idle_view = state == "idle" and not self._break_active
+        reason = self._not_ready if idle_view else None
+        if reason is not None:
+            self.status_label.setText(_NOT_READY_LABELS[reason])
+            theme.set_state(self.status_label, "off")
+        else:
+            self.status_label.setText(_LABELS[state])
+            theme.set_state(self.status_label, _INVITATION_PILL[state])
+        self.activity_label.setText(self._activity_text())
+        self.activity_label.setVisible(idle_view)
+
+    def _activity_text(self) -> str:
+        last, now = self._last_activity
+        if last is None or now is None:
+            return NO_ACTIVITY
+        seconds = max(0, int((now - last).total_seconds()))
+        if seconds < 60:
+            age = f"{seconds} s"
+        elif seconds < 3600:
+            age = f"{seconds // 60} min"
+        else:
+            age = f"{seconds // 3600} h"
+        return f"Last agent activity: {age} ago"
+
     def set_ready(self, ready: bool) -> None:
         """Connected with nickname and consent saved: Find may be offered."""
         self._ready = ready
@@ -343,6 +398,7 @@ class CompanionWindow(QWidget):
         if self._break_active:
             self._clear_break_error()
         self._render_break()
+        self._render_status()
         offered = self._invitation == "suggested" and not self._break_active
         self.accept_button.setVisible(offered)
         self.decline_button.setVisible(offered)

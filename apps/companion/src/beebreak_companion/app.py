@@ -28,7 +28,13 @@ from beebreak_companion.window import CompanionWindow, safe_nickname, shared_lab
 from beebreak_companion.worker import IpcWorker
 from beebreak_shared.api import Me
 from beebreak_shared.events import NormalizedEvent
-from beebreak_shared.ipc import InvitationState, LeaveResult, QueueState, StatusReply
+from beebreak_shared.ipc import (
+    InvitationState,
+    LeaveResult,
+    NotReadyReason,
+    QueueState,
+    StatusReply,
+)
 from beebreak_shared.paths import UnsafeRuntimeDir, socket_path
 from beebreak_shared.presence import RemainingTimeBucket, build_presence
 
@@ -51,6 +57,8 @@ class BreakTracker:
         self._remote: RemoteWorker | None = None
         self._connected = False
         self._phase: BreakPhase = "none"
+        self._ready: bool | None = None  # unknown until wire_break runs
+        self._reason: NotReadyReason | None = None
 
     def attach(self, remote: RemoteWorker | None) -> None:
         with self._lock:
@@ -63,6 +71,15 @@ class BreakTracker:
     def set_phase(self, phase: BreakPhase) -> None:
         with self._lock:
             self._phase = phase
+
+    def set_readiness(self, reason: NotReadyReason | None) -> None:
+        with self._lock:
+            self._ready = reason is None
+            self._reason = reason
+
+    def readiness(self) -> tuple[bool | None, NotReadyReason | None]:
+        with self._lock:
+            return self._ready, self._reason
 
     def queue_state(self) -> QueueState:
         with self._lock:
@@ -83,7 +100,12 @@ class BreakTracker:
         return "not_searching"
 
 
-def initial_status(controller: Controller, queue: QueueState = "none") -> StatusReply:
+def initial_status(
+    controller: Controller,
+    queue: QueueState = "none",
+    *,
+    readiness: tuple[bool | None, NotReadyReason | None] = (None, None),
+) -> StatusReply:
     """Snapshot of the controller as a StatusReply."""
     return StatusReply(
         kind="status",
@@ -93,7 +115,26 @@ def initial_status(controller: Controller, queue: QueueState = "none") -> Status
         activity=controller.activity(datetime.now(UTC)),
         estimate=controller.estimate,
         queue=queue,
+        ready=readiness[0],
+        not_ready_reason=readiness[1],
     )
+
+
+def not_ready_reason(
+    remote_state: str, connected: bool, me: Me | None
+) -> NotReadyReason | None:
+    """Why no break can be offered, in the order the user can fix it (U10 D2)."""
+    if remote_state == "signed_out":
+        return "signed_out"
+    if remote_state in ("signing_in", "connecting"):
+        return "connecting"
+    if not connected:
+        return "offline"
+    if me is None or me.nickname is None:
+        return "no_nickname"
+    if me.consent is None:
+        return "no_consent"
+    return None
 
 
 def wire(
@@ -103,6 +144,7 @@ def wire(
     *,
     queue: Callable[[], QueueState] | None = None,
     on_accepted: Callable[[RemainingTimeBucket | None], None] | None = None,
+    readiness: Callable[[], tuple[bool | None, NotReadyReason | None]] | None = None,
 ) -> QTimer:
     """Connect the three parts; returns the started tick timer (child of window).
 
@@ -112,7 +154,14 @@ def wire(
     def apply(new: InvitationState | None) -> None:
         if new is not None:
             window.set_state(new, controller.estimate)
-        worker.set_status(initial_status(controller, queue() if queue else "none"))
+        window.set_last_activity(controller.last_event_at, datetime.now(UTC))
+        worker.set_status(
+            initial_status(
+                controller,
+                queue() if queue else "none",
+                readiness=readiness() if readiness else (None, None),
+            )
+        )
 
     def on_event(event: object) -> None:
         assert isinstance(event, NormalizedEvent)
@@ -154,11 +203,14 @@ def wire_break(
     """
     tracker.attach(remote)
     if remote is None:
+        tracker.set_readiness("signed_out")
+        window.set_not_ready_reason("signed_out")
         window.set_ready(False)
         controller.set_ready(False)
+        publish()
         return lambda _bucket: None
 
-    ready_inputs: dict[str, object] = {"connected": False, "me": None}
+    ready_inputs: dict[str, object] = {"connected": False, "me": None, "state": ""}
     phase: dict[str, BreakPhase] = {"value": "none"}
     reached = {"value": False}  # the break got past joining
 
@@ -180,11 +232,20 @@ def wire_break(
 
     def refresh() -> None:
         ready = me_ready() is not None
+        me = ready_inputs["me"]
+        reason = not_ready_reason(
+            str(ready_inputs["state"]),
+            ready_inputs["connected"] is True,
+            me if isinstance(me, Me) else None,
+        )
+        tracker.set_readiness(reason)
+        window.set_not_ready_reason(reason)
         window.set_ready(ready)
         apply(controller.set_ready(ready))
 
     def on_state(state: str) -> None:
         connected = state == "connected"
+        ready_inputs["state"] = state
         ready_inputs["connected"] = connected
         tracker.set_connected(connected)
         refresh()
@@ -452,7 +513,11 @@ def main() -> int:
         window,
         remote,
         tracker,
-        lambda: worker.set_status(initial_status(controller, tracker.queue_state())),
+        lambda: worker.set_status(
+            initial_status(
+                controller, tracker.queue_state(), readiness=tracker.readiness()
+            )
+        ),
     )
     wire(
         controller,
@@ -460,6 +525,7 @@ def main() -> int:
         worker,
         queue=tracker.queue_state,
         on_accepted=on_accepted,
+        readiness=tracker.readiness,
     )
     chat_window = ChatWindow()
     wire_chat(window, chat_window, remote, DesktopNotifier(chat_window))
