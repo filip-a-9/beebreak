@@ -121,6 +121,8 @@ class Me(_Model):
     nickname: Nickname | None
     consent: Consent | None
     consented_at: AwareDatetime | None
+    # This device's name. None from an older server (or a sign-in reply).
+    device_name: DeviceName | None = None
 
 
 class SessionResponse(_Model):
@@ -148,6 +150,10 @@ class GitHubPollResponse(_Model):
 
 class NicknameUpdate(_Model):
     nickname: Nickname
+
+
+class DeviceNameUpdate(_Model):
+    device_name: DeviceName
 
 
 class ErrorResponse(_Model):

@@ -46,6 +46,7 @@ class Calls:
     blocks: int = 0
     dismisses: int = 0
     nicknames: list[str] = field(default_factory=list)
+    renames: list[str] = field(default_factory=list)
     consents: list[Consent] = field(default_factory=list)
     sign_ins: list[tuple[str, str | None]] = field(default_factory=list)
     codes: list[str] = field(default_factory=list)
@@ -93,6 +94,9 @@ class FakeRemoteWorker(RemoteWorker):
 
     def set_nickname(self, nickname: str) -> None:
         self.calls.nicknames.append(nickname)
+
+    def set_device_name(self, device_name: str) -> None:
+        self.calls.renames.append(device_name)
 
     def set_consent(self, consent: Consent) -> None:
         self.calls.consents.append(consent)
@@ -157,6 +161,7 @@ class FakeRemoteWorker(RemoteWorker):
         self.error.emit(code)
 
     def push_break(self, state: BreakState) -> None:
+        self._break = state
         self.break_changed.emit(state)
 
     def push_chat(self, state: ChatState) -> None:

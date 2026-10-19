@@ -6,7 +6,8 @@ echoed back and never logged. Server replies reach the dialog only as the
 worker's signals and error codes, each mapped to a fixed string below.
 
 Pages: 0 email + invite code, 1 code, 2 nickname (only if none yet),
-3 privacy choices, 4 done, 5 method choice and 6 GitHub (only when the server
+3 privacy choices (in Settings it also shows the nickname and this device's
+name, editable), 4 done, 5 method choice and 6 GitHub (only when the server
 offers GitHub sign-in; the dialog starts on page 0 and moves on when the
 server's methods arrive). Cancel after the code was verified leaves the user
 signed in with setup incomplete; the account row offers "Finish setup".
@@ -35,6 +36,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from beebreak_companion.break_state import BreakState
+from beebreak_companion.chat_state import ChatState
 from beebreak_companion.config import wsl_distro_name
 from beebreak_companion.privacy_preview import (
     PrivacyPreviewDialog,
@@ -74,6 +77,8 @@ DEVICE_NAME_LABEL = (
 )
 NICKNAME_INTRO = "Choose a nickname. Letters, digits, _ and -, 3 to 24 characters."
 NICKNAME_LABEL = "Nickname"
+PROFILE_DEVICE_LABEL = "Name of this device"
+PROFILE_LOCKED = "Names cannot change during a break search or a chat."
 PRIVACY_INTRO = (
     "Choose what may be shared with other people on a break. Each choice is "
     f'separate and off until you turn it on. Pressing "{FIND}" is your yes to '
@@ -232,6 +237,14 @@ class OnboardingDialog(QDialog):
         self._busy = False
         self._dead = False  # signed out under us
         self.preview: PrivacyPreviewDialog | None = None
+        # Settings only: the names can be edited next to the privacy choices.
+        self._edit_profile = me is not None and me.nickname is not None
+        self._base_nickname = me.nickname if me is not None else None
+        self._base_device = (
+            me.device_name if me is not None else None
+        ) or default_device_name(wsl_distro_name())
+        self._steps: list[Callable[[], None]] = []
+        self._locked = False
 
         # page 0
         self.email_edit = QLineEdit()
@@ -242,7 +255,6 @@ class OnboardingDialog(QDialog):
         # page 1
         self.code_edit = QLineEdit()
         self.code_edit.setMaxLength(9)
-        # The server has no rename route, so the name is fixed once signed in.
         self.device_name_edit = QLineEdit(default_device_name(wsl_distro_name()))
         self.device_name_edit.setMaxLength(40)
         self.code_error = _error_label()
@@ -283,6 +295,11 @@ class OnboardingDialog(QDialog):
             self.tag_items[tag] = item
         self._sync_tag_limit()
         self.privacy_error = _error_label()
+        self.profile_nickname_edit = QLineEdit(self._base_nickname or "")
+        self.profile_nickname_edit.setMaxLength(24)
+        self.profile_device_edit = QLineEdit(self._base_device)
+        self.profile_device_edit.setMaxLength(40)
+        self.profile_locked_label = _label(PROFILE_LOCKED)
         self.done_label = _label(DONE_TEXT)
 
         self._errors = {
@@ -323,6 +340,7 @@ class OnboardingDialog(QDialog):
         )
         self.stack.addWidget(
             _page(
+                *self._profile_widgets(),
                 _label(PRIVACY_INTRO),
                 self.category_box,
                 self.stack_box,
@@ -385,6 +403,9 @@ class OnboardingDialog(QDialog):
         self.github_open_button.clicked.connect(self.open_verification)
         self.github_show_sent_button.clicked.connect(self.show_preview)
         self.nickname_edit.textChanged.connect(self._refresh)
+        self.profile_nickname_edit.textChanged.connect(self._refresh)
+        self.profile_device_edit.textChanged.connect(self._refresh)
+        self.profile_device_edit.textChanged.connect(self._device_name_changed)
         for box in (self.category_box, self.stack_box, self.time_box):
             box.toggled.connect(self._consent_toggled)
         self.stack_box.toggled.connect(self._sync_tag_list)
@@ -400,6 +421,9 @@ class OnboardingDialog(QDialog):
         worker.error.connect(self._on_error)
         worker.methods_changed.connect(self._on_methods)
         worker.github_started.connect(self._on_github_started)
+        worker.break_changed.connect(self._on_activity)
+        worker.chat_changed.connect(self._on_activity)
+        self._sync_lock()
 
         if me is None:
             self._go(PAGE_EMAIL)
@@ -408,6 +432,19 @@ class OnboardingDialog(QDialog):
             self._load_consent(me.consent)
             self._go(PAGE_NICKNAME if me.nickname is None else PAGE_PRIVACY)
         self._sync_tag_list()
+
+    def _profile_widgets(self) -> list[QWidget]:
+        if not self._edit_profile:
+            return []
+        self.profile_locked_label.setVisible(False)
+        return [
+            _label(NICKNAME_INTRO),
+            self.profile_nickname_edit,
+            _label(PROFILE_DEVICE_LABEL),
+            _label(DEVICE_NAME_LABEL),
+            self.profile_device_edit,
+            self.profile_locked_label,
+        ]
 
     # --- state ---
 
@@ -494,6 +531,10 @@ class OnboardingDialog(QDialog):
             return self.github_start is None and valid_device_name(
                 self.github_device_name_edit.text()
             )
+        if page == PAGE_PRIVACY and self._edit_profile and not self._locked:
+            return valid_nickname(self.profile_nickname_edit.text()) and (
+                valid_device_name(self.profile_device_edit.text())
+            )
         return page != PAGE_METHOD  # there the two buttons decide
 
     def _refresh(self) -> None:
@@ -554,7 +595,19 @@ class OnboardingDialog(QDialog):
             # Tags are local: saved whatever the server answers.
             if self._save_tags is not None:
                 self._save_tags(self.selected_tags())
-            self.worker.set_consent(self.consent())  # even with every box off
+            # Changed names go first, one request at a time; the consent last
+            # (even with every box off). Each reply starts the next step.
+            self._steps = []
+            nickname = self.profile_nickname_edit.text()
+            device = self.profile_device_edit.text().strip()
+            if self._edit_profile and not self._locked:
+                if nickname != self._base_nickname:
+                    self._steps.append(lambda: self.worker.set_nickname(nickname))
+                if device != self._base_device:
+                    self._steps.append(lambda: self.worker.set_device_name(device))
+            consent = self.consent()
+            self._steps.append(lambda: self.worker.set_consent(consent))
+            self._steps.pop(0)()
         self._refresh()
 
     @Slot()
@@ -598,16 +651,18 @@ class OnboardingDialog(QDialog):
             self._open_url(started.verification_uri)
 
     def _device_name(self) -> str:
-        edit = (
-            self.github_device_name_edit
-            if self.page == PAGE_GITHUB
-            else self.device_name_edit
-        )
+        if self.page == PAGE_GITHUB:
+            edit = self.github_device_name_edit
+        elif self._edit_profile:
+            edit = self.profile_device_edit
+        else:
+            edit = self.device_name_edit
         return edit.text().strip()
 
     @Slot()
     def _device_name_changed(self) -> None:
-        if self.preview is not None and not self._verified:
+        # In Settings the name is sent when saved, so the preview follows it.
+        if self.preview is not None and (not self._verified or self._edit_profile):
             self.preview.set_device_name(self._device_name())
 
     @Slot()
@@ -646,6 +701,8 @@ class OnboardingDialog(QDialog):
             (self.worker.state_changed, self._on_state),
             (self.worker.me_changed, self._on_me),
             (self.worker.error, self._on_error),
+            (self.worker.break_changed, self._on_activity),
+            (self.worker.chat_changed, self._on_activity),
         ):
             with contextlib.suppress(RuntimeError, TypeError):
                 signal.disconnect(slot)
@@ -664,6 +721,22 @@ class OnboardingDialog(QDialog):
     @Slot(str)
     def _on_state(self, state: str) -> None:
         self._state = state
+
+    @Slot(object)
+    def _on_activity(self, _state: object = None) -> None:
+        self._sync_lock()
+        self._refresh()
+
+    def _sync_lock(self) -> None:
+        """Names are fixed while searching or in a live chat."""
+        brk: BreakState = self.worker.break_state
+        chat: ChatState = self.worker.chat_state
+        self._locked = brk.phase in ("joining", "searching", "matched") or (
+            chat.match_id is not None and chat.ended is None
+        )
+        for edit in (self.profile_nickname_edit, self.profile_device_edit):
+            edit.setEnabled(not self._locked)
+        self.profile_locked_label.setVisible(self._locked and self._edit_profile)
 
     @Slot(object)
     def _on_methods(self, methods: object) -> None:
@@ -713,9 +786,14 @@ class OnboardingDialog(QDialog):
         elif page == PAGE_NICKNAME and self._busy and me.nickname is not None:
             self._busy = False
             self._go(PAGE_PRIVACY)
-        elif page == PAGE_PRIVACY and self._busy and me.consent is not None:
-            self._busy = False
-            self._go(PAGE_DONE)
+        elif page == PAGE_PRIVACY and self._busy:
+            self._base_nickname = me.nickname
+            self._base_device = me.device_name or self._base_device
+            if self._steps:
+                self._steps.pop(0)()
+            elif me.consent is not None:
+                self._busy = False
+                self._go(PAGE_DONE)
 
     @Slot(str)
     def _on_error(self, code: str) -> None:
@@ -744,5 +822,6 @@ class OnboardingDialog(QDialog):
             return
         self._begin_pending = False
         self._busy = False
+        self._steps = []
         self._show_error(page, code)
         self._refresh()

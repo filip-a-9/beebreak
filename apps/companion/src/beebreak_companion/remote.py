@@ -187,6 +187,15 @@ class RemoteWorker(QObject):
     def set_nickname(self, nickname: str) -> None:
         self._submit(self._update_me(lambda api, tok: api.set_nickname(tok, nickname)))
 
+    def set_device_name(self, device_name: str) -> None:
+        """Rename this device; the reply is the refreshed Me."""
+
+        async def rename(api: ApiClient, token: str) -> Me:
+            await api.set_device_name(token, device_name)
+            return await api.me(token)
+
+        self._submit(self._update_me(rename))
+
     def set_consent(self, consent: Consent) -> None:
         self._submit(self._update_me(lambda api, tok: api.set_consent(tok, consent)))
 
@@ -214,6 +223,11 @@ class RemoteWorker(QObject):
     def dismiss_break(self) -> None:
         """Clear a finished result ("nobody available", "ended")."""
         self._submit(self._dismiss_break())
+
+    @property
+    def break_state(self) -> BreakState:
+        """The last BreakState emitted on `break_changed`."""
+        return self._break
 
     # --- chat (M5-05) ---
 
@@ -837,7 +851,7 @@ class RemoteWorker(QObject):
                 failures = 0
                 if reply.session is not None:
                     self._github_task = None
-                    await self._complete_sign_in(reply.session)
+                    await self._complete_sign_in(reply.session, device_name)
                     return
                 assert reply.interval_s is not None
                 interval = float(reply.interval_s)
@@ -866,9 +880,11 @@ class RemoteWorker(QObject):
                 self._set_state("signed_out")
             raise
         self._challenge_id = None
-        await self._complete_sign_in(session)
+        await self._complete_sign_in(session, device_name)
 
-    async def _complete_sign_in(self, session: SessionResponse) -> None:
+    async def _complete_sign_in(
+        self, session: SessionResponse, device_name: str
+    ) -> None:
         """Keep the new login: adopt, persist, tell the UI, connect."""
         self._adopt(session.tokens)
         try:
@@ -882,7 +898,8 @@ class RemoteWorker(QObject):
             self._emit_error("credentials_not_saved")
             return
         self._signed_in = True
-        self._emit_me(session.me)
+        # The sign-in reply has no device name; this device chose it just now.
+        self._emit_me(session.me.model_copy(update={"device_name": device_name}))
         self._begin_connection(fetch_me=False)
 
     async def _revoke_unsaved(self, tokens: TokenPair) -> None:

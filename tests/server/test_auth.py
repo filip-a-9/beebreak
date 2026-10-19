@@ -82,7 +82,12 @@ def test_invite_flow_creates_user_redeems_invite_and_tokens_work(
     verified = verify(client, challenge_id, code)
     assert verified.status_code == 200
     body = verified.json()
-    assert body["me"] == {"nickname": None, "consent": None, "consented_at": None}
+    assert body["me"] == {
+        "nickname": None,
+        "consent": None,
+        "consented_at": None,
+        "device_name": None,  # the sign-in reply leaves it out
+    }
     assert body["tokens"]["access_token"].startswith("bra_")
     assert body["tokens"]["refresh_token"].startswith("brr_")
 
