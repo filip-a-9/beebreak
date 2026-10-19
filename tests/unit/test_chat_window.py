@@ -321,8 +321,12 @@ def test_no_banner_before_the_grace_period(window: ChatWindow) -> None:
     assert not window.banner.isVisibleTo(window)
 
 
-def test_the_grace_banner_offers_to_extend(window: ChatWindow, qtbot: QtBot) -> None:
+def test_the_grace_banner_offers_to_extend(
+    window: ChatWindow, qtbot: QtBot, clock: Clock
+) -> None:
     window.set_chat(_grace_state())
+    clock.t += 1
+    window.tick()
     assert _numbers(window.banner_label) == ["2", "10"]
     assert _banner_buttons(window) == {"extend"}
     with qtbot.waitSignal(window.extend_requested, timeout=1000):
@@ -354,8 +358,10 @@ def test_banner_without_extensions_left(window: ChatWindow) -> None:
     assert window.banner.isVisibleTo(window)
 
 
-def test_banner_when_i_asked(window: ChatWindow, qtbot: QtBot) -> None:
+def test_banner_when_i_asked(window: ChatWindow, qtbot: QtBot, clock: Clock) -> None:
     window.set_chat(_grace_state(extension="requested_by_me"))
+    clock.t += 1
+    window.tick()
     assert "bob" in window.banner_label.text()
     assert _banner_buttons(window) == {"cancel"}
     with qtbot.waitSignal(window.extension_answered, timeout=1000) as blocker:
@@ -364,15 +370,20 @@ def test_banner_when_i_asked(window: ChatWindow, qtbot: QtBot) -> None:
 
 
 def test_banner_when_the_peer_asked_shows_at_any_time(
-    window: ChatWindow, qtbot: QtBot
+    window: ChatWindow, qtbot: QtBot, clock: Clock
 ) -> None:
     window.set_chat(_grace_state(extension="requested_by_peer", left_s=800))
+    clock.t += 1
+    window.tick()
     assert "bob" in window.banner_label.text()
     assert _numbers(window.banner_label) == ["10"]
     assert _banner_buttons(window) == {"yes", "no"}
     with qtbot.waitSignal(window.extension_answered, timeout=1000) as yes:
         window.yes_button.click()
     assert yes.args == [True]
+    window.set_chat(_grace_state(extension="requested_by_peer", left_s=800))
+    clock.t += 1
+    window.tick()
     with qtbot.waitSignal(window.extension_answered, timeout=1000) as no:
         window.no_button.click()
     assert no.args == [False]
@@ -665,6 +676,35 @@ def test_the_close_event_of_a_live_chat_is_ignored(
     event = QCloseEvent()
     window.closeEvent(event)  # nothing else is visible: let the app quit
     assert event.isAccepted()
+
+
+def test_quitting_from_a_live_chat_asks_first(
+    window: ChatWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[bool] = []
+    answer = {"value": False}
+
+    def confirm(parent: object) -> bool:
+        asked.append(True)
+        return answer["value"]
+
+    monkeypatch.setattr("beebreak_companion.chat_window.confirm_leave", confirm)
+    window.set_chat(chat_state())
+    assert not window.may_quit()
+    answer["value"] = True
+    assert window.may_quit()
+    assert len(asked) == 2
+
+
+def test_quitting_from_an_ended_chat_does_not_ask(
+    window: ChatWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def confirm(parent: object) -> bool:
+        raise AssertionError("asked")
+
+    monkeypatch.setattr("beebreak_companion.chat_window.confirm_leave", confirm)
+    window.set_chat(chat_state(ended="ended"))
+    assert window.may_quit()
 
 
 def test_an_empty_state_hides_the_window_and_clears_everything(
@@ -988,3 +1028,223 @@ def test_the_reporter_sees_that_the_peer_was_reported_and_blocked(
     assert window.reported_label.isVisibleTo(window)
     assert window.reported_label.text() != ""
     assert "bob_b" not in window.reported_label.text()  # fixed string only
+
+
+# --- extension guards, live banner time, accepted-extension line (R2-A) ---
+
+
+def _same_match(
+    match_id: object, *, left_s: int = 100, extensions_left: int = 2, **kw: object
+) -> ChatState:
+    return chat_state(
+        match_id=match_id,  # type: ignore[arg-type]
+        status=chat_status(
+            match_id,  # type: ignore[arg-type]
+            T0 + timedelta(seconds=left_s),
+            extensions_left=extensions_left,
+            **kw,  # type: ignore[arg-type]
+        ),
+    )
+
+
+def _counting(window: ChatWindow) -> dict[str, int]:
+    counts = {"extend": 0, "answer": 0}
+
+    def on_extend() -> None:
+        counts["extend"] += 1
+
+    def on_answer(_accepted: bool) -> None:
+        counts["answer"] += 1
+
+    window.extend_requested.connect(on_extend)
+    window.extension_answered.connect(on_answer)
+    return counts
+
+
+def _wait_out_guard(window: ChatWindow, clock: Clock) -> None:
+    clock.t += 1
+    window.tick()
+
+
+def test_a_second_click_on_extend_before_the_status_sends_nothing(
+    window: ChatWindow, clock: Clock
+) -> None:
+    window.set_chat(_grace_state())
+    _wait_out_guard(window, clock)
+    counts = _counting(window)
+    window.extend_button.click()
+    window.extend_button.click()
+    assert counts == {"extend": 1, "answer": 0}
+
+
+def test_extend_works_again_once_the_next_status_has_arrived(
+    window: ChatWindow, clock: Clock
+) -> None:
+    mid = uuid4()
+    window.set_chat(_same_match(mid))
+    _wait_out_guard(window, clock)
+    counts = _counting(window)
+    window.extend_button.click()
+    window.set_chat(_same_match(mid, extension="requested_by_me"))
+    window.set_chat(_same_match(mid))  # declined: Extend is back
+    _wait_out_guard(window, clock)
+    window.extend_button.click()
+    assert counts["extend"] == 2
+
+
+def test_the_buttons_come_back_after_the_in_flight_timeout(
+    window: ChatWindow, clock: Clock
+) -> None:
+    window.set_chat(_grace_state())
+    _wait_out_guard(window, clock)
+    counts = _counting(window)
+    window.extend_button.click()
+    assert not window.extend_button.isEnabled()
+    clock.t += 3600
+    window.tick()
+    window.extend_button.click()
+    assert counts["extend"] == 2
+
+
+def test_a_second_answer_before_the_status_sends_nothing(
+    window: ChatWindow, clock: Clock
+) -> None:
+    window.set_chat(_grace_state(extension="requested_by_peer"))
+    _wait_out_guard(window, clock)
+    counts = _counting(window)
+    window.yes_button.click()
+    window.yes_button.click()
+    window.no_button.click()
+    assert counts == {"extend": 0, "answer": 1}
+
+
+def test_cancelling_twice_sends_one_answer(window: ChatWindow, clock: Clock) -> None:
+    window.set_chat(_grace_state(extension="requested_by_me"))
+    _wait_out_guard(window, clock)
+    counts = _counting(window)
+    window.cancel_extension_button.click()
+    window.cancel_extension_button.click()
+    assert counts["answer"] == 1
+
+
+def test_a_click_just_after_the_banner_swaps_sends_nothing(
+    window: ChatWindow, clock: Clock
+) -> None:
+    mid = uuid4()
+    window.set_chat(_same_match(mid))
+    counts = _counting(window)
+    window.set_chat(_same_match(mid, extension="requested_by_peer"))
+    window.yes_button.click()
+    window.no_button.click()
+    assert counts["answer"] == 0
+    _wait_out_guard(window, clock)
+    window.no_button.click()
+    assert counts["answer"] == 1
+
+
+def test_the_banner_time_agrees_with_the_chip_as_time_passes(
+    window: ChatWindow, clock: Clock
+) -> None:
+    window.set_chat(_grace_state(left_s=119))
+    for step in (0, 20, 30, 20, 40, 5):
+        clock.t += step
+        window.tick()
+        assert window.banner_label.text().startswith(window.time_label.text())
+
+
+def _accepted(window: ChatWindow, *, left_after: int) -> list[str]:
+    mid = uuid4()
+    window.set_chat(_same_match(mid, left_s=100, extensions_left=2))
+    before = len(_texts(window))
+    window.set_chat(
+        _same_match(mid, left_s=100 + 600, extensions_left=left_after, extension_s=600)
+    )
+    assert len(_texts(window)) == before + 1
+    return _texts(window)
+
+
+def test_an_accepted_extension_leaves_a_line_with_the_minutes_and_what_remains(
+    window: ChatWindow,
+) -> None:
+    line = _accepted(window, left_after=1)[-1]
+    assert re.findall(r"\d+", line) == ["10", "1"]
+
+
+def test_the_last_extension_says_no_more_are_left(
+    window: ChatWindow, clock: Clock, qtbot: QtBot
+) -> None:
+    last = _accepted(window, left_after=0)[-1]
+    assert re.findall(r"\d+", last) == ["10"]
+    other = ChatWindow(clock=clock, now=lambda: T0)
+    qtbot.addWidget(other)
+    assert last != _accepted(other, left_after=1)[-1]
+
+
+def test_no_extension_line_for_an_ordinary_status_update(window: ChatWindow) -> None:
+    mid = uuid4()
+    window.set_chat(_same_match(mid))
+    before = len(_texts(window))
+    window.set_chat(_same_match(mid, extension="requested_by_peer"))
+    window.set_chat(_same_match(mid, peer_online=False))
+    assert len(_texts(window)) == before
+
+
+@pytest.mark.parametrize("reason", ["ended", "expired", "disconnected"])
+def test_the_ended_line_uses_the_main_windows_wording(
+    window: ChatWindow, reason: ChatEnd
+) -> None:
+    from beebreak_companion.window import BREAK_ENDED
+
+    window.set_chat(chat_state(ended=reason))
+    assert window.ended_label.text().startswith(BREAK_ENDED)
+
+
+def test_extend_reappearing_after_a_decline_ignores_a_click_for_a_moment(
+    window: ChatWindow, clock: Clock
+) -> None:
+    mid = uuid4()
+    window.set_chat(_same_match(mid, extension="requested_by_peer"))
+    _wait_out_guard(window, clock)
+    counts = _counting(window)
+    window.no_button.click()
+    window.set_chat(_same_match(mid))  # decline processed: Extend appears
+    clock.t += 0.1
+    window.tick()
+    window.extend_button.click()
+    assert counts["extend"] == 0
+    _wait_out_guard(window, clock)
+    window.extend_button.click()
+    assert counts["extend"] == 1
+
+
+def test_extend_replacing_a_cancelled_peer_request_ignores_a_click(
+    window: ChatWindow, clock: Clock
+) -> None:
+    mid = uuid4()
+    window.set_chat(_same_match(mid, extension="requested_by_peer"))
+    _wait_out_guard(window, clock)
+    counts = _counting(window)
+    window.set_chat(_same_match(mid))  # the peer cancelled just before my click
+    window.extend_button.click()
+    assert counts["extend"] == 0
+
+
+def test_a_resync_with_the_same_deadline_adds_no_extension_line(
+    window: ChatWindow,
+) -> None:
+    mid = uuid4()
+    window.set_chat(_same_match(mid, left_s=700, extensions_left=1))
+    before = len(_texts(window))
+    window.set_chat(_same_match(mid, left_s=700, extensions_left=1))
+    assert len(_texts(window)) == before
+
+
+def test_a_real_extension_after_a_resync_still_adds_its_line(
+    window: ChatWindow,
+) -> None:
+    mid = uuid4()
+    window.set_chat(_same_match(mid, left_s=100, extensions_left=2))
+    window.set_chat(_same_match(mid, left_s=100, extensions_left=2))  # resync
+    before = len(_texts(window))
+    window.set_chat(_same_match(mid, left_s=700, extensions_left=1))
+    assert len(_texts(window)) == before + 1

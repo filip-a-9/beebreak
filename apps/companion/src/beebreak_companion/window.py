@@ -6,11 +6,13 @@ server text, re-validated against the Nickname pattern and shown as plain text.
 """
 
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import UTC, datetime
 
 from pydantic import TypeAdapter, ValidationError
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QResizeEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -23,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from beebreak_companion import theme
 from beebreak_companion.break_state import BreakPhase, BreakState
+from beebreak_companion.config import TriggerConfig, queue_wait_s
 from beebreak_shared.api import Me, Nickname
 from beebreak_shared.ipc import InvitationState, NotReadyReason
 from beebreak_shared.presence import RemainingTimeBucket, StackTag, TaskCategory
@@ -42,6 +45,11 @@ _NOT_READY_LABELS: dict[NotReadyReason, str] = {
     "no_consent": "Finish setup to get break suggestions",
 }
 NO_ACTIVITY = "No agent activity yet"
+AGENT_BUSY = "Agent is working now"
+OFFER_EXPIRED = "The break offer expired."
+EXTENSION_DECLINED = "Your extension request was declined."
+LEAVE_TITLE = "Leave the break and quit?"
+LEAVE_TEXT = "A search or chat is active. Closing the last window quits Beebreak."
 
 # Fixed strings only (T11). under_5m never appears: it vetoes the invitation.
 _ESTIMATE_LABELS: dict[RemainingTimeBucket, str] = {
@@ -152,9 +160,44 @@ CONNECTED_AS = "Connected as"
 UNKNOWN_NICKNAME = "?"
 SERVER_REFUSED = "Server address not allowed"
 UNENCRYPTED_NOTE = (
-    "No system keyring: your sign-in is kept unencrypted in a file only you can read."
+    "Your sign-in is stored unencrypted, in a file only you can read. To encrypt "
+    "it, install a Secret Service keyring (such as gnome-keyring) and sign in again."
 )
 _NICKNAME = TypeAdapter(Nickname)
+
+
+def _span(seconds: int) -> str:
+    """`90 s`, or whole minutes (`2 min`) when it divides evenly."""
+    if seconds >= 60 and seconds % 60 == 0:
+        return f"{seconds // 60} min"
+    return f"{seconds} s"
+
+
+def offer_rule(config: TriggerConfig) -> str:
+    """The idle line's rule: when an offer appears and how long it stays."""
+    return (
+        f"A break is offered after {_span(config.activity_threshold_s)} of agent "
+        f"work and stays for {_span(config.suggestion_timeout_s)}."
+    )
+
+
+def _reserve(widget: QWidget) -> None:
+    """Keep the widget's space when hidden, so nothing below it shifts (O2)."""
+    policy = widget.sizePolicy()
+    policy.setRetainSizeWhenHidden(True)
+    widget.setSizePolicy(policy)
+
+
+def confirm_leave(parent: QWidget) -> bool:
+    """Ask before the last window closes during a search or chat (D2)."""
+    answer = QMessageBox.question(
+        parent,
+        LEAVE_TITLE,
+        LEAVE_TEXT,
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )
+    return answer == QMessageBox.StandardButton.Yes
 
 
 def safe_nickname(raw: object) -> str:
@@ -178,8 +221,9 @@ class CompanionWindow(QWidget):
     dismiss_requested = Signal()
     open_chat_requested = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, trigger: TriggerConfig | None = None) -> None:
         super().__init__()
+        self._rule = offer_rule(trigger or TriggerConfig())
         self.setWindowTitle("Beebreak")
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.resize(320, 220)
@@ -192,12 +236,26 @@ class CompanionWindow(QWidget):
         self.status_label = QLabel()
         self.status_label.setTextFormat(Qt.TextFormat.PlainText)
         self.status_label.setWordWrap(True)
+        # Two lines are always reserved: the idle line and the offer line wrap
+        # differently, and the buttons below must not move between them (O2).
+        self.status_label.setMinimumHeight(2 * self.status_label.fontMetrics().height())
         self.activity_label = QLabel()
         self.activity_label.setObjectName("muted")
         self.activity_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.rule_label = QLabel(self._rule)
+        self.rule_label.setObjectName("muted")
+        self.rule_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.rule_label.setWordWrap(True)
         self.estimate_label = QLabel()
         self.estimate_label.setObjectName("muted")
         self.estimate_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.expired_label = QLabel(OFFER_EXPIRED)
+        self.expired_label.setObjectName("muted")
+        self.expired_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.extension_label = QLabel(EXTENSION_DECLINED)
+        self.extension_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.extension_label.setWordWrap(True)
+        self.extension_label.setVisible(False)
         self.accept_button = QPushButton("Accept")
         self.decline_button = QPushButton("Decline")
         # Consent must be a deliberate click: a keypress meant for the terminal
@@ -256,6 +314,16 @@ class CompanionWindow(QWidget):
             self.block_button,
             self.ok_button,
         )
+        # The offer area keeps its size whether or not an offer shows (O2).
+        for offer_widget in (
+            self.activity_label,
+            self.rule_label,
+            self.estimate_label,
+            self.expired_label,
+            self.accept_button,
+            self.decline_button,
+        ):
+            _reserve(offer_widget)
         self._unread = 0
         self._chat_held = False
         for button in self._break_buttons:
@@ -265,6 +333,7 @@ class CompanionWindow(QWidget):
         self._invitation: InvitationState = "idle"
         self._not_ready: NotReadyReason | None = None
         self._last_activity: tuple[datetime | None, datetime | None] = (None, None)
+        self._agent_active = False
         self._remote_state = "signed_out"
         self._me: Me | None = None
         self._store_encrypted = True
@@ -284,10 +353,13 @@ class CompanionWindow(QWidget):
         card_layout = QVBoxLayout(card)
         card_layout.addWidget(self.status_label)
         card_layout.addWidget(self.activity_label)
+        card_layout.addWidget(self.rule_label)
         card_layout.addWidget(self.estimate_label)
+        card_layout.addWidget(self.expired_label)
         card_layout.addLayout(buttons)
         card_layout.addWidget(self.break_label)
         card_layout.addWidget(self.shared_label)
+        card_layout.addWidget(self.extension_label)
         card_layout.addWidget(self.break_error_label)
         break_buttons = QHBoxLayout()
         for button in self._break_buttons:
@@ -324,9 +396,16 @@ class CompanionWindow(QWidget):
         self._render_account()
 
     def set_state(
-        self, state: InvitationState, estimate: RemainingTimeBucket | None = None
+        self,
+        state: InvitationState,
+        estimate: RemainingTimeBucket | None = None,
+        *,
+        expired: bool = False,
     ) -> None:
+        """`expired`: the offer ended by timing out; the notice lasts until the
+        next state (the controller knows why an offer ended, the window not)."""
         self._invitation = state
+        self.expired_label.setVisible(expired and state == "idle")
         self._render_status()
         text = (
             _ESTIMATE_LABELS.get(estimate)
@@ -354,9 +433,13 @@ class CompanionWindow(QWidget):
         self._not_ready = reason
         self._render_status()
 
-    def set_last_activity(self, last: datetime | None, now: datetime) -> None:
-        """Latest agent event time (None: none yet), aged against `now`."""
+    def set_last_activity(
+        self, last: datetime | None, now: datetime, *, active: bool = False
+    ) -> None:
+        """Latest agent event time (None: none yet), aged against `now`.
+        `active`: the agent is working right now."""
         self._last_activity = (last, now)
+        self._agent_active = active
         self._render_status()
 
     def _render_status(self) -> None:
@@ -377,8 +460,11 @@ class CompanionWindow(QWidget):
         self.status_label.setVisible(idle_view or state != "idle")
         self.activity_label.setText(self._activity_text())
         self.activity_label.setVisible(idle_view)
+        self.rule_label.setVisible(idle_view)
 
     def _activity_text(self) -> str:
+        if self._agent_active:
+            return AGENT_BUSY
         last, now = self._last_activity
         if last is None or now is None:
             return NO_ACTIVITY
@@ -400,6 +486,7 @@ class CompanionWindow(QWidget):
         self._break = state
         if self._break_active:
             self._clear_break_error()
+            self.expired_label.setVisible(False)
         self._render_break()
         self._render_status()
         offered = self._invitation == "suggested" and not self._break_active
@@ -424,6 +511,10 @@ class CompanionWindow(QWidget):
         self.break_error_label.setText("")
         self.break_error_label.setVisible(False)
 
+    def set_extension_declined(self, declined: bool) -> None:
+        """Cue for a declined extension request while the chat window is hidden."""
+        self.extension_label.setVisible(declined)
+
     def set_chat_held(self, held: bool) -> None:
         """The worker holds an ended chat nobody has closed yet: its window
         (and a late report) stays reachable through Open chat."""
@@ -435,12 +526,23 @@ class CompanionWindow(QWidget):
         self._unread = max(0, count)
         self._render_break()
 
+    def _wait_text(self) -> str:
+        """How long a search waits: the server's real expiry once queued, the
+        configured wait while the join is still going out."""
+        entry = self._break.entry
+        if self._break.phase == "searching" and entry is not None:
+            left = (entry.expires_at - datetime.now(UTC)).total_seconds()
+            seconds = max(0, round(left))
+        else:
+            seconds = round(queue_wait_s())
+        return f"up to {_span(seconds)}"
+
     def _render_break(self) -> None:
         phase = self._break.phase
         text = ""
         shared = ""
         if phase in ("joining", "searching"):
-            text = SEARCHING
+            text = f"{SEARCHING} ({self._wait_text()})"
         elif phase == "matched":
             match = self._break.match
             peer = safe_nickname(match.peer_nickname if match else None)
@@ -458,13 +560,15 @@ class CompanionWindow(QWidget):
         self.break_label.setVisible(bool(text))
         self.shared_label.setText(shared)
         self.shared_label.setVisible(bool(shared))
-        find = self._ready and phase in ("none", "nobody_available")
+        find = self._ready and phase in ("none", "nobody_available", "ended")
         self.find_button.setVisible(find)
         self.cancel_button.setVisible(phase in ("joining", "searching"))
         self.open_chat_button.setText(
             f"{OPEN_CHAT} ({self._unread})" if self._unread else OPEN_CHAT
         )
-        self.open_chat_button.setVisible(phase == "matched" or self._chat_held)
+        # A reported or blocked chat is not offered again (U3).
+        held = self._chat_held and not self._break.blocked
+        self.open_chat_button.setVisible(phase == "matched" or held)
         # End and Block live in the chat window while chatting (M5-06). After
         # the peer ended it, Block is still offered while the match is known,
         # unless this user already blocked or reported them (X4).
@@ -475,6 +579,46 @@ class CompanionWindow(QWidget):
         )
         self.block_button.setVisible(can_block)
         self.ok_button.setVisible(phase in ("nobody_available", "ended"))
+
+    def _fit_to_content(self) -> None:
+        """L1: never smaller than the content, including wrapped text, whose
+        height depends on the width. Qt's own minimum ignores that."""
+        layout = self.layout()
+        if layout is None:
+            return
+        width = max(self.width(), layout.minimumSize().width())
+        wanted = QSize(layout.minimumSize().width(), layout.totalHeightForWidth(width))
+        if wanted != self.minimumSize():
+            self.setMinimumSize(wanted)
+
+    def event(self, event: QEvent) -> bool:
+        handled = super().event(event)
+        if event.type() == QEvent.Type.LayoutRequest:
+            self._fit_to_content()
+        return handled
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._fit_to_content()
+
+    def may_close(self) -> bool:
+        """Closing the last visible window quits (Qt's default); during a search
+        or chat, ask first (D2)."""
+        others = any(
+            w is not self
+            and w.isVisible()
+            and w.windowType() == Qt.WindowType.Window  # not dialogs or popups
+            for w in QApplication.topLevelWidgets()
+        )
+        return not self._break_active or others or confirm_leave(self)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        # Only the user's own close (title bar, Alt+F4) asks. A close made by
+        # code, such as a test teardown or a shutdown, must never block.
+        if event.spontaneous() and not self.may_close():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def _on_block_clicked(self) -> None:
         answer = QMessageBox.question(

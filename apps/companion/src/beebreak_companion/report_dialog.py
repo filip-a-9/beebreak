@@ -35,6 +35,8 @@ NOTE_PLACEHOLDER = "Optional note"
 MESSAGES_HEADING = "Messages to include (none are included unless you tick them):"
 YOU = "You"
 MAX_TICKED = MAX_REPORT_SEQS  # derived: cannot drift from the contract
+REASON_HINT = "Pick a reason to enable Report and block."
+NO_MESSAGES = "There are no messages in this chat to include."
 TOO_MANY = f"Tick at most {MAX_TICKED} messages."
 
 
@@ -73,6 +75,9 @@ class ReportDialog(QDialog):
             self.reason_buttons[reason] = button
             layout.addWidget(button)
 
+        self.reason_hint_label = QLabel(REASON_HINT)
+        self.reason_hint_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.reason_hint_label.setWordWrap(True)
         self.note_edit = QPlainTextEdit()
         self.note_edit.setPlaceholderText(NOTE_PLACEHOLDER)
         self.note_edit.setFixedHeight(70)
@@ -101,7 +106,13 @@ class ReportDialog(QDialog):
             )
             item.setCheckState(Qt.CheckState.Unchecked)
             self.message_list.addItem(item)
+        self.no_messages_label = QLabel(NO_MESSAGES)
+        self.no_messages_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.no_messages_label.setWordWrap(True)
+        self.no_messages_label.setVisible(not messages)
+        self.message_list.setVisible(bool(messages))
         layout.addWidget(self.message_list)
+        layout.addWidget(self.no_messages_label)
         layout.addWidget(self.limit_label)
         self.message_list.itemChanged.connect(self._refresh)
 
@@ -109,6 +120,7 @@ class ReportDialog(QDialog):
         self.cancel_button = QPushButton(CANCEL)
         self.report_button.clicked.connect(self._on_report)
         self.cancel_button.clicked.connect(self.reject)
+        layout.addWidget(self.reason_hint_label)
         layout.addWidget(self.report_button)
         layout.addWidget(self.cancel_button)
         self._refresh()
@@ -132,6 +144,7 @@ class ReportDialog(QDialog):
         self.note_counter.setText(f"{count} / {MAX_NOTE_CHARS}")
         too_many = len(self._ticked()) > MAX_TICKED
         self.limit_label.setVisible(too_many)
+        self.reason_hint_label.setVisible(self._reason() is None)
         self.report_button.setEnabled(
             self._reason() is not None and count <= MAX_NOTE_CHARS and not too_many
         )

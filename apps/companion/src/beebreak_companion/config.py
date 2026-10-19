@@ -17,6 +17,9 @@ GC_INTERVAL_ENV = "BEEBREAK_GC_INTERVAL_S"
 NOTIFY_INTERVAL_ENV = "BEEBREAK_NOTIFY_INTERVAL_S"
 STOP_WAIT_ENV = "BEEBREAK_STOP_WAIT_S"
 CONNECT_TIMEOUT_ENV = "BEEBREAK_CONNECT_TIMEOUT_S"
+EXTENSION_INFLIGHT_ENV = "BEEBREAK_EXTENSION_INFLIGHT_S"
+EXTENSION_SWAP_GUARD_ENV = "BEEBREAK_EXTENSION_SWAP_GUARD_S"
+QUEUE_WAIT_ENV = "BEEBREAK_QUEUE_WAIT_S"
 THEME_ENV = "BEEBREAK_THEME"
 # Set by WSL to the user-chosen distro name; used to tell devices apart.
 WSL_DISTRO_ENV = "WSL_DISTRO_NAME"
@@ -70,6 +73,18 @@ def notify_interval_s() -> float:
     return _positive_seconds(NOTIFY_INTERVAL_ENV, 10.0)
 
 
+def extension_inflight_s() -> float:
+    """Seconds the extension buttons stay disabled after a click while the
+    next chat status is awaited; then they re-enable."""
+    return _positive_seconds(EXTENSION_INFLIGHT_ENV, 5.0)
+
+
+def extension_swap_guard_s() -> float:
+    """Seconds a newly swapped-in Yes/No/Cancel pair ignores clicks, so a
+    click aimed at the old button cannot land on the new one."""
+    return _positive_seconds(EXTENSION_SWAP_GUARD_ENV, 0.5)
+
+
 def theme_setting() -> str:
     """`auto`, `light` or `dark`; anything else means `auto`."""
     value = os.environ.get(THEME_ENV, "auto").strip().lower()
@@ -89,6 +104,12 @@ def stop_wait_s() -> float:
 def connect_timeout_s() -> float:
     """Seconds uninstall waits when connecting to the companion's socket."""
     return _positive_seconds(CONNECT_TIMEOUT_ENV, 1.0)
+
+
+def queue_wait_s() -> float:
+    """Seconds a search waits for a partner, as shown to the user. Mirrors the
+    server's BEEBREAK_QUEUE_TTL_S (90 s by default); set it if yours differs."""
+    return _positive_seconds(QUEUE_WAIT_ENV, 90.0)
 
 
 def _positive(name: str, default: int) -> int:
