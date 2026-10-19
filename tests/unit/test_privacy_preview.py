@@ -162,3 +162,32 @@ def test_the_example_box_shows_the_whole_json_without_scrolling(
     needed = edit.document().size().height()
     assert edit.viewport().height() >= needed
     assert edit.minimumHeight() >= needed  # also holds on smaller layouts
+
+
+def test_the_whole_example_and_never_shared_list_fit_at_the_default_size(
+    qtbot: QtBot,
+) -> None:
+    dialog = PrivacyPreviewDialog(_consent((True, True, True)))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    edit = dialog.example_edit
+    # Nothing to scroll in the JSON box, and the last line is inside it.
+    assert edit.verticalScrollBar().maximum() == 0
+    last = edit.document().lastBlock()
+    rect = edit.document().documentLayout().blockBoundingRect(last)
+    assert rect.bottom() <= edit.viewport().height()
+    # Every label sits fully inside the dialog (none squeezed out of view).
+    for label in (dialog.never_label, dialog.never_list_label):
+        assert label.height() >= label.sizeHint().height()
+        assert label.geometry().bottom() <= dialog.height()
+    assert dialog.height() >= dialog.minimumSizeHint().height()
+
+
+def test_the_note_does_not_mention_tick_boxes(qtbot: QtBot) -> None:
+    dialog = PrivacyPreviewDialog(_consent((True, True, True)))
+    qtbot.addWidget(dialog)
+    shown = " ".join(
+        label.text() for label in (dialog.note_label, dialog.sent_only_label)
+    ).lower()
+    assert "tick" not in shown

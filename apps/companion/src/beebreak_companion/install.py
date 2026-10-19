@@ -111,7 +111,7 @@ def install(
     Raises EndpointRefused or CaFileRefused (nothing is written)."""
     url = validate_server_url(server_url)
     record: dict[str, object] = {"version": _RECORD_VERSION, "server_url": url}
-    done = ["saved server URL"]
+    done = [f"saved server URL {url}"]
     if ca_file is not None:
         record["ca_file"] = validate_ca_file(ca_file)
         done.append("saved CA file path")
