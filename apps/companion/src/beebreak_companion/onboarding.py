@@ -35,10 +35,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from beebreak_companion.privacy_preview import PrivacyPreviewDialog
-from beebreak_companion.remote import DEFAULT_DEVICE_NAME, RemoteWorker
+from beebreak_companion.config import wsl_distro_name
+from beebreak_companion.privacy_preview import (
+    PrivacyPreviewDialog,
+    default_device_name,
+)
+from beebreak_companion.remote import RemoteWorker
 from beebreak_companion.state_store import MAX_STACK_TAGS, normalize_tags
-from beebreak_companion.window import TAG_LABELS
+from beebreak_companion.window import FIND, TAG_LABELS
 from beebreak_shared.api import (
     AuthMethods,
     Consent,
@@ -72,8 +76,8 @@ NICKNAME_INTRO = "Choose a nickname. Letters, digits, _ and -, 3 to 24 character
 NICKNAME_LABEL = "Nickname"
 PRIVACY_INTRO = (
     "Choose what may be shared with other people on a break. Each choice is "
-    "separate and off until you turn it on. Breaks you accept are a separate "
-    "decision."
+    f'separate and off until you turn it on. Pressing "{FIND}" is your yes to '
+    "a break: you are matched with the next person who is free."
 )
 CATEGORY_LABEL = "Share the kind of task (for example backend)"
 STACK_LABEL = "Share stack tags (for example python)"
@@ -239,14 +243,14 @@ class OnboardingDialog(QDialog):
         self.code_edit = QLineEdit()
         self.code_edit.setMaxLength(9)
         # The server has no rename route, so the name is fixed once signed in.
-        self.device_name_edit = QLineEdit(DEFAULT_DEVICE_NAME)
+        self.device_name_edit = QLineEdit(default_device_name(wsl_distro_name()))
         self.device_name_edit.setMaxLength(40)
         self.code_error = _error_label()
         # page 5: method choice
         self.github_choice_button = QPushButton(GITHUB_BUTTON)
         self.email_choice_button = QPushButton(EMAIL_BUTTON)
         # page 6: GitHub
-        self.github_device_name_edit = QLineEdit(DEFAULT_DEVICE_NAME)
+        self.github_device_name_edit = QLineEdit(default_device_name(wsl_distro_name()))
         self.github_device_name_edit.setMaxLength(40)
         self.github_show_sent_button = QPushButton(SHOW_SENT_LABEL)
         self.github_code_intro = _label(GITHUB_CODE_INTRO)

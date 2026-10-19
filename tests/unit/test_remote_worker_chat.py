@@ -325,6 +325,31 @@ def test_a_status_frame_updates_the_status_and_an_offset_alone_does_not_emit(
     assert len(rig.rec.states) == emitted  # nothing else changed: no emission
 
 
+def test_a_declined_extension_frame_reaches_the_chat_state(
+    qtbot: QtBot, make_rig: Callable[..., Rig]
+) -> None:
+    rig = make_rig()
+    open_chat(qtbot, rig)
+    status = chat_json(MATCH_ID, _now() + timedelta(minutes=15))
+    status["extension"] = "requested_by_me"
+    rig.server.push(frame("chat.status", status=status, change="extension_requested"))
+    wait(
+        qtbot,
+        lambda: (
+            rig.rec.last.status is not None
+            and rig.rec.last.status.extension == "requested_by_me"
+        ),
+    )
+    status["extension"] = "none"
+
+    rig.server.push(frame("chat.status", status=status, change="extension_declined"))
+    wait(qtbot, lambda: rig.rec.last.extension_declined)
+
+    status["peer_online"] = False
+    rig.server.push(frame("chat.status", status=status, change="peer_offline"))
+    wait(qtbot, lambda: not rig.rec.last.extension_declined)
+
+
 # --- gap fill ---
 
 

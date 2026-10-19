@@ -83,6 +83,7 @@ FAILED_SENDING = PendingMessage(CID, "hi", "failed")
 NEW_STATUS = chat_status(
     MATCH_ID, ENDS + timedelta(minutes=10), extension="requested_by_peer"
 )
+MINE_PENDING = chat_status(MATCH_ID, ENDS, extension="requested_by_me")
 
 # --- table: (name, state, event, expected) over every event ---
 
@@ -242,6 +243,24 @@ TABLE: list[tuple[str, ChatState, ChatEvent, ChatState]] = [
         live(),
         StatusEvent(chat_status(OTHER_ID, ENDS)),
         live(),
+    ),
+    (
+        "status_declined_is_carried_for_the_requester",
+        live(status=MINE_PENDING),
+        StatusEvent(NEW_STATUS, "extension_declined"),
+        live(status=NEW_STATUS, extension_declined=True),
+    ),
+    (
+        "status_declined_is_not_shown_to_the_decliner",
+        live(status=NEW_STATUS),  # the peer's request was pending
+        StatusEvent(chat_status(MATCH_ID, ENDS), "extension_declined"),
+        live(status=chat_status(MATCH_ID, ENDS)),
+    ),
+    (
+        "status_next_change_clears_declined",
+        live(extension_declined=True),
+        StatusEvent(NEW_STATUS, "peer_offline"),
+        live(status=NEW_STATUS),
     ),
     ("status_after_the_end_ignored", ended(), StatusEvent(NEW_STATUS), ended()),
     (

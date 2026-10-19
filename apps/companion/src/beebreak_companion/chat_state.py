@@ -11,6 +11,7 @@ from typing import Literal
 from uuid import UUID
 
 from beebreak_shared.api import (
+    ChatChange,
     ChatStatus,
     MatchEndReason,
     MatchView,
@@ -42,6 +43,9 @@ class ChatState:
     ended: ChatEnd | None = None  # None while live
     server_offset_s: float = 0.0  # server_time - local time
     reported: bool = False
+    # The last status frame said the peer declined my extension request; the
+    # next status frame clears it.
+    extension_declined: bool = False
 
 
 # --- events ---
@@ -72,6 +76,7 @@ class StatusEvent:
     """From an extension reply or a `chat.status` frame."""
 
     status: ChatStatus
+    change: ChatChange | None = None
 
 
 @dataclass(frozen=True)
@@ -172,10 +177,19 @@ def reduce(state: ChatState, event: ChatEvent, now: datetime) -> ChatState:
             if frame.match_id != state.match_id:
                 return state
             return _merge(state, (frame.message,))
-        case StatusEvent(status=status):
+        case StatusEvent(status=status, change=change):
             if status.match_id != state.match_id or state.ended is not None:
                 return state
-            return replace(state, status=status)
+            # The server sends the decline to both sides; only the one whose
+            # request it was is told "said no".
+            mine = (
+                state.status is not None and state.status.extension == "requested_by_me"
+            )
+            return replace(
+                state,
+                status=status,
+                extension_declined=change == "extension_declined" and mine,
+            )
         case Sending(client_message_id=cid, body=body):
             return _sending(state, cid, body)
         case SendFailed(client_message_id=cid):

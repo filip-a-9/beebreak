@@ -50,13 +50,14 @@ from beebreak_agent_bridge.session_key import derive_key
 from beebreak_companion import cli
 from beebreak_companion.api_client import ApiClient
 from beebreak_companion.break_state import BreakState
+from beebreak_companion.config import WSL_DISTRO_ENV, wsl_distro_name
 from beebreak_companion.controller import Controller
 from beebreak_companion.credentials import (
     FileCredentialStore,
     StoredCredentials,
     default_credential_store,
 )
-from beebreak_companion.privacy_preview import DEFAULT_DEVICE_NAME
+from beebreak_companion.privacy_preview import default_device_name
 from beebreak_companion.realtime_client import RealtimeClient, RealtimeError
 from beebreak_companion.remote import RemoteWorker
 from beebreak_companion.remote_config import RemoteConfig
@@ -767,6 +768,7 @@ def test_chat_and_report_requests_carry_only_chat_fields(
 
 CORPUS = load_corpus()
 LOCAL_HOSTNAME = socket.gethostname()
+DISTRO_NAME = "Test-Distro"  # user-chosen, so allowed to leave
 EDITED_DEVICE_NAME = "Work laptop 2"
 PLANTED_DEVICE = CORPUS.values[0]  # replaced below by a short enough value
 for _v in CORPUS.bases:
@@ -845,10 +847,12 @@ class Scenario:
 
 
 def step_sign_in(s: Scenario) -> None:
-    """Default device name for one worker, an edited one for the other (M6-06)."""
+    """Default device name for one worker, an edited one for the other (M6-06).
+    The default is the distro-based one (U06) when WSL_DISTRO_NAME is set."""
+    default_name = default_device_name(wsl_distro_name())
     sign_in_worker(
         s.qtbot, s.server, s.a, s.rec_a, ADMIN_EMAIL_A, "ada_l", ALL_CONSENT,
-        DEFAULT_DEVICE_NAME,
+        default_name,
     )  # fmt: skip
     sign_in_worker(
         s.qtbot, s.server, s.b, s.rec_b, ADMIN_EMAIL_B, "bobby", ALL_CONSENT,
@@ -856,7 +860,8 @@ def step_sign_in(s: Scenario) -> None:
     )  # fmt: skip
     with s.server.session_factory() as session:
         names = set(session.scalars(select(Device.name)))
-    assert names == {DEFAULT_DEVICE_NAME, s.plan.device_name_b}
+    # Worker A's default is checked by literal in the corpus test (DISTRO_NAME).
+    assert len(names) == 2 and s.plan.device_name_b in names
 
 
 def step_match(s: Scenario) -> None:
@@ -1042,7 +1047,7 @@ def step_uninstall(s: Scenario) -> None:
             revoked = session.scalars(
                 select(Device).where(Device.revoked_at.is_not(None))
             ).all()
-        assert [d.name for d in revoked] == [DEFAULT_DEVICE_NAME]  # worker A's
+        assert len(revoked) == 1 and revoked[0].name != s.plan.device_name_b
     finally:
         mp.undo()
         shutil.rmtree(root, ignore_errors=True)
@@ -1127,7 +1132,9 @@ def test_corpus_never_leaves_through_any_channel(
     caplog: pytest.LogCaptureFixture,
     capfd: pytest.CaptureFixture[str],
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv(WSL_DISTRO_ENV, DISTRO_NAME)
     caplog.set_level(logging.DEBUG)
     server = server_factory(match_sweep_interval_s=0.05)
     proxy = RecordingProxy(server.port, capture)
@@ -1137,6 +1144,9 @@ def test_corpus_never_leaves_through_any_channel(
         )
     finally:
         proxy.close()
+    with server.session_factory() as session:
+        stored = set(session.scalars(select(Device.name)))
+    assert any(DISTRO_NAME in name for name in stored)  # the distro default went out
     assert CORPUS.version == 2  # the corpus version this run used
 
     # Sanity: the scan looked at real traffic, state and exports.

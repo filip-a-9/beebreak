@@ -6,6 +6,8 @@ the fixed list of content that never leaves. Nothing here touches the network:
 this module imports neither `httpx` nor `websockets` (M3 rule 13).
 """
 
+import re
+import socket
 from collections.abc import Sequence
 
 from PySide6.QtCore import Qt
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from beebreak_companion.config import wsl_distro_name
 from beebreak_shared.api import Consent
 from beebreak_shared.presence import StackTag, build_presence
 
@@ -32,6 +35,24 @@ SENT_ONLY_NOTE = (
 )
 EXAMPLE_TAG: StackTag = "python"
 DEFAULT_DEVICE_NAME = "WSL device"
+_DEVICE_NAME_MAX = 40
+_NOT_ALLOWED = re.compile(r"[^A-Za-z0-9 ._-]+")
+
+
+def default_device_name(distro: str = "") -> str:
+    """ "WSL device" plus the user-chosen WSL distro name, so two devices differ.
+
+    `distro` comes from `config.wsl_distro_name()`. Falls back to the plain
+    default when it is empty, has nothing usable, or equals or contains the
+    machine hostname (which is only compared here, never sent: M6-C11).
+    Always a valid DeviceName."""
+    cleaned = _NOT_ALLOWED.sub("", distro).strip()
+    host = socket.gethostname().strip().lower()
+    if not cleaned or (host and host in cleaned.lower()):
+        return DEFAULT_DEVICE_NAME
+    return f"{DEFAULT_DEVICE_NAME} {cleaned}"[:_DEVICE_NAME_MAX].rstrip()
+
+
 SIGN_IN_HEADING = "Sent when you sign in"
 NEVER_SHARED_HEADING = "Never shared"
 # ARCHITECTURE §4 "Protected local content".
@@ -73,7 +94,7 @@ def sign_in_items(
     name_item = (
         ALREADY_SENT_ITEM
         if already_sent
-        else f"Device name: {device_name or DEFAULT_DEVICE_NAME}"
+        else f"Device name: {device_name or default_device_name(wsl_distro_name())}"
     )
     return ("Email", "Nickname", name_item)
 
@@ -102,6 +123,7 @@ class PrivacyPreviewDialog(QDialog):
         self.sent_only_label = _plain(SENT_ONLY_NOTE)
         self.example_edit = QPlainTextEdit()
         self.example_edit.setReadOnly(True)
+        self.resize(480, 400)
         self.signin_label = _plain(SIGN_IN_HEADING)
         self.signin_list_label = _plain("")
         self.set_device_name(device_name, already_sent=already_sent)
@@ -133,6 +155,12 @@ class PrivacyPreviewDialog(QDialog):
         if tags is not None:
             self._tags = tuple(tags)
         self.example_edit.setPlainText(example_json(consent, self._tags))
+        # Tall enough for the whole example JSON, whatever the font (it was
+        # clipped).
+        edit = self.example_edit
+        lines = edit.document().blockCount()
+        margins = 2 * (edit.frameWidth() + int(edit.document().documentMargin()))
+        edit.setMinimumHeight(lines * edit.fontMetrics().lineSpacing() + margins)
 
     def set_device_name(
         self, device_name: str | None, *, already_sent: bool = False

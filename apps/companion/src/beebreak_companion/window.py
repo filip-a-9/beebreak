@@ -372,6 +372,9 @@ class CompanionWindow(QWidget):
         else:
             self.status_label.setText(_LABELS[state])
             theme.set_state(self.status_label, _INVITATION_PILL[state])
+        # The idle line says nothing useful while a break runs (U09); the
+        # break label below shows the phase.
+        self.status_label.setVisible(idle_view or state != "idle")
         self.activity_label.setText(self._activity_text())
         self.activity_label.setVisible(idle_view)
 

@@ -307,20 +307,29 @@ def wire_chat(
     *,
     clock: Callable[[], float] = time.monotonic,
     is_active: Callable[[], bool] | None = None,
+    in_view: Callable[[], bool] | None = None,
+    main_window_active: Callable[[], bool] | None = None,
 ) -> None:
     """Connect the chat window: state in, intents out, unread count, notices.
 
-    The window never opens by itself: the user opens it with the main window's
-    Open chat button or by clicking the notification. A new peer
-    message while the window is not active raises one notification per chat per
-    `notify_interval_s()` that names the nickname only (rule 16).
+    The window opens on a match only if the main window is active at that
+    moment (the user is looking at it, so nothing is stolen from the editor).
+    Otherwise the user opens it with the main window's Open chat button or by
+    clicking the notification. A chat already there at startup never opens it.
+    A window that is shown counts as read (the badge); a new peer message while
+    it is not focused raises one notification per chat per `notify_interval_s()`
+    that names the nickname only (rule 12: no user content in logs).
     """
     if remote is None:
         return
 
-    active = is_active or (
+    # Two jobs (U13): a shown window counts as read, so the badge clears even if
+    # the platform never activates it; only a focused one suppresses the notice.
+    viewed = in_view or chat_window.isVisible
+    focused = is_active or (
         lambda: chat_window.isVisible() and chat_window.isActiveWindow()
     )
+    main_active = main_window_active or window.isActiveWindow
     seen: dict[str, object] = {"match": None, "notified": None}
     # Highest peer seq counted, and highest peer seq the user has had in view.
     known = {"seq": 0, "read": 0}
@@ -347,12 +356,13 @@ def wire_chat(
         seen["notified"] = now
         notifier.notify(NOTIFY_TITLE, f"New message from {safe_nickname(nickname)}")
 
-    def on_chat(state: object) -> None:
+    def on_chat(state: object, *, may_open: bool = True) -> None:
         if not isinstance(state, ChatState):
             return
         chat_window.set_chat(state)
         window.set_chat_held(state.match_id is not None and state.ended is not None)
-        if state.match_id != seen["match"]:
+        new_match = state.match_id != seen["match"]
+        if new_match:
             seen["match"] = state.match_id
             seen["notified"] = None
             known.update(seq=0, read=0)
@@ -363,12 +373,16 @@ def wire_chat(
         if state.match_id is None:
             show_unread()
             return
-        # A match never opens the window (it takes focus on WSLg, F6): the
-        # notification and the Open chat button are the way in.
-        if active():
-            known["read"] = known["seq"]
-        elif fresh:
-            notify(state.peer_nickname)
+        # A match opens the window only while the main window is active; else it
+        # would take focus from the editor on WSLg (F6) and the notification and
+        # the Open chat button are the way in.
+        if may_open and new_match and state.ended is None and main_active():
+            open_chat()
+        else:
+            if viewed():
+                known["read"] = known["seq"]
+            if fresh and not focused():
+                notify(state.peer_nickname)
         show_unread()
 
     def on_break(state: object) -> None:
@@ -386,7 +400,7 @@ def wire_chat(
         chat_window.set_connected(state == "connected")
 
     window.open_chat_requested.connect(open_chat)
-    remote.chat_changed.connect(on_chat)
+    remote.chat_changed.connect(lambda state: on_chat(state))
     remote.error.connect(chat_window.show_error)
     remote.break_changed.connect(on_break)
     remote.state_changed.connect(on_state)
@@ -400,7 +414,7 @@ def wire_chat(
     chat_window.report_requested.connect(remote.report_peer)
     chat_window.close_requested.connect(remote.close_chat)
     on_state(remote.state)
-    on_chat(remote.chat_state)
+    on_chat(remote.chat_state, may_open=False)
 
 
 def wire_remote(

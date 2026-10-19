@@ -149,3 +149,16 @@ def test_dialog_follows_tag_changes(qtbot: QtBot) -> None:
     assert json.loads(dialog.example_edit.toPlainText())["stack_tags"] == ["rust"]
     dialog.set_consent(consent)  # keeps the last tags
     assert json.loads(dialog.example_edit.toPlainText())["stack_tags"] == ["rust"]
+
+
+def test_the_example_box_shows_the_whole_json_without_scrolling(
+    qtbot: QtBot,
+) -> None:
+    dialog = PrivacyPreviewDialog(_consent((True, True, True)))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    edit = dialog.example_edit
+    needed = edit.document().size().height()
+    assert edit.viewport().height() >= needed
+    assert edit.minimumHeight() >= needed  # also holds on smaller layouts

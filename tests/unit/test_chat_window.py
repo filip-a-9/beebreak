@@ -1,11 +1,12 @@
 """ChatWindow (M5-06): hand-built ChatStates, a fake clock, offscreen Qt."""
 
 import re
+from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
@@ -375,6 +376,72 @@ def test_banner_when_the_peer_asked_shows_at_any_time(
     with qtbot.waitSignal(window.extension_answered, timeout=1000) as no:
         window.no_button.click()
     assert no.args == [False]
+
+
+def _centre_in_banner(window: ChatWindow, button: QPushButton) -> QPoint:
+    return button.mapTo(window.banner, button.rect().center())
+
+
+def test_no_is_not_where_extend_was(window: ChatWindow, qtbot: QtBot) -> None:
+    window.set_chat(_grace_state())
+    window.show()
+    qtbot.waitUntil(lambda: window.extend_button.isVisible(), timeout=1000)
+    extend_at = _centre_in_banner(window, window.extend_button)
+    window.set_chat(_grace_state(extension="requested_by_peer"))
+    qtbot.waitUntil(lambda: window.no_button.isVisible(), timeout=1000)
+    no_rect = window.no_button.geometry()
+    yes_rect = window.yes_button.geometry()
+    assert not no_rect.contains(extend_at)
+    assert yes_rect.contains(extend_at)
+
+
+def test_the_requester_is_told_when_the_peer_says_no(
+    window: ChatWindow, clock: Clock
+) -> None:
+    base = _grace_state(left_s=600)
+    window.set_chat(base)
+    assert not window.banner.isVisibleTo(window)
+    window.set_chat(replace(base, extension_declined=True))
+    assert window.banner.isVisibleTo(window)
+    assert "bob" in window.banner_label.text()
+    assert _banner_buttons(window) == set()
+    clock.t += 30
+    window.tick()
+    assert not window.banner.isVisibleTo(window)
+
+
+def test_a_decline_that_arrived_while_hidden_is_seen_once_shown(
+    window: ChatWindow, clock: Clock
+) -> None:
+    base = _grace_state(left_s=600)
+    window.set_chat(base)
+    window.hide()
+    window.set_chat(replace(base, extension_declined=True))
+    clock.t += 30  # longer than the notice lasts, but nobody was looking
+    window.show()
+    assert window.banner.isVisibleTo(window)
+    assert "bob" in window.banner_label.text()
+    clock.t += 30
+    window.tick()
+    assert not window.banner.isVisibleTo(window)
+
+
+def test_no_hint_while_my_own_request_is_pending(window: ChatWindow) -> None:
+    window.set_chat(_grace_state(left_s=600, extension="requested_by_me"))
+    assert not window.time_hint_label.isVisibleTo(window)
+
+
+def test_the_time_chip_explains_when_extending_is_possible(
+    window: ChatWindow,
+) -> None:
+    window.set_chat(_grace_state(left_s=600, grace_s=120))
+    assert window.time_label.toolTip() != ""
+    assert window.time_hint_label.isVisibleTo(window)
+    assert _numbers(window.time_hint_label) == ["2"]
+    window.set_chat(_grace_state(left_s=100, grace_s=120))  # already in the window
+    assert not window.time_hint_label.isVisibleTo(window)
+    window.set_chat(_grace_state(left_s=600, extensions_left=0))
+    assert not window.time_hint_label.isVisibleTo(window)
 
 
 def test_a_pending_request_shows_even_without_extensions_left(
@@ -910,3 +977,14 @@ def test_the_context_menu_copy_gives_the_stored_body(
     actions = {a.objectName(): a for a in label.build_context_menu().actions()}
     actions["copy"].trigger()
     assert QApplication.clipboard().text() == URL
+
+
+def test_the_reporter_sees_that_the_peer_was_reported_and_blocked(
+    window: ChatWindow,
+) -> None:
+    window.set_chat(chat_state(peer_nickname="bob_b"))
+    assert not window.reported_label.isVisibleTo(window)
+    window.set_chat(chat_state(peer_nickname="bob_b", reported=True))
+    assert window.reported_label.isVisibleTo(window)
+    assert window.reported_label.text() != ""
+    assert "bob_b" not in window.reported_label.text()  # fixed string only

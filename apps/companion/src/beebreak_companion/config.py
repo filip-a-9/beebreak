@@ -18,8 +18,15 @@ NOTIFY_INTERVAL_ENV = "BEEBREAK_NOTIFY_INTERVAL_S"
 STOP_WAIT_ENV = "BEEBREAK_STOP_WAIT_S"
 CONNECT_TIMEOUT_ENV = "BEEBREAK_CONNECT_TIMEOUT_S"
 THEME_ENV = "BEEBREAK_THEME"
+# Set by WSL to the user-chosen distro name; used to tell devices apart.
+WSL_DISTRO_ENV = "WSL_DISTRO_NAME"
 THEME_PROBE_TIMEOUT_ENV = "BEEBREAK_THEME_PROBE_TIMEOUT_S"
 THEME_SETTINGS = ("auto", "light", "dark")
+
+
+def wsl_distro_name() -> str:
+    """The WSL distro name, or "" when unset (read at call time)."""
+    return os.environ.get(WSL_DISTRO_ENV, "").strip()
 
 
 def _positive_seconds(name: str, default: float) -> float:

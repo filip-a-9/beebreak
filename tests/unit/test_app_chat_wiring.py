@@ -42,6 +42,7 @@ class Rig:
     tray: FakeTray
     now: list[float] = field(default_factory=lambda: [100.0])
     active: list[bool] = field(default_factory=lambda: [False])
+    main_active: list[bool] = field(default_factory=lambda: [False])
 
     def sent(self) -> list[tuple[str, str]]:
         return self.tray.messages
@@ -66,6 +67,8 @@ def rig(qtbot: QtBot) -> Rig:
         notifier,
         clock=lambda: r.now[0],
         is_active=lambda: r.active[0],
+        in_view=lambda: r.active[0] or r.chat.isVisible(),
+        main_window_active=lambda: r.main_active[0],
     )
     return r
 
@@ -90,6 +93,52 @@ def test_a_new_match_does_not_open_the_window(rig: Rig) -> None:
     assert rig.window.open_chat_button.isVisibleTo(rig.window)
     rig.window.open_chat_button.click()
     assert rig.chat.isVisible()
+
+
+def test_a_match_opens_the_chat_window_when_the_main_window_is_active(
+    rig: Rig,
+) -> None:
+    rig.main_active[0] = True
+    rig.window.show()
+    rig.remote.push_break(BreakState(phase="matched", match=_match()))
+    rig.remote.push_chat(chat_state())
+    assert rig.chat.isVisible()
+    assert _unread(rig) == []
+
+
+def test_an_ended_chat_does_not_open_the_window(rig: Rig) -> None:
+    rig.main_active[0] = True
+    rig.remote.push_chat(chat_state(ended="ended"))
+    assert not rig.chat.isVisible()
+
+
+def test_a_chat_already_there_at_startup_does_not_open_the_window(
+    qtbot: QtBot,
+) -> None:
+    window = CompanionWindow()
+    chat = ChatWindow(now=lambda: T0)
+    qtbot.addWidget(window)
+    qtbot.addWidget(chat)
+    remote = FakeRemoteWorker()
+    remote.push_chat(chat_state())
+    tray = FakeTray()
+    notifier = DesktopNotifier(
+        chat, tray_available=lambda: True, tray_factory=lambda: tray
+    )
+    wire_chat(window, chat, remote, notifier, main_window_active=lambda: True)
+    assert not chat.isVisible()
+    remote.push_chat(chat_state())  # a later, different match does open it
+    assert chat.isVisible()
+
+
+def test_a_match_does_not_reopen_a_window_the_user_hid(rig: Rig) -> None:
+    rig.main_active[0] = True
+    match_id = uuid4()
+    rig.remote.push_chat(chat_state(match_id=match_id))
+    assert rig.chat.isVisible()
+    rig.chat.hide()
+    rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1),)))
+    assert not rig.chat.isVisible()
 
 
 def test_the_window_the_user_opens_is_not_reopened_by_later_updates(
@@ -312,6 +361,7 @@ def test_unread_resets_when_the_window_is_opened(rig: Rig) -> None:
     assert _unread(rig) == ["1"]
     rig.window.open_chat_button.click()
     assert _unread(rig) == []
+    rig.chat.hide()
     # Only messages after that count again.
     rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1), _peer(2))))
     assert _unread(rig) == ["1"]
@@ -505,3 +555,83 @@ def test_an_ended_chat_stays_reachable_from_the_main_window(rig: Rig) -> None:
     rig.chat.close_button.click()
     rig.remote.push_chat(ChatState())  # the worker forgot it
     assert not rig.window.open_chat_button.isVisibleTo(rig.window)
+
+
+# --- U13: a shown chat window clears the badge even if never "active" ---
+
+
+@pytest.fixture
+def real_activity_rig(qtbot: QtBot) -> Rig:
+    """Wired without an injected is_active, as in the real app."""
+    window = CompanionWindow()
+    chat = ChatWindow(now=lambda: T0)
+    qtbot.addWidget(window)
+    qtbot.addWidget(chat)
+    remote = FakeRemoteWorker()
+    tray = FakeTray()
+    r = Rig(window, chat, remote, tray)
+    notifier = DesktopNotifier(
+        chat, tray_available=lambda: True, tray_factory=lambda: tray
+    )
+    wire_chat(
+        window,
+        chat,
+        remote,
+        notifier,
+        clock=lambda: r.now[0],
+        is_active=lambda: r.active[0],  # focus; "in view" is the real isVisible
+        main_window_active=lambda: r.main_active[0],
+    )
+    return r
+
+
+def test_showing_the_chat_window_clears_the_unread_badge(
+    real_activity_rig: Rig,
+) -> None:
+    rig = real_activity_rig
+    rig.window.show()
+    rig.remote.push_break(BreakState(phase="matched", match=_match()))
+    rig.remote.push_chat(chat_state(messages=(_peer(1), _peer(2))))
+    assert _unread(rig) == ["2"]
+    rig.chat.show()  # shown without being activated (WSLg may never activate it)
+    assert _unread(rig) == []
+
+
+def test_messages_in_a_shown_unfocused_window_are_read_but_still_notify(
+    real_activity_rig: Rig,
+) -> None:
+    rig = real_activity_rig
+    match_id = uuid4()
+    rig.window.show()
+    rig.remote.push_break(BreakState(phase="matched", match=_match()))
+    rig.remote.push_chat(chat_state(match_id=match_id))
+    rig.chat.show()
+    rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1),)))
+    assert _unread(rig) == []
+    assert len(rig.sent()) == 1
+
+
+def test_messages_in_a_focused_window_neither_badge_nor_notify(
+    real_activity_rig: Rig,
+) -> None:
+    rig = real_activity_rig
+    rig.active[0] = True
+    match_id = uuid4()
+    rig.remote.push_chat(chat_state(match_id=match_id))
+    rig.chat.show()
+    rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1),)))
+    assert _unread(rig) == []
+    assert rig.sent() == []
+
+
+def test_a_hidden_window_still_counts_unread(real_activity_rig: Rig) -> None:
+    rig = real_activity_rig
+    match_id = uuid4()
+    rig.window.show()
+    rig.remote.push_break(BreakState(phase="matched", match=_match()))
+    rig.remote.push_chat(chat_state(match_id=match_id))
+    rig.chat.show()
+    rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1),)))
+    rig.chat.hide()
+    rig.remote.push_chat(chat_state(match_id=match_id, messages=(_peer(1), _peer(2))))
+    assert _unread(rig) == ["1"]

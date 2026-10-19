@@ -169,6 +169,37 @@ def test_blocking_ends_the_match_for_both(
     wait(qtbot, phase_is(ada, "ended"))
 
 
+def test_after_a_block_both_searching_again_end_in_nobody_available(
+    qtbot: QtBot,
+    server_factory: Callable[..., LiveServer],
+    make_client: Callable[..., Client],
+) -> None:
+    """U18: blocked pairs never match, and the search still ends at the TTL."""
+    server = server_factory(queue_ttl_s=3, **FAST)
+    ada, bob = make_client(server, "a"), make_client(server, "b")
+    sign_in(qtbot, server, ada, "ada@example.com", "ada_l")
+    sign_in(qtbot, server, bob, "bob@example.com", "bobby")
+    ada.worker.join_queue(PRESENCE)
+    bob.worker.join_queue(PRESENCE)
+    wait(qtbot, phase_is(ada, "matched"))
+    wait(qtbot, phase_is(bob, "matched"))
+    bob.worker.block_peer()
+    wait(qtbot, phase_is(bob, "ended"))
+    wait(qtbot, phase_is(ada, "ended"))
+    ada.worker.dismiss_break()
+    bob.worker.dismiss_break()
+    wait(qtbot, phase_is(ada, "none"))
+    wait(qtbot, phase_is(bob, "none"))
+
+    ada.worker.join_queue(PRESENCE)
+    bob.worker.join_queue(PRESENCE)
+
+    wait(qtbot, phase_is(ada, "nobody_available"))
+    wait(qtbot, phase_is(bob, "nobody_available"))
+    assert "matched" not in [s.phase for s in ada.rec.states[-4:]]
+    assert "matched" not in [s.phase for s in bob.rec.states[-4:]]
+
+
 def test_a_lone_worker_gets_nobody_available_after_the_ttl(
     qtbot: QtBot,
     server_factory: Callable[..., LiveServer],

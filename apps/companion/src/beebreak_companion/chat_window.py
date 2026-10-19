@@ -59,6 +59,7 @@ REPORT = "Report"
 CLOSE = "Close"
 EXTEND = "Extend"
 CANCEL = "Cancel"
+TIME_TIP = "A chat can be extended near its end if you both agree."
 YES = "Yes"
 NO = "No"
 SENDING = "sending\N{HORIZONTAL ELLIPSIS}"
@@ -78,6 +79,7 @@ ERROR_TEXT: dict[str, str] = {
     "not_found": "That chat is no longer available.",
     "network": "Network problem. Try again.",
 }
+REPORTED = "Reported and blocked."
 NOT_SENT_ENDED = "not sent"
 ENDED_LINES: dict[ChatEnd, str] = {
     "ended": "The chat ended.",
@@ -171,7 +173,8 @@ class ChatWindow(QWidget):
     block_requested = Signal()
     report_requested = Signal(str, object, object)  # reason, note | None, seqs
     close_requested = Signal()  # an ended chat's window was closed
-    activity_changed = Signal(bool)  # the window became (in)active
+    # The window came into view (True: shown or activated) or lost focus (False).
+    activity_changed = Signal(bool)
 
     def __init__(
         self,
@@ -195,6 +198,9 @@ class ChatWindow(QWidget):
         self._report_dialog: ReportDialog | None = None
         self._retry_buttons: list[QPushButton] = []
         self._body_labels: list[_BodyLabel] = []
+        # The peer's "no" shows as a banner line until this monotonic reading;
+        # None until the window is first on screen with the flag set.
+        self._declined_until: float | None = None
 
         self.setWindowTitle("Beebreak chat")
         self.resize(360, 480)
@@ -211,10 +217,15 @@ class ChatWindow(QWidget):
         self.shared_label.setObjectName("muted")
         self.time_label = QLabel()
         self.time_label.setObjectName("timePill")
+        self.time_label.setToolTip(TIME_TIP)
+        self.time_hint_label = QLabel()
+        self.time_hint_label.setObjectName("muted")
         self.status_label = QLabel()
         self.banner_label = QLabel()
         self.ended_label = QLabel()
         self.error_label = QLabel()
+        self.reported_label = QLabel(REPORTED)
+        theme.set_state(self.reported_label, "off")
         self.counter_label = QLabel()
         self.footer_label = QLabel(FOOTER)
         self.footer_label.setObjectName("footer")
@@ -225,9 +236,11 @@ class ChatWindow(QWidget):
             self.peer_label,
             self.shared_label,
             self.time_label,
+            self.time_hint_label,
             self.status_label,
             self.banner_label,
             self.ended_label,
+            self.reported_label,
             self.error_label,
             self.counter_label,
             self.footer_label,
@@ -258,11 +271,13 @@ class ChatWindow(QWidget):
         self.cancel_extension_button = QPushButton(CANCEL)
         self.yes_button = QPushButton(YES)
         self.no_button = QPushButton(NO)
+        # No sits left of everything else: the Yes/No pair replaces Extend at
+        # the right edge, so a click aimed at Extend lands on Yes, not No (U15).
         self._banner_buttons = (
+            self.no_button,
             self.extend_button,
             self.cancel_extension_button,
             self.yes_button,
-            self.no_button,
         )
         for primary in (self.yes_button,):
             primary.setObjectName("primary")
@@ -313,11 +328,16 @@ class ChatWindow(QWidget):
         header = QHBoxLayout()
         header.addWidget(self.avatar_label)
         header.addLayout(names, 1)
-        header.addWidget(self.time_label, 0, Qt.AlignmentFlag.AlignTop)
+        time_column = QVBoxLayout()
+        time_column.setSpacing(0)
+        time_column.addWidget(self.time_label, 0, Qt.AlignmentFlag.AlignRight)
+        time_column.addWidget(self.time_hint_label, 0, Qt.AlignmentFlag.AlignRight)
+        header.addLayout(time_column)
         layout.addLayout(header)
         layout.addWidget(self.status_label)
         layout.addWidget(self.scroll_area, 1)
         layout.addWidget(self.banner)
+        layout.addWidget(self.reported_label)
         layout.addWidget(self.ended_label)
         layout.addWidget(self.error_label)
         layout.addLayout(input_row)
@@ -356,6 +376,12 @@ class ChatWindow(QWidget):
         """Render `state` (a fresh `ChatState()` means no chat)."""
         previous = self._state
         self._state = state
+        if (
+            not state.extension_declined
+            or not previous.extension_declined
+            or state.match_id != previous.match_id
+        ):
+            self._declined_until = None
         if state.match_id != previous.match_id:
             self.input.clear()
             self._clear_error()
@@ -455,6 +481,7 @@ class ChatWindow(QWidget):
         ended = state.ended
         self.ended_label.setText(ENDED_LINES[ended] if ended else "")
         self.ended_label.setVisible(ended is not None)
+        self.reported_label.setVisible(state.reported)
         self.end_button.setVisible(live)
         self.block_button.setVisible(has_chat and not state.reported)
         self.report_button.setVisible(has_chat)
@@ -471,6 +498,7 @@ class ChatWindow(QWidget):
         status = self._state.status
         show = self._live and status is not None
         self.time_label.setVisible(show)
+        self._render_time_hint()
         if not show:
             self.time_label.setText("")
             return
@@ -479,6 +507,26 @@ class ChatWindow(QWidget):
             self.time_label.setText("< 1 min left")
         else:
             self.time_label.setText(f"{math.ceil(left / 60)} min left")
+
+    def _in_grace(self, status: ChatStatus) -> bool:
+        return self.remaining() <= (status.ends_at - status.grace_at).total_seconds()
+
+    def _render_time_hint(self) -> None:
+        """Under the time chip: when extending becomes possible (U14)."""
+        status = self._state.status
+        show = (
+            self._live
+            and status is not None
+            and status.extensions_left > 0
+            and status.extension == "none"
+            and not self._in_grace(status)
+        )
+        if show and status is not None:
+            grace = _minutes((status.ends_at - status.grace_at).total_seconds())
+            self.time_hint_label.setText(f"You can extend in the last {grace}")
+        else:
+            self.time_hint_label.setText("")
+        self.time_hint_label.setVisible(show)
 
     def _render_status_line(self) -> None:
         text = ""
@@ -500,10 +548,12 @@ class ChatWindow(QWidget):
         if status.extension == "requested_by_me":
             text = f"Waiting for {nick}\N{HORIZONTAL ELLIPSIS}"
             return text, (self.cancel_extension_button,)
-        in_grace = (
-            self.remaining() <= (status.ends_at - status.grace_at).total_seconds()
-        )
-        if not in_grace:
+        if self._state.extension_declined:
+            if self._declined_until is None and self.isVisible():
+                self._declined_until = self._clock() + ERROR_SECONDS
+            if self._declined_until is None or self._clock() < self._declined_until:
+                return f"{nick} said no.", ()
+        if not self._in_grace(status):
             return "", ()
         left = _minutes((status.ends_at - status.grace_at).total_seconds())
         if status.extensions_left > 0:
@@ -663,6 +713,10 @@ class ChatWindow(QWidget):
         super().showEvent(event)
         if self._live:
             self._timer.start()
+        self._render_banner()
+        # Shown counts as seen: WSLg may never activate a window shown
+        # without activation (U13).
+        self.activity_changed.emit(True)
 
     def hideEvent(self, event: QHideEvent) -> None:
         super().hideEvent(event)
