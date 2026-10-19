@@ -41,6 +41,7 @@ from beebreak_companion.chat_state import (
     ChatState,
     Closed,
     Ended,
+    ExtensionCancelling,
     Matched,
     Messages,
     Reported,
@@ -585,6 +586,8 @@ class RemoteWorker(QObject):
         match_id = self._live_chat()
         if api is None or match_id is None:
             return
+        if action == "decline":
+            self._apply_chat(ExtensionCancelling(match_id))  # no-op unless mine
         status = await self._authed(
             lambda token: api.extension(token, match_id, action)
         )
