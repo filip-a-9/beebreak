@@ -21,16 +21,18 @@ from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter, ValidationError
 from PySide6.QtCore import Qt, QUrl, Slot
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -38,7 +40,7 @@ from PySide6.QtWidgets import (
 
 from beebreak_companion.break_state import BreakState
 from beebreak_companion.chat_state import ChatState
-from beebreak_companion.config import wsl_distro_name
+from beebreak_companion.config import dialog_max_height_fraction, wsl_distro_name
 from beebreak_companion.privacy_preview import (
     PrivacyPreviewDialog,
     default_device_name,
@@ -143,6 +145,10 @@ _NICKNAME = TypeAdapter(Nickname)
 _DEVICE_NAME = TypeAdapter(DeviceName)
 
 
+# Smallest height the scrolling part of the privacy page may shrink to.
+SCROLL_MIN_HEIGHT = 120
+
+
 def safe_verification_uri(raw: str) -> bool:
     """Only an https page (or plain http on this computer, for local testing)
     may be opened from a server-supplied link."""
@@ -209,6 +215,29 @@ def _page(*widgets: QWidget) -> QWidget:
     for widget in widgets:
         layout.addWidget(widget)
     layout.addStretch()
+    return page
+
+
+def _scrolling_page(content: list[QWidget], *fixed: QWidget) -> QWidget:
+    """A page whose `content` scrolls when the dialog is short; `fixed` stays
+    visible below it."""
+    inner = QWidget()
+    inner_layout = QVBoxLayout(inner)
+    for widget in content:
+        inner_layout.addWidget(widget)
+    scroll = QScrollArea()
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    scroll.setMinimumHeight(SCROLL_MIN_HEIGHT)
+    scroll.setWidget(inner)
+    page = QWidget()
+    layout = QVBoxLayout(page)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(scroll)
+    for widget in fixed:
+        layout.addWidget(widget)
     return page
 
 
@@ -342,16 +371,18 @@ class OnboardingDialog(QDialog):
             )
         )
         self.stack.addWidget(
-            _page(
-                *self._profile_widgets(),
-                _label(PRIVACY_INTRO),
-                self.category_box,
-                self.stack_box,
-                self.tags_intro,
-                self.tag_list,
-                self.time_box,
-                _label(SENT_ONLY),
-                self.show_shared_button,
+            _scrolling_page(
+                [
+                    *self._profile_widgets(),
+                    _label(PRIVACY_INTRO),
+                    self.category_box,
+                    self.stack_box,
+                    self.tags_intro,
+                    self.tag_list,
+                    self.time_box,
+                    _label(SENT_ONLY),
+                    self.show_shared_button,
+                ],
                 self.privacy_error,
             )
         )
@@ -435,6 +466,25 @@ class OnboardingDialog(QDialog):
             self._load_consent(me.consent)
             self._go(PAGE_NICKNAME if me.nickname is None else PAGE_PRIVACY)
         self._sync_tag_list()
+        self._cap_height()
+
+    def _cap_height(self) -> None:
+        """Keep the dialog short enough to stay on screen when the compositor
+        centres it on its window (it ignores move())."""
+        screen = self.screen()
+        if screen is not None:
+            fraction = dialog_max_height_fraction()
+            cap = int(screen.availableGeometry().height() * fraction)
+            # Centred on a window no shorter than itself, it stays inside that
+            # window's span, so on screen wherever the window was placed.
+            window = self.parentWidget()
+            if window is not None and window.isVisible():
+                cap = min(cap, window.height())
+            self.setMaximumHeight(cap)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        self._cap_height()  # the screen is only known once shown
+        super().showEvent(event)
 
     def _profile_widgets(self) -> list[QWidget]:
         if not self._edit_profile:

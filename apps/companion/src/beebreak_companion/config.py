@@ -28,6 +28,7 @@ POWERSHELL_ENV = "BEEBREAK_POWERSHELL"
 WINDOWS_TOAST_ENV = "BEEBREAK_WINDOWS_TOAST"
 DEFAULT_POWERSHELL = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
 TOAST_TIMEOUT_ENV = "BEEBREAK_TOAST_TIMEOUT_S"
+DIALOG_MAX_HEIGHT_FRACTION_ENV = "BEEBREAK_DIALOG_MAX_HEIGHT_FRACTION"
 THEME_SETTINGS = ("auto", "light", "dark")
 
 
@@ -115,6 +116,21 @@ def windows_toast_enabled() -> bool:
 def toast_timeout_s() -> float:
     """Seconds a toast PowerShell may run before it is killed."""
     return _positive_seconds(TOAST_TIMEOUT_ENV, 15.0)
+
+
+def dialog_max_height_fraction() -> float:
+    """Largest share of the screen's available height the Settings dialog may
+    take. WSLg centres a dialog on its window and ignores move(), so height is
+    the only way to keep its top on screen. Outside (0, 1] means the default."""
+    default = 0.6
+    raw = os.environ.get(DIALOG_MAX_HEIGHT_FRACTION_ENV)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if 0 < value <= 1 else default
 
 
 def stop_wait_s() -> float:
